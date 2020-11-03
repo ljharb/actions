@@ -1,0 +1,15 @@
+name: 'node CI run a commnet'
+description: 'Run a given command on a given node version'
+author: ljharb
+inputs:
+  node-version:
+    description: 'version of node to use via nvm'
+    required: false
+    default: 'lts/*'
+  command:
+    description: '`npm run` command'
+    required: true
+runs:
+  using: node12
+  main: ./index.js
+  post: ./post.js

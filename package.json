@@ -4,6 +4,7 @@
     "@actions/core": "^1.2.6",
     "@actions/github": "^4.0.0",
     "get-json": "^1.0.1",
-    "semver": "^7.3.2"
+    "semver": "^7.3.2",
+    "setup-node-nvm": "github:dcodeIO/setup-node-nvm#v4"
   }
 }
