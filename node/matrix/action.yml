@@ -1,0 +1,24 @@
+name: 'node matrix'
+description: 'Output a JSON matrix of node versions to run in CI'
+author: ljharb
+inputs:
+  version_key:
+    description: 'key in JSON output to contain versions'
+    required: false
+    default: 'node-version'
+  requireds:
+    description: 'semver range for required versions'
+  optionals:
+    description: 'semver range for optional versions'
+  preset:
+    description: 'optional preset, takes precedence over requireds/optionals'
+  type:
+    description: 'majors, or minors?'
+outputs:
+  requireds:
+    description: 'JSON object containing required-to-pass versions'
+  optionals:
+    description: 'JSON object containing allowed-to-fail versions'
+runs:
+  using: node12
+  main: ./index.js
