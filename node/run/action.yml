@@ -9,6 +9,10 @@ inputs:
   command:
     description: '`npm run` command'
     required: true
+  cache-node-modules-key:
+    description: 'if provided, cache node_modules under this cache key'
+    required: false
+    default: ''
 runs:
   using: node12
   main: ./index.js
