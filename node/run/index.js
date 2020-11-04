@@ -48,6 +48,7 @@ async function main() {
     core.getInput('node-version', { required: true }),
     core.getInput('command', { required: true }),
     String(cacheHit),
+    core.getInput('after_install'),
   ], {
     cwd: process.cwd(),
     stdio: 'inherit',

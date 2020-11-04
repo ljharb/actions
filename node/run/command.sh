@@ -50,6 +50,13 @@ if [ "${3-}" != 'true' ]; then
     fi
 fi
 
+if [ -n "${4-}" ]; then
+  echo
+  echo
+  echo "******> $4"
+  eval $4
+fi
+
 echo
 echo
 echo "******> npm run ${2:-test}"

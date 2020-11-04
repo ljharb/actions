@@ -13,6 +13,9 @@ inputs:
     description: 'if provided, cache node_modules under this cache key'
     required: false
     default: ''
+  after_install:
+    description: 'command to run after `npm install`'
+    required: false
 runs:
   using: node12
   main: ./index.js
