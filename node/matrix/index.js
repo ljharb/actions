@@ -34,7 +34,7 @@ function comparator(a, b) {
 	return semver.compare(semver.coerce(b), semver.coerce(a));
 }
 
-async function getPreset(key, preset) {
+async function getPreset(key, preset, envs) {
 	let requireds;
 	let optionals;
 	if (preset === '0.x') {
@@ -59,8 +59,8 @@ async function getPreset(key, preset) {
 		requireds = Object.values(map).map(([v]) => v).sort(comparator);
 		optionals = Object.values(map).flatMap(([_, ...vs]) => vs).sort(comparator);
 	}
-	core.setOutput('requireds', JSON.stringify({ [key]: requireds }));
-	core.setOutput('optionals', JSON.stringify({ [key]: optionals }));
+	core.setOutput('requireds', JSON.stringify({ ...(envs && { envs }), [key]: requireds }));
+	core.setOutput('optionals', JSON.stringify({ ...(envs && { envs }), [key]: optionals }));
 }
 
 async function main() {
@@ -69,6 +69,7 @@ async function main() {
 	const optionals = core.getInput('optionals');
 	const type = core.getInput('type');
 	const preset = core.getInput('preset');
+	const envs = JSON.parse(core.getInput('envs') || null);
 
 	if (preset && !presets.includes(preset)) {
 		throw new TypeError(`\`preset\`, if provided, must be one of: \`${presets.join(', ')}\``);
@@ -78,7 +79,7 @@ async function main() {
 	}
 
 	if (preset) {
-		await getPreset(key, preset);
+		await getPreset(key, preset, envs);
 	} else {
 		if (!semver.validRange(requireds) || !semver.validRange(optionals)) {
 			throw new TypeError('`requireds` and `optionals` must both be valid semver ranges');
@@ -94,8 +95,8 @@ async function main() {
 			return [...new Set(versions.filter((v) => `${majMin(v)}`))]
 		});
 
-		core.setOutput('requireds', JSON.stringify({ [key]: versions.filter(v => semver.intersects(semver.coerce(v).version, requireds)) }));
-		core.setOutput('optionals', JSON.stringify({ [key]: versions.filter(v => semver.intersects(semver.coerce(v).version, optionals)) }));
+		core.setOutput('requireds', JSON.stringify({ ...(envs && { envs }), [key]: versions.filter(v => semver.intersects(semver.coerce(v).version, requireds)) }));
+		core.setOutput('optionals', JSON.stringify({ ...(envs && { envs }), [key]: versions.filter(v => semver.intersects(semver.coerce(v).version, optionals)) }));
 	}
 
 	// Get the JSON webhook payload for the event that triggered the workflow

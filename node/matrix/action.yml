@@ -14,6 +14,9 @@ inputs:
     description: 'optional preset, takes precedence over requireds/optionals'
   type:
     description: 'majors, or minors?'
+  envs:
+    description: 'optional env variables to add to the matrix'
+    required: false
 outputs:
   requireds:
     description: 'JSON object containing required-to-pass versions'
