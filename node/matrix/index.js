@@ -34,10 +34,13 @@ function comparator(a, b) {
 	return semver.compare(semver.coerce(b), semver.coerce(a));
 }
 
-async function getPreset(key, preset, envs) {
+async function getPreset(key, preset, type, envs) {
 	let requireds;
 	let optionals;
 	if (preset === '0.x') {
+		if (type) {
+			throw new TypeError('the `0.x` preset is incompatible with `type`');
+		}
 		requireds = [
 			'0.12',
 			'0.10',
@@ -52,12 +55,28 @@ async function getPreset(key, preset, envs) {
 	} else if (preset === 'iojs') {
 		const iojsVersions = (await getNodeVersions('iojs')).filter(v => semver.satisfies(v, '^1 || ^2 || ^3'));
 		const iojs = getMinorsByMajor(iojsVersions);
-		requireds = Object.values(iojs).map(([v]) => v).sort(comparator).map(x => `iojs-v${x}`);
-		optionals = Object.values(iojs).flatMap(([_, ...vs]) => vs).sort(comparator).map(x => `iojs-v${x}`);
+		if (type === 'majors') {
+			requireds = Object.keys(iojs);
+			optionals = [];
+		} else {
+			const values = Object.values(iojs);
+			requireds = values.map(([v]) => v);
+			optionals = values.flatMap(([_, ...vs]) => vs);
+		}
+		requireds = requireds.sort(comparator).map(x => `iojs-v${x}`);
+		optionals = optionals.sort(comparator).map(x => `iojs-v${x}`);
 	} else if (preset === '>=4') {
 		const map = getMinorsByMajor((await nodeVersions).filter(v => semver.satisfies(v, preset)));
-		requireds = Object.values(map).map(([v]) => v).sort(comparator);
-		optionals = Object.values(map).flatMap(([_, ...vs]) => vs).sort(comparator);
+		if (type === 'majors') {
+			requireds = Object.keys(map);
+			optionals = [];
+		} else {
+			const values = Object.values(map);
+			requireds = values.map(([v]) => v);
+			optionals = values.flatMap(([_, ...vs]) => vs);
+		}
+		requireds.sort(comparator);
+		optionals.sort(comparator);
 	}
 	core.setOutput('requireds', JSON.stringify({ ...(envs && { envs }), [key]: requireds }));
 	core.setOutput('optionals', JSON.stringify({ ...(envs && { envs }), [key]: optionals }));
@@ -74,18 +93,18 @@ async function main() {
 	if (preset && !presets.includes(preset)) {
 		throw new TypeError(`\`preset\`, if provided, must be one of: \`${presets.join(', ')}\``);
 	}
-	if (preset && (requireds || optionals || type)) {
-		throw new TypeError('if `preset` is provided, `requireds` and `optionals` and `type` must not be');
+	if (preset && (requireds || optionals)) {
+		throw new TypeError('if `preset` is provided, `requireds` and `optionals` must not be');
+	}
+	if (type && (type !== 'majors' && type !== 'minors')) {
+		throw new TypeError('`type` must be "majors" or "minors"');
 	}
 
 	if (preset) {
-		await getPreset(key, preset, envs);
+		await getPreset(key, preset, type, envs);
 	} else {
 		if (!semver.validRange(requireds) || !semver.validRange(optionals)) {
 			throw new TypeError('`requireds` and `optionals` must both be valid semver ranges');
-		}
-		if (type !== 'majors' && type !== 'minors') {
-			throw new TypeError('`type` must be "majors" or "minors"');
 		}
 
 		const versions = await getNodeVersions().then((versions) => {
