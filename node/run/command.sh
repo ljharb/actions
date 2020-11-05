@@ -2,7 +2,14 @@ set -e
 
 . /home/runner/mynvm/nvm.sh
 
-case "${1-:default}" in
+VERSION="${1:-default}"
+COMMAND="${2:-npm test}"
+BEFORE_INSTALL="${3-}"
+CACHE_HIT="${4-}"
+AFTER_INSTALL="${5-}"
+SKIP_LS_CHECK="${6-}"
+
+case "${VERSION}" in
     0.*) export NPM_CONFIG_STRICT_SSL=false ;;
 esac
 
@@ -11,9 +18,16 @@ echo
 echo "******> nvm install-latest-npm"
 nvm install-latest-npm
 
-if [ "${3-}" != 'true' ]; then
+if [ -n "${BEFORE_INSTALL-}" ]; then
+  echo
+  echo
+  echo "******> $BEFORE_INSTALL"
+  eval $BEFORE_INSTALL
+fi
+
+if [ "${CACHE_HIT-}" != 'true' ]; then
     export CI_RESET_NODE_VERSION=1
-    case "${1-:default}" in
+    case "${VERSION}" in
     0.5|0.5.*|0.6|0.6.*|0.7|0.7.*|0.9|0.9.*)
         echo
         echo
@@ -45,19 +59,19 @@ if [ "${3-}" != 'true' ]; then
     if [ "${CI_RESET_NODE_VERSION-}" = 1 ]; then
         echo
         echo
-        echo "******> nvm use ${1-:default}"
-        nvm use "${1-:default}"
+        echo "******> nvm use ${VERSION}"
+        nvm use "${VERSION}"
     fi
 fi
 
-if [ -n "${4-}" ]; then
+if [ -n "${AFTER_INSTALL-}" ]; then
   echo
   echo
-  echo "******> $4"
-  eval $4
+  echo "******> $AFTER_INSTALL"
+  eval $AFTER_INSTALL
 fi
 
-if [ "${5-}" != 'true' ]; then
+if [ "${SKIP_LS_CHECK-}" != 'true' ]; then
   echo
   echo
   echo "******> npm ls >/dev/null"
@@ -66,5 +80,5 @@ fi
 
 echo
 echo
-echo "******> ${2:-npm test}"
-eval ${2:-npm test}
+echo "******> ${COMMAND}"
+eval $COMMAND

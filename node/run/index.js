@@ -55,6 +55,7 @@ async function main() {
     path.join(__dirname, 'command.sh'),
     core.getInput('node-version', { required: true }),
     shellCmd || `npm run "${cmd}"`,
+    core.getInput('before_install'),
     String(cacheHit),
     core.getInput('after_install'),
     String(!!core.getInput('skip-ls-check')),
