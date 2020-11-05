@@ -57,10 +57,12 @@ if [ -n "${4-}" ]; then
   eval $4
 fi
 
-echo
-echo
-echo "******> npm ls >/dev/null"
-npm ls >/dev/null
+if [ "${5-}" != 'true' ]; then
+  echo
+  echo
+  echo "******> npm ls >/dev/null"
+  npm ls >/dev/null
+fi
 
 echo
 echo

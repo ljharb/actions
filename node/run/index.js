@@ -57,6 +57,7 @@ async function main() {
     shellCmd || `npm run "${cmd}"`,
     String(cacheHit),
     core.getInput('after_install'),
+    String(!!core.getInput('skip-ls-check')),
   ], {
     cwd: process.cwd(),
     stdio: 'inherit',

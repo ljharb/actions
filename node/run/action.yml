@@ -17,6 +17,10 @@ inputs:
   after_install:
     description: 'command to run after `npm install`'
     required: false
+  skip-ls-check:
+    description: 'skip the `npm ls` check (not recommended)'
+    required: false
+    default: false
 runs:
   using: node12
   main: ./index.js
