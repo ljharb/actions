@@ -59,5 +59,10 @@ fi
 
 echo
 echo
-echo "******> npm run ${2:-test}"
-npm run "${2:-test}"
+echo "******> npm ls >/dev/null"
+npm ls >/dev/null
+
+echo
+echo
+echo "******> ${2:-npm test}"
+eval ${2:-npm test}

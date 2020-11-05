@@ -43,10 +43,18 @@ async function main() {
     await require('cache/dist/restore').default();
   }
 
+  const cmd = core.getInput('command');
+  const shellCmd = core.getInput('shell-command');
+  if (cmd && shellCmd) {
+    throw new TypeError('`command` and `shell-command` are mutually exclusive');
+  } else if (!cmd && !shellCmd) {
+    throw new TypeError('One of `command` or `shell-command` must be provided');
+  }
+
   const { status } = spawnSync('bash', [
     path.join(__dirname, 'command.sh'),
     core.getInput('node-version', { required: true }),
-    core.getInput('command', { required: true }),
+    shellCmd || `npm run "${cmd}"`,
     String(cacheHit),
     core.getInput('after_install'),
   ], {

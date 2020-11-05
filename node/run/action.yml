@@ -8,7 +8,8 @@ inputs:
     default: 'lts/*'
   command:
     description: '`npm run` command'
-    required: true
+  shell-command:
+    description: shell command, mutually exclusive with `command`
   cache-node-modules-key:
     description: 'if provided, cache node_modules under this cache key'
     required: false
