@@ -28,7 +28,7 @@ function getMinorsByMajor(versions) {
     return minorsByMajor;
 }
 
-const presets = ['0.x', 'iojs', '>=4'];
+const presets = ['0.x', 'iojs'];
 
 function comparator(a, b) {
 	return semver.compare(semver.coerce(b), semver.coerce(a));
@@ -65,7 +65,7 @@ async function getPreset(key, preset, type, envs) {
 		}
 		requireds = requireds.sort(comparator).map(x => `iojs-v${x}`);
 		optionals = optionals.sort(comparator).map(x => `iojs-v${x}`);
-	} else if (preset === '>=4') {
+	} else {
 		const map = getMinorsByMajor((await nodeVersions).filter(v => semver.satisfies(v, preset)));
 		if (type === 'majors') {
 			requireds = Object.keys(map);
@@ -90,8 +90,8 @@ async function main() {
 	const preset = core.getInput('preset');
 	const envs = JSON.parse(core.getInput('envs') || null);
 
-	if (preset && !presets.includes(preset)) {
-		throw new TypeError(`\`preset\`, if provided, must be one of: \`${presets.join(', ')}\``);
+	if (preset && !presets.includes(preset) && !semver.validRange(preset)) {
+		throw new TypeError(`\`preset\`, if provided, must be a valid semver range, or one of: \`${presets.join(', ')}\``);
 	}
 	if (preset && (requireds || optionals)) {
 		throw new TypeError('if `preset` is provided, `requireds` and `optionals` must not be');
