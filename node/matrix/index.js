@@ -50,7 +50,7 @@ async function getPreset(key, preset, type, envs) {
 			'0.11',
 			'0.9',
 			'0.6',
-			'0.4',
+			//'0.4',
 		];
 	} else if (preset === 'iojs') {
 		const iojsVersions = (await getNodeVersions('iojs')).filter(v => semver.satisfies(v, '^1 || ^2 || ^3'));
