@@ -14,6 +14,9 @@ inputs:
     description: 'if provided, cache node_modules under this cache key'
     required: false
     default: ''
+  skip-install:
+    description: 'skip `npm install` step'
+    default: false
   before_install:
     description: 'command to run before `npm install`'
     required: false

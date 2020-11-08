@@ -58,7 +58,8 @@ async function main() {
     core.getInput('before_install'),
     String(cacheHit),
     core.getInput('after_install'),
-    String(!!core.getInput('skip-ls-check')),
+    String(core.getInput('skip-ls-check') === true),
+    String(core.getInput('skip-install') === true),
   ], {
     cwd: process.cwd(),
     stdio: 'inherit',
