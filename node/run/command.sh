@@ -10,6 +10,16 @@ AFTER_INSTALL="${5-}"
 SKIP_LS_CHECK="${6-}"
 SKIP_INSTALL="${7-}"
 
+echo '**** debug ****'
+echo "* VERSION: $VERSION"
+echo "* COMMAND: $COMMAND"
+echo "* BEFORE_INSTALL: $BEFORE_INSTALL"
+echo "* CACHE_HIT: $CACHE_HIT"
+echo "* AFTER_INSTALL: $AFTER_INSTALL"
+echo "* SKIP_LS_CHECK: $SKIP_LS_CHECK"
+echo "* SKIP_INSTALL: $SKIP_INSTALL"
+echo '**** end debug ****'
+
 case "${VERSION}" in
     0.*) export NPM_CONFIG_STRICT_SSL=false ;;
 esac
