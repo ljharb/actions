@@ -67,6 +67,8 @@ async function main() {
 
   process.exitCode = status;
 
+  core.info(`got status code ${status}`);
+
   if (status !== 0) {
     throw status;
   }
