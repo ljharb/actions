@@ -17,6 +17,9 @@ inputs:
   envs:
     description: 'optional env variables to add to the matrix'
     required: false
+  versionsAsRoot:
+    description: 'ignore the version_key, and make the versions be the root of the outputs?'
+    required: false
 outputs:
   requireds:
     description: 'JSON object containing required-to-pass versions'

@@ -34,7 +34,7 @@ function comparator(a, b) {
 	return semver.compare(semver.coerce(b), semver.coerce(a));
 }
 
-async function getPreset(key, preset, type, envs) {
+async function getPreset(makePayload, preset, type) {
 	let requireds;
 	let optionals;
 	if (preset === '0.x') {
@@ -78,17 +78,26 @@ async function getPreset(key, preset, type, envs) {
 		requireds.sort(comparator);
 		optionals.sort(comparator);
 	}
-	core.setOutput('requireds', JSON.stringify({ ...(envs && { envs }), [key]: requireds }));
-	core.setOutput('optionals', JSON.stringify({ ...(envs && { envs }), [key]: optionals }));
+	const requiredsOutput = makePayload(requireds);
+	core.setOutput('requireds', JSON.stringify(requiredsOutput));
+	core.info(`requireds: ${requiredsOutput}`);
+
+	const optionalsOutput = makePayload(optionals);
+	core.setOutput('optionals', JSON.stringify(optionalsOutput));
+	core.info(`optionals: ${optionalsOutput}`);
 }
 
 async function main() {
 	const key = core.getInput('version_key');
+	const versionsAsRoot = core.getInput('versionsAsRoot');
 	const requireds = core.getInput('requireds');
 	const optionals = core.getInput('optionals');
 	const type = core.getInput('type');
 	const preset = core.getInput('preset');
 	const envs = JSON.parse(core.getInput('envs') || null);
+	if (envs && versionsAsRoot) {
+		throw new TypeError('`envs` and `versionsAsRoot` are mutually exclusive');
+	}
 
 	if (preset && !presets.includes(preset) && !semver.validRange(preset)) {
 		throw new TypeError(`\`preset\`, if provided, must be a valid semver range, or one of: \`${presets.join(', ')}\``);
@@ -100,8 +109,10 @@ async function main() {
 		throw new TypeError('`type` must be "majors" or "minors"');
 	}
 
+	const makePayload = versionsAsRoot ? (x) => x : (versions) => ({ ...(envs && { envs }), [key]: versions });
+
 	if (preset) {
-		await getPreset(key, preset, type, envs);
+		await getPreset(makePayload, preset, type);
 	} else {
 		if (!semver.validRange(requireds) || !semver.validRange(optionals)) {
 			throw new TypeError('`requireds` and `optionals` must both be valid semver ranges');
@@ -114,8 +125,13 @@ async function main() {
 			return [...new Set(versions.filter((v) => `${majMin(v)}`))]
 		});
 
-		core.setOutput('requireds', JSON.stringify({ ...(envs && { envs }), [key]: versions.filter(v => semver.intersects(semver.coerce(v).version, requireds)) }));
-		core.setOutput('optionals', JSON.stringify({ ...(envs && { envs }), [key]: versions.filter(v => semver.intersects(semver.coerce(v).version, optionals)) }));
+		const requiredsOutput = makePayload(versions.filter(v => semver.intersects(semver.coerce(v).version, requireds)));
+		core.setOutput('requireds', JSON.stringify(requiredsOutput));
+		core.info(`requireds: ${requiredsOutput}`);
+
+		const optionalsOutput = makePayload(versions.filter(v => semver.intersects(semver.coerce(v).version, optionals)));
+		core.setOutput('optionals', JSON.stringify(optionalsOutput));
+		core.info(`optionals: ${optionalsOutput}`);
 	}
 
 	// Get the JSON webhook payload for the event that triggered the workflow
