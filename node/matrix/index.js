@@ -6,7 +6,7 @@ const semver = require('semver');
 const getJSON = require('get-json');
 
 async function getNodeVersions(type = 'nodejs') {
-    const index = await getJSON(`https://${type}.org/dist/index.json`).catch((e) => {
+	const index = await getJSON(`https://${type}.org/dist/index.json`).catch((e) => {
 		console.error(`Error fetching and parsing JSON from \`https://${type}.org/dist/index.json\``);
 		throw e;
 	});
@@ -20,12 +20,12 @@ function majMin(v) {
 }
 
 function getMinorsByMajor(versions) {
-    const minorEntries = versions.map(v => [`${semver.major(v)}`, majMin(v)]);
-    const minorsByMajor = {};
-    minorEntries.forEach(([maj, v]) => {
-        minorsByMajor[maj] = Array.from(new Set([].concat(minorsByMajor[maj] || [], v)));
-    });
-    return minorsByMajor;
+	const minorEntries = versions.map(v => [`${semver.major(v)}`, majMin(v)]);
+	const minorsByMajor = {};
+	minorEntries.forEach(([maj, v]) => {
+		minorsByMajor[maj] = Array.from(new Set([].concat(minorsByMajor[maj] || [], v)));
+	});
+	return minorsByMajor;
 }
 
 const presets = ['0.x', 'iojs'];
