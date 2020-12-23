@@ -1,7 +1,6 @@
 'use strict';
 
 const core = require('@actions/core');
-const github = require('@actions/github');
 const { spawnSync } = require('child_process');
 const path = require('path');
 const semver = require('semver');

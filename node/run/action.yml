@@ -23,6 +23,9 @@ inputs:
   after_install:
     description: 'command to run after `npm install`'
     required: false
+  after_success:
+    description: 'command to run after everything succeeds. default runs codecov'
+    required: false
   skip-ls-check:
     description: 'skip the `npm ls` check (not recommended)'
     required: false
