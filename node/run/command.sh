@@ -9,6 +9,7 @@ CACHE_HIT="${4-}"
 AFTER_INSTALL="${5-}"
 SKIP_LS_CHECK="${6-}"
 SKIP_INSTALL="${7-}"
+INSTALL_COMMAND="${8-}"
 
 echo '**** debug ****'
 echo "* VERSION: $VERSION"
@@ -18,6 +19,7 @@ echo "* CACHE_HIT: $CACHE_HIT"
 echo "* AFTER_INSTALL: $AFTER_INSTALL"
 echo "* SKIP_LS_CHECK: $SKIP_LS_CHECK"
 echo "* SKIP_INSTALL: $SKIP_INSTALL"
+echo "* INSTALL_COMMAND: $INSTALL_COMMAND"
 echo '**** end debug ****'
 
 case "${VERSION}" in
@@ -64,8 +66,8 @@ if [ "${CACHE_HIT-}" != 'true' ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
 
     echo
     echo
-    echo "******> npm install"
-    npm install
+    echo "******> npm ${INSTALL_COMMAND}"
+    npm "${INSTALL_COMMAND}"
 
     if [ "${CI_RESET_NODE_VERSION-}" = 1 ]; then
         echo

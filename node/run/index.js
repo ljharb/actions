@@ -14,6 +14,8 @@ if (status !== 0) {
 
 const cacheKey = core.getInput('cache-node-modules-key');
 
+const installCommand = core.getInput('use-npm-ci', { required: true }) === 'true' ? 'ci' : 'install';
+
 async function main() {
 	let cacheHit = false;
 	if (cacheKey) {
@@ -59,6 +61,7 @@ async function main() {
 		core.getInput('after_install'),
 		String(core.getInput('skip-ls-check')) === 'true',
 		String(core.getInput('skip-install')) === 'true',
+		installCommand,
 	], {
 		cwd: process.cwd(),
 		stdio: 'inherit',

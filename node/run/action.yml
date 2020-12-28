@@ -30,6 +30,10 @@ inputs:
     description: 'skip the `npm ls` check (not recommended)'
     required: false
     default: false
+  use-npm-ci:
+    description: 'if true, will use `npm ci` instead of `npm install`'
+    required: false
+    default: false
 runs:
   using: node12
   main: ./index.js
