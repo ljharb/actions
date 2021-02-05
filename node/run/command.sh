@@ -23,7 +23,10 @@ echo "* INSTALL_COMMAND: $INSTALL_COMMAND"
 echo '**** end debug ****'
 
 case "${VERSION}" in
-    0.*) export NPM_CONFIG_STRICT_SSL=false ;;
+    0.*)
+      echo "******> export NPM_CONFIG_STRICT_SSL=false"
+      export NPM_CONFIG_STRICT_SSL=false
+    ;;
 esac
 
 echo
