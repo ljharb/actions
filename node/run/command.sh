@@ -11,6 +11,8 @@ SKIP_LS_CHECK="${6-}"
 SKIP_INSTALL="${7-}"
 INSTALL_COMMAND="${8-}"
 
+alias echo='\echo ::debug::'
+
 echo '**** debug ****'
 echo "* VERSION: $VERSION"
 echo "* COMMAND: $COMMAND"
