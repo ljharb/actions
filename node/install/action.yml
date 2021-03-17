@@ -1,0 +1,40 @@
+name: 'node CI: install node and npm dependencies'
+description: 'Install a given node version, and install npm dependencies'
+author: ljharb
+inputs:
+  node-version:
+    description: 'version of node to use via nvm'
+    required: false
+    default: 'lts/*'
+  cache-node-modules-key:
+    description: 'if provided, cache node_modules under this cache key'
+    required: false
+    default: ''
+  skip-install:
+    description: 'skip `npm install` step'
+    default: 'false'
+    required: false
+  before_install:
+    description: 'command to run before `npm install`'
+    required: false
+  after_install:
+    description: 'command to run after `npm install`'
+    required: false
+  after_success:
+    description: 'command to run after everything succeeds. default runs codecov'
+    required: false
+  skip-ls-check:
+    description: 'skip the `npm ls` check (not recommended)'
+    required: false
+    default: 'false'
+  use-npm-ci:
+    description: 'if true, will use `npm ci` instead of `npm install`'
+    required: false
+    default: 'false'
+outputs:
+  PATH:
+    description: 'PATH env variable to use to have node/npm available'
+runs:
+  using: node12
+  main: ./index.js
+  post: ./post.js
