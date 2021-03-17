@@ -1,4 +1,4 @@
-name: 'node CI run a commnet'
+name: 'node CI run a command'
 description: 'Run a given command on a given node version'
 author: ljharb
 inputs:

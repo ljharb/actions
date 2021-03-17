@@ -14,6 +14,11 @@ INSTALL_COMMAND="${8-}"
 alias echo='\echo ::debug::'
 
 echo '**** debug ****'
+echo "* nvm: $(nvm -v)"
+echo "* node: $(which node) ($(node -v))"
+echo "* npm: $(which npm) ($(npm -v))"
+echo "* NVM_DIR: $NVM_DIR"
+echo "* PATH: $PATH"
 echo "* VERSION: $VERSION"
 echo "* COMMAND: $COMMAND"
 echo "* BEFORE_INSTALL: $BEFORE_INSTALL"
