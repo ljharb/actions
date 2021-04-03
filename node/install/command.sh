@@ -16,6 +16,7 @@ echo '**** debug ****'
 echo "* nvm: $(nvm -v)"
 echo "* node: $(which node) ($(node -v))"
 echo "* npm: $(which npm) ($(npm -v))"
+echo "* npm root -g: $(npm root -g)"
 echo "* NVM_DIR: $NVM_DIR"
 echo "* PATH: $PATH"
 echo "* VERSION: $VERSION"
@@ -42,6 +43,7 @@ nvm install --latest-npm "${VERSION}"
 echo '**** debug ****'
 echo "* node: $(which node) ($(node -v))"
 echo "* npm: $(which npm) ($(npm -v))"
+echo "* npm root -g: $(npm root -g)"
 echo "* PATH: $PATH"
 echo '**** end debug ****'
 
