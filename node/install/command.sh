@@ -32,6 +32,8 @@ case "${VERSION}" in
     0.*)
       echo "******> export NPM_CONFIG_STRICT_SSL=false"
       export NPM_CONFIG_STRICT_SSL=false
+      echo "******> export PYTHON=\`which python2\`"
+      export PYTHON=`which python2`
     ;;
 esac
 
