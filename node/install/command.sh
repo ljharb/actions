@@ -57,11 +57,11 @@ fi
 if [ "${CACHE_HIT-}" != 'true' ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
     export CI_RESET_NODE_VERSION=1
     case "${VERSION}" in
-    0.5|0.5.*|0.6|0.6.*|0.7|0.7.*|0.9|0.9.*)
+    0.5|0.5.*|0.6|0.6.*|0.7|0.7.*|0.8|0.8.*|0.9|0.9.*)
         echo
         echo
-        echo "******> nvm install --latest-npm 0.8"
-        nvm install --latest-npm 0.8
+        echo "******> nvm install --latest-npm 0.10"
+        nvm install --latest-npm 0.10
     ;;
     5.*|6.1|6.2)
         echo
