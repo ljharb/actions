@@ -1,0 +1,81 @@
+on:
+  workflow_call:
+    inputs:
+      range:
+        description: "node.js semver range"
+        required: true
+        type: string
+      type:
+        description: 'majors or minors'
+        default: majors
+        required: false
+        type: string
+      command:
+        description: '`run:` step'
+        required: true
+        type: string
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.set-matrix.outputs.requireds }}
+      nonlatest: ${{ steps.set-matrix.outputs.optionals }}
+    steps:
+      - uses: ljharb/actions/node/matrix@main
+        id: set-matrix
+        with:
+          versionsAsRoot: true
+          type: ${{ inputs.type }}
+          preset: ${{ inputs.range }}
+
+  latest:
+    needs: [matrix]
+    name: 'latest minors'
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJson(needs.matrix.outputs.latest) }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ljharb/actions/node/install@main
+        name: 'nvm install ${{ matrix.node-version }} && npm install'
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: ${{ startsWith(matrix.node-version, '0') && 'true' || 'false' }}
+      - run: ${{ inputs.command }}
+      - uses: codecov/codecov-action@v2
+
+  nonlatest:
+    needs: [matrix, latest]
+    name: 'non-latest minors'
+    continue-on-error: true
+    if: ${{ !github.head_ref || !startsWith(github.head_ref, 'renovate') }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJson(needs.matrix.outputs.nonlatest) }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ljharb/actions/node/install@main
+        name: 'nvm install ${{ matrix.node-version }} && npm install'
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: true
+      - run: ${{ inputs.command }}
+      - uses: codecov/codecov-action@v2
+
+  node:
+    name: 'node ${{ inputs.type }} @ ${{ inputs.range }}'
+    needs: [latest, nonlatest]
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo tests completed'
