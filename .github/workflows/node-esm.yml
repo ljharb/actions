@@ -1,0 +1,40 @@
+on:
+  workflow_call:
+    inputs:
+      command:
+        description: '`run:` step'
+        required: true
+        type: string
+
+jobs:
+  notable-esm:
+    name: 'notable ESM minors'
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - node-version: 'lts/*'
+          - node-version: '14.13'
+          - node-version: '13.7'
+          - node-version: '12.20'
+          - node-version: '12.17'
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ljharb/actions/node/install@main
+        name: 'nvm install ${{ matrix.node-version }} && npm install'
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: false
+      - run: ${{ inputs.command }}
+      - uses: codecov/codecov-action@v2
+
+  node:
+    name: 'node, notable ESM minors'
+    needs: [notable-esm]
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo tests completed'
