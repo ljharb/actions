@@ -3,7 +3,6 @@
 const core = require('@actions/core');
 const { spawnSync } = require('child_process');
 const path = require('path');
-const semver = require('semver');
 
 const cacheKey = core.getInput('cache-node-modules-key');
 
@@ -22,19 +21,19 @@ async function main() {
 			if (typeof arg === 'string') {
 				if (arg.startsWith('::save-state name=')) {
 					const [name, value] = arg.slice('::save-state name='.length).split('::');
-					core.info(`hijacking core.saveState output: ${name.split(',')}=${value}`)
+					core.info(`hijacking core.saveState output: ${name.split(',')}=${value}`);
 					name.split(',').forEach((x) => {
 						process.env[`STATE_${x}`] = value;
 					});
 				} else if (arg.startsWith('::set-output name=cache-hit::')) {
-					core.info(`hijacking core.setOutput output: ${arg}`)
+					core.info(`hijacking core.setOutput output: ${arg}`);
 					cacheHit = arg === '::set-output name=cache-hit::true';
 				}
 			}
-			return write.apply(process.stdout, arguments);
+			return write.apply(process.stdout, arguments); // eslint-disable-line prefer-rest-params
 		};
 
-		await require('cache/dist/restore').default();
+		await require('cache/dist/restore').default(); // eslint-disable-line global-require
 	}
 
 	const { status } = spawnSync('bash', [
@@ -60,7 +59,7 @@ async function main() {
 	}
 
 	if (cacheKey) {
-		await require('cache/dist/save').default();
+		await require('cache/dist/save').default(); // eslint-disable-line global-require
 	}
 
 	core.setOutput('PATH', process.env.PATH);
@@ -69,5 +68,7 @@ main().catch((error) => {
 	if (error) {
 		console.error(error);
 	}
-	if (!process.exitCode) { process.exitCode = 1; }
+	if (!process.exitCode) {
+		process.exitCode = 1;
+	}
 });

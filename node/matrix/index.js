@@ -22,7 +22,7 @@ function majMin(v) {
 }
 
 function getMinorsByMajor(versions) {
-	const minorEntries = versions.map(v => [`${semver.satisfies(v, '< 1') ? majMin(v) : semver.major(v)}`, majMin(v)]);
+	const minorEntries = versions.map((v) => [`${semver.satisfies(v, '< 1') ? majMin(v) : semver.major(v)}`, majMin(v)]);
 	const minorsByMajor = {};
 	minorEntries.forEach(([maj, v]) => {
 		minorsByMajor[maj] = Array.from(new Set([].concat(minorsByMajor[maj] || [], v)));
@@ -41,13 +41,13 @@ function get0xReqs(filter) {
 		'0.12',
 		'0.10',
 		'0.8',
-	].filter(x => !filter || filter.some(f => semver.satisfies(f, x)));
+	].filter((x) => !filter || filter.some((f) => semver.satisfies(f, x)));
 	const optionals = [
 		'0.11',
 		'0.9',
 		'0.6',
-		//'0.4',
-	].filter(x => !filter || filter.some(f => semver.satisfies(f, x)));
+		// '0.4',
+	].filter((x) => !filter || filter.some((f) => semver.satisfies(f, x)));
 	return { requireds, optionals };
 }
 
@@ -58,7 +58,8 @@ function iojsMapper(x) {
 }
 
 async function getReqOpts(reqRange, optRange, type) {
-	const versions = (await allVersions).filter(v => (reqRange && semver.satisfies(v, reqRange)) || (optRange && semver.satisfies(v, optRange)));
+	const versions = (await allVersions)
+		.filter((v) => (reqRange && semver.satisfies(v, reqRange)) || (optRange && semver.satisfies(v, optRange)));
 	const map = getMinorsByMajor(versions);
 	const { requireds: req0x, optionals: opt0x } = get0xReqs(versions);
 	const values = Object.values(map);
@@ -67,33 +68,31 @@ async function getReqOpts(reqRange, optRange, type) {
 	let optionals = [];
 	if (type === 'majors') {
 		if (reqRange) {
-			requireds = Object.entries(map).flatMap(([x, [latest]]) => {
-				return ((semver.subset(x, '>= 1') && semver.subset(latest, reqRange)) || req0x.includes(x)) ? x : [];
-			});
+			requireds = Object.entries(map).flatMap(([x, [latest]]) => ((semver.subset(x, '>= 1') && semver.subset(latest, reqRange)) || req0x.includes(x) ? x : []));
 		}
 		if (optRange) {
-			optionals = Object.keys(map).flat().filter(x => !requireds.includes(x) && (opt0x.includes(x) || semver.subset(map[x][0], optRange)));
+			optionals = Object.keys(map)
+				.flat()
+				.filter((x) => !requireds.includes(x) && (opt0x.includes(x) || semver.subset(map[x][0], optRange)));
 		}
+	} else if (reqRange && !optRange) {
+		const reqs = values.flat();
+		requireds = reqs.filter((x) => semver.subset(x, '>= 1') || req0x.includes(x));
 	} else {
-		if (reqRange && !optRange) {
-			const reqs = values.flat();
-			requireds = reqs.filter(x => semver.subset(x, '>= 1') || req0x.includes(x));
-		} else {
-			if (reqRange) {
-				const latest = values.map(([v]) => v);
-				requireds = latest.filter(x => semver.subset(x, '>= 1') || req0x.includes(x));
-			}
-			if (optRange) {
-				const nonLatest = values.flatMap(([, ...vs]) => vs);
-				optionals = nonLatest.filter(x => semver.subset(x, '>= 1') || opt0x.includes(x));
-			}
+		if (reqRange) {
+			const latest = values.map(([v]) => v);
+			requireds = latest.filter((x) => semver.subset(x, '>= 1') || req0x.includes(x));
+		}
+		if (optRange) {
+			const nonLatest = values.flatMap(([, ...vs]) => vs);
+			optionals = nonLatest.filter((x) => semver.subset(x, '>= 1') || opt0x.includes(x));
 		}
 	}
 	requireds.sort(comparator);
 	optionals.sort(comparator);
 
 	requireds = requireds.map(iojsMapper);
-	optionals = optionals.map(iojsMapper).filter(x => !requireds.includes(x));
+	optionals = optionals.map(iojsMapper).filter((x) => !requireds.includes(x));
 
 	return { requireds, optionals };
 }
@@ -103,9 +102,9 @@ async function getPreset(preset, type) {
 		if (type) {
 			throw new TypeError('the `0.x` preset is incompatible with `type`');
 		}
-		return get0xReqs()
-	} else if (preset === 'iojs') {
-		const iojsVersions = (await getNodeVersions('iojs')).filter(v => semver.satisfies(v, ));
+		return get0xReqs();
+	}
+	if (preset === 'iojs') {
 		return getReqOpts(iojsRange, iojsRange, type);
 	}
 	return getReqOpts(preset, preset, type);
@@ -133,13 +132,18 @@ async function main() {
 		throw new TypeError('`type` must be "majors" or "minors"');
 	}
 
-	const makePayload = versionsAsRoot ? (x) => x : (versions) => ({ ...(envs && { envs }), [key]: versions });
-
+	const makePayload = versionsAsRoot ? (x) => x : (versions) => ({ ...envs && { envs }, [key]: versions });
 
 	if (!preset && (!semver.validRange(requireds) || !semver.validRange(optionals))) {
 		throw new TypeError('`requireds` and `optionals` must both be valid semver ranges');
 	}
-	const { requireds: reqs, optionals: opts } = await (preset ? getPreset(preset, type) : getReqOpts(requireds, optionals, type));
+	const {
+		requireds: reqs,
+		optionals: opts,
+	} = await (preset
+		? getPreset(preset, type)
+		: getReqOpts(requireds, optionals, type)
+	);
 
 	const requiredsOutput = makePayload(reqs);
 	core.setOutput('requireds', JSON.stringify(requiredsOutput));
@@ -154,6 +158,6 @@ async function main() {
 	console.log(`The event payload: ${payload}`);
 }
 main().catch((error) => {
-	console.error(error)
+	console.error(error);
 	core.setFailed(error.message);
 });

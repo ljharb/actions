@@ -3,12 +3,11 @@
 const core = require('@actions/core');
 const { spawnSync } = require('child_process');
 const path = require('path');
-const semver = require('semver');
 
-const { status } = spawnSync('node', [require.resolve('setup-node-nvm')]);
+const { status: nvmStatus } = spawnSync('node', [require.resolve('setup-node-nvm')]);
 
-if (status !== 0) {
-	process.exitCode = status;
+if (nvmStatus !== 0) {
+	process.exitCode = nvmStatus;
 	return;
 }
 
@@ -17,6 +16,7 @@ const cacheKey = core.getInput('cache-node-modules-key');
 const installCommand = core.getInput('use-npm-ci', { required: true }) === 'true' ? 'ci' : 'install';
 
 async function main() {
+	/* eslint max-lines-per-function: 0 */
 	let cacheHit = false;
 	if (cacheKey) {
 		process.env.INPUT_KEY = cacheKey;
@@ -29,19 +29,19 @@ async function main() {
 			if (typeof arg === 'string') {
 				if (arg.startsWith('::save-state name=')) {
 					const [name, value] = arg.slice('::save-state name='.length).split('::');
-					core.info(`hijacking core.saveState output: ${name.split(',')}=${value}`)
+					core.info(`hijacking core.saveState output: ${name.split(',')}=${value}`);
 					name.split(',').forEach((x) => {
 						process.env[`STATE_${x}`] = value;
 					});
 				} else if (arg.startsWith('::set-output name=cache-hit::')) {
-					core.info(`hijacking core.setOutput output: ${arg}`)
+					core.info(`hijacking core.setOutput output: ${arg}`);
 					cacheHit = arg === '::set-output name=cache-hit::true';
 				}
 			}
-			return write.apply(process.stdout, arguments);
+			return write.apply(process.stdout, arguments); // eslint-disable-line prefer-rest-params
 		};
 
-		await require('cache/dist/restore').default();
+		await require('cache/dist/restore').default(); // eslint-disable-line global-require
 	}
 
 	const cmd = core.getInput('command');
@@ -76,12 +76,14 @@ async function main() {
 	}
 
 	if (cacheKey) {
-		await require('cache/dist/save').default();
+		await require('cache/dist/save').default(); // eslint-disable-line global-require
 	}
 }
 main().catch((error) => {
 	if (error) {
 		console.error(error);
 	}
-	if (!process.exitCode) { process.exitCode = 1; }
+	if (!process.exitCode) {
+		process.exitCode = 1;
+	}
 });
