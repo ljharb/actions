@@ -67,10 +67,12 @@ async function getReqOpts(reqRange, optRange, type) {
 	let optionals = [];
 	if (type === 'majors') {
 		if (reqRange) {
-			requireds = Object.keys(map).filter(x => semver.subset(x, '>= 1') || req0x.includes(x));
+			requireds = Object.entries(map).flatMap(([x, [latest]]) => {
+				return ((semver.subset(x, '>= 1') && semver.subset(latest, reqRange)) || req0x.includes(x)) ? x : [];
+			});
 		}
 		if (optRange) {
-			optionals = values.flat().filter(x => !requireds.includes(x) && opt0x.includes(x));
+			optionals = Object.keys(map).flat().filter(x => !requireds.includes(x) && (opt0x.includes(x) || semver.subset(map[x][0], optRange)));
 		}
 	} else {
 		if (reqRange && !optRange) {
