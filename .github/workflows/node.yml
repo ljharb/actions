@@ -14,6 +14,11 @@ on:
         description: '`run:` step'
         required: true
         type: string
+      continue-on-error:
+        description: 'whether to continue on error'
+        default: false
+        required: false
+        type: boolean
 
 jobs:
   matrix:
@@ -33,6 +38,7 @@ jobs:
     needs: [matrix]
     name: 'latest minors'
     runs-on: ubuntu-latest
+    continue-on-error: ${{ inputs.continue-on-error }}
 
     strategy:
       fail-fast: false
