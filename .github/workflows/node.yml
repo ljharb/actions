@@ -19,6 +19,11 @@ on:
         default: false
         required: false
         type: boolean
+      skip-ls-check:
+        description: 'skip `npm ls`'
+        default: false
+        required: false
+        type: boolean
 
 jobs:
   matrix:
@@ -52,7 +57,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
-          skip-ls-check: ${{ startsWith(matrix.node-version, '0') && 'true' || 'false' }}
+          skip-ls-check: ${{ inputs.skip-ls-check || startsWith(matrix.node-version, '0') && 'true' || 'false' }}
       - run: ${{ inputs.command }}
       - uses: codecov/codecov-action@v2
 
