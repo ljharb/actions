@@ -65,7 +65,7 @@ jobs:
     needs: [matrix, latest]
     name: 'non-latest minors'
     continue-on-error: true
-    if: ${{ fromJson(needs.matrix.outputs.nonlatest).length > 0 && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
+    if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
     runs-on: ubuntu-latest
 
     strategy:
