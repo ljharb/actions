@@ -79,13 +79,16 @@ async function getReqOpts(reqRange, optRange, type) {
 		const reqs = values.flat();
 		requireds = reqs.filter((x) => semver.subset(x, '>= 1') || req0x.includes(x));
 	} else {
+		const latest = values.map(([v]) => v);
 		if (reqRange) {
-			const latest = values.map(([v]) => v);
 			requireds = latest.filter((x) => semver.subset(x, '>= 1') || req0x.includes(x));
 		}
 		if (optRange) {
 			const nonLatest = values.flatMap(([, ...vs]) => vs);
-			optionals = nonLatest.filter((x) => semver.subset(x, '>= 1') || opt0x.includes(x));
+			optionals = [].concat(
+				latest.filter((x) => semver.subset(x, '< 1') && opt0x.includes(x)),
+				nonLatest.filter((x) => semver.subset(x, '>= 1')),
+			);
 		}
 	}
 	requireds.sort(comparator);
