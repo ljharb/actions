@@ -37,10 +37,20 @@ case "${VERSION}" in
     ;;
 esac
 
-echo
-echo
-echo "******> nvm install --latest-npm $VERSION"
-nvm install --latest-npm "${VERSION}"
+case "${VERSION}" in
+  0.1|0.1.*|0.2|0.2.*|0.3|0.3.*|0.4|0.4.*|0.5|0.5.*|0.6|0.6.*|0.7|0.7.*|0.8|0.8.*)
+    echo
+    echo
+    echo "******> nvm install $VERSION"
+    nvm install "${VERSION}"
+  ;;
+  *)
+    echo
+    echo
+    echo "******> nvm install --latest-npm $VERSION"
+    nvm install --latest-npm "${VERSION}"
+  ;;
+esac
 
 echo '**** debug ****'
 echo "* node: $(which node) ($(node -v))"
