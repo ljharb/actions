@@ -43,6 +43,7 @@ case "${VERSION}" in
     echo
     echo "******> nvm install $VERSION"
     nvm install "${VERSION}"
+    SKIP_LS_CHECK=true
   ;;
   *)
     echo
