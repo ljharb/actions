@@ -51,7 +51,7 @@ jobs:
         node-version: ${{ fromJson(needs.matrix.outputs.latest) }}
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: ljharb/actions/node/install@main
         name: 'nvm install ${{ matrix.node-version }} && npm install'
         with:
@@ -74,7 +74,7 @@ jobs:
         node-version: ${{ fromJson(needs.matrix.outputs.nonlatest) }}
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: ljharb/actions/node/install@main
         name: 'nvm install ${{ matrix.node-version }} && npm install'
         with:

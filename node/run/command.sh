@@ -36,10 +36,16 @@ case "${VERSION}" in
     ;;
 esac
 
-echo
-echo
-echo "******> nvm install-latest-npm"
-nvm install-latest-npm
+case "${VERSION}" in
+  0.1|0.1.*|0.2|0.2.*|0.3|0.3.*|0.4|0.4.*|0.5|0.5.*|0.6|0.6.*|0.7|0.7.*|0.8|0.8.*)
+  ;;
+  *)
+    echo
+    echo
+    echo "******> nvm install-latest-npm"
+    nvm install-latest-npm
+  ;;
+esac
 
 if [ -n "${BEFORE_INSTALL-}" ]; then
   echo
