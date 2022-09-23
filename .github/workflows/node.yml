@@ -58,7 +58,13 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
           skip-ls-check: ${{ inputs.skip-ls-check || startsWith(matrix.node-version, '0') && 'true' || 'false' }}
+      - run: echo "PACKAGE_JSON=$(jq -c . < package.json)" >> $GITHUB_ENV
+      - if: ${{ startsWith(fromJson(env.PACKAGE_JSON).name, '@') && startsWith(matrix.node-version, '0.') && ! startsWith(matrix.node-version, '0.1') }}
+        run: eval $(node -e 'console.log(require("./package.json").scripts["${{ inputs.command }}".slice(8)])')
+        env:
+          PATH: "./node_modules/.bin/:${{ env.PATH }}"
       - run: ${{ inputs.command }}
+        if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
       - uses: codecov/codecov-action@v2
 
   nonlatest:
@@ -81,11 +87,17 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
           skip-ls-check: true
+      - run: echo "PACKAGE_JSON=$(jq -c . < package.json)" >> $GITHUB_ENV
+      - if: ${{ startsWith(fromJson(env.PACKAGE_JSON).name, '@') && startsWith(matrix.node-version, '0.') && ! startsWith(matrix.node-version, '0.1') }}
+        run: eval $(node -e 'console.log(require("./package.json").scripts["${{ inputs.command }}".slice(8)])')
+        env:
+          PATH: "./node_modules/.bin/:${{ env.PATH }}"
       - run: ${{ inputs.command }}
+        if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
       - uses: codecov/codecov-action@v2
 
   node:
-    name: 'node ${{ inputs.type }} @ ${{ inputs.range }}'
+    name: node ${{ inputs.type }} @ ${{ inputs.range }}
     needs: [latest, nonlatest]
     runs-on: ubuntu-latest
     steps:
