@@ -30,7 +30,7 @@ jobs:
           cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
           skip-ls-check: false
       - run: ${{ inputs.command }}
-      - uses: codecov/codecov-action@v2
+      - uses: codecov/codecov-action@v3
 
   node:
     name: 'node, notable ESM minors'
