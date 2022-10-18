@@ -1,0 +1,33 @@
+name: 'browser CI: get BrowserStack browser test matrix'
+description: 'Output a JSON matrix of browser/OS and versions to run in CI'
+author: ljharb
+inputs:
+  username:
+    description: 'BrowserStack username'
+    required: true
+  accessKey:
+    description: 'BrowserStack access key'
+    required: true
+  browser:
+    description: 'Browser name'
+    type: choice
+    options:
+      - safari
+      - chrome
+      - firefox
+      - ie
+      - edge
+      - yandex
+      - opera
+      - IE Mobile
+      - Mobile Safari
+      - Android Browser
+  envs:
+    description: 'optional env variables to add to the matrix'
+    required: false
+outputs:
+  matrix:
+    description: 'JSON array with objects containing `os`, `os_version`, `browser`, `browser_version`'
+runs:
+  using: node16
+  main: ./index.js

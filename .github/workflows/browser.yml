@@ -1,0 +1,132 @@
+name: 'Tests: browsers'
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: 'SHA to test'
+        required: true
+        type: string
+      browser:
+        description: 'Browser to test'
+        required: true
+        type: string
+    secrets:
+      username:
+        description: 'BrowserStack username'
+        required: true
+      accessKey:
+        description: 'BrowserStack access key'
+        required: true
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - uses: ljharb/actions/browser/matrix@main
+        id: set-matrix
+        with:
+          username: ${{ secrets.username }}
+          accessKey: ${{ secrets.accessKey }}
+          browser: ${{ inputs.browser }}
+
+  tests:
+    name: '${{ matrix.browser }} ${{ matrix.browser-version }}, on ${{ matrix.os }} ${{ matrix.os-version }}'
+    needs: [matrix]
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.matrix.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - uses: ljharb/actions/node/install@main
+        name: 'nvm install lts/* && npm install'
+        with:
+          node-version: lts/*
+          cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: true
+
+      - uses: browserstack/github-actions/setup-env@v1.0.1
+        name: 'BrowserStack Env Setup'
+        with:
+          username: ${{ secrets.username }}
+          access-key: ${{ secrets.accessKey }}
+          build-name: ${{ inputs.sha }}
+          project-name: ${{ env.GITHUB_REPOSITORY }}
+
+      - name: 'BrowserStack Local Tunnel Setup'  # Invokes the setup-local action
+        uses: browserstack/github-actions/setup-local@v1.0.1
+        with:
+          local-testing: start
+          username: ${{ secrets.username }}
+          access-key: ${{ secrets.accessKey }}
+
+      - name: 'run tests on browserstack'
+        id: tests
+        uses: BerniWittmann/background-server-action@v1
+        with:
+          command: |
+            curl \
+            --silent \
+            -u "${username}:${accessKey}" \
+            -X POST \
+            -d '{ "os":"${{ matrix.os }}", "os_version":"${{ matrix.os-version }}", "url":"http://localhost:1234/__testling?show=true", "browserstack.local":"true", "browser":"${{ matrix.browser }}", "browser_version":"${{ matrix.browser-version }}"}' \
+            https://api.browserstack.com/5/worker \
+            -H 'content-type: application/json' \
+            -o - | tee output.txt
+            echo "json=$(cat output.txt)" >> $GITHUB_OUTPUT
+          start: npx testling --port=1234 -u
+        env:
+          username: ${{ secrets.username }}
+          accessKey: ${{ secrets.accessKey }}
+
+      # - name: 'run tests on browserstack'
+      #   id: tests
+      #   run: |
+      #     npx testling --port=1234 -u &
+      #     curl \
+      #       --silent \
+      #       -u "${username}:${accessKey}" \
+      #       -X POST \
+      #       -d '{ "os":"${{ matrix.os }}", "os_version":"${{ matrix.os-version }}", "url":"http://localhost:1234/__testling?show=true", "browserstack.local":"true", "browser":"${{ matrix.browser }}", "browser_version":"${{ matrix.browser-version }}"}' \
+      #       https://api.browserstack.com/5/worker \
+      #       -H 'content-type: application/json' \
+      #       -o - >> $GITHUB_OUTPUT
+      #     wait
+      #   env:
+      #     username: ${{ secrets.username }}
+      #     accessKey: ${{ secrets.accessKey }}
+
+      - name: 'close browserstack session'
+        if: always()
+        continue-on-error: true
+        run: |
+          curl \
+            -u "${username}:${accessKey}" \
+            -X DELETE \
+            https://api.browserstack.com/5/worker/${{ fromJson(steps.tests.outputs.json).id }}
+        env:
+          username: ${{ secrets.username }}
+          accessKey: ${{ secrets.accessKey }}
+
+      - uses: browserstack/github-actions/setup-local@v1.0.1
+        name: 'BrowserStack Local Tunnel Stop'  # Terminating the BrowserStackLocal tunnel connection
+        if: always()
+        continue-on-error: true
+        with:
+          local-testing: stop
+
+  browser:
+    name: 'Browser Tests (${{ inputs.browser }})'
+    needs: [tests]
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo tests completed'
