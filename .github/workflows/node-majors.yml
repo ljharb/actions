@@ -1,0 +1,69 @@
+on:
+  workflow_call:
+    inputs:
+      range:
+        description: "node.js semver range"
+        required: true
+        type: string
+      command:
+        description: '`run:` step'
+        required: true
+        type: string
+      continue-on-error:
+        description: 'whether to continue on error'
+        default: false
+        required: false
+        type: boolean
+      skip-ls-check:
+        description: 'skip `npm ls`'
+        default: false
+        required: false
+        type: boolean
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.set-matrix.outputs.requireds }}
+    steps:
+      - uses: ljharb/actions/node/matrix@main
+        id: set-matrix
+        with:
+          versionsAsRoot: true
+          type: majors
+          preset: ${{ inputs.range }}
+
+  latest:
+    needs: [matrix]
+    name: 'latest majors'
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ inputs.continue-on-error }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJson(needs.matrix.outputs.latest) }}
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ljharb/actions/node/install@main
+        name: 'nvm install ${{ matrix.node-version }} && npm install'
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: ${{ inputs.skip-ls-check || startsWith(matrix.node-version, '0') && 'true' || 'false' }}
+      - run: echo "PACKAGE_JSON=$(jq -c . < package.json)" >> $GITHUB_ENV
+      - if: ${{ startsWith(fromJson(env.PACKAGE_JSON).name, '@') && startsWith(matrix.node-version, '0.') && ! startsWith(matrix.node-version, '0.1') }}
+        run: eval $(node -e 'console.log(require("./package.json").scripts["${{ inputs.command }}".slice(8)])')
+        env:
+          PATH: "./node_modules/.bin/:${{ env.PATH }}"
+      - run: ${{ inputs.command }}
+        if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
+      - uses: codecov/codecov-action@v3
+
+  node:
+    name: node majors
+    needs: [latest]
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'echo tests completed'
