@@ -9,6 +9,7 @@ AFTER_INSTALL="${4-}"
 SKIP_LS_CHECK="${5-}"
 SKIP_INSTALL="${6-}"
 INSTALL_COMMAND="${7-}"
+SKIP_LATEST_NPM="${8-}"
 
 alias echo='\echo ::debug::'
 
@@ -48,8 +49,13 @@ case "${VERSION}" in
   *)
     echo
     echo
-    echo "******> nvm install --latest-npm $VERSION"
-    nvm install --latest-npm "${VERSION}"
+    if [ "${SKIP_LATEST_NPM-}" != 'true' ]; then
+      echo "******> nvm install --latest-npm $VERSION"
+      nvm install --latest-npm "${VERSION}"
+    else
+      echo "******> nvm install $VERSION"
+      nvm install "${VERSION}"
+    fi
   ;;
 esac
 

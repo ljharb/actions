@@ -27,6 +27,10 @@ inputs:
     description: 'skip the `npm ls` check (not recommended)'
     required: false
     default: 'false'
+  skip-latest-npm:
+    description: 'do not install the latest working npm version'
+    required: false
+    default: 'false'
   use-npm-ci:
     description: 'if true, will use `npm ci` instead of `npm install`'
     required: false

@@ -45,6 +45,7 @@ async function main() {
 		String(core.getInput('skip-ls-check')) === 'true',
 		String(core.getInput('skip-install')) === 'true',
 		installCommand,
+		String(core.getInput('skip-latest-npm')) === 'true',
 	], {
 		cwd: process.cwd(),
 		stdio: 'inherit',
