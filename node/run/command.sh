@@ -1,6 +1,6 @@
 set -e
 
-. /home/runner/mynvm/nvm.sh
+. $NVM_DIR/nvm.sh
 
 VERSION="${1:-default}"
 COMMAND="${2:-npm test}"
