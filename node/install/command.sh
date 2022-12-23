@@ -1,6 +1,7 @@
 set -e
 
-. $HOME/.nvm/nvm.sh
+#. $HOME/.nvm/nvm.sh
+. $NVM_DIR/nvm.sh
 
 VERSION="${1:-default}"
 BEFORE_INSTALL="${2-}"
