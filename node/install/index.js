@@ -3,12 +3,46 @@
 const core = require('@actions/core');
 const { spawnSync } = require('child_process');
 const path = require('path');
+const https = require('https');
+const fs = require('fs');
 
 const cacheKey = core.getInput('cache-node-modules-key');
 
 const installCommand = core.getInput('use-npm-ci', { required: true }) === 'true' ? 'ci' : 'install';
 
+async function getLatestNVM() {
+	return new Promise((resolve) => {
+		https.get('https://github.com/nvm-sh/nvm/releases/latest', (res) => {
+			if (res.statusCode === 302) {
+				resolve(res.headers.location.split('/').slice(-1)[0]);
+			} else {
+				throw res;
+			}
+		});
+	});
+}
+
+async function installNVM() {
+	const latest = await getLatestNVM();
+	const nvmDir = process.env.NVM_DIR || path.join(process.env.HOME, '.nvm');
+	const url = `https://raw.githubusercontent.com/nvm-sh/nvm/${latest}/nvm.sh`;
+
+	const file = fs.createWriteStream(path.join(nvmDir, 'nvm.sh'));
+	return new Promise((resolve) => {
+		https.get(url, (response) => {
+			response.pipe(file);
+
+			file.on('finish', () => {
+				file.close();
+				resolve();
+			});
+		});
+	});
+}
+
 async function main() {
+	await installNVM();
+
 	let cacheHit = false;
 	if (cacheKey) {
 		process.env.INPUT_KEY = cacheKey;
