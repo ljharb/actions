@@ -94,7 +94,6 @@ jobs:
           PATH: "./node_modules/.bin/:${{ env.PATH }}"
       - run: ${{ inputs.command }}
         if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
-      - uses: codecov/codecov-action@v3
 
   node:
     name: node ${{ inputs.type }} @ ${{ inputs.range }}
