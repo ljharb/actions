@@ -106,7 +106,7 @@ jobs:
       #     accessKey: ${{ secrets.accessKey }}
 
       - name: 'close browserstack session'
-        if: always()
+        if: steps.tests.outputs.json != ''
         continue-on-error: true
         run: |
           curl \
