@@ -75,13 +75,14 @@ jobs:
         with:
           command: |
             curl \
-            --silent \
-            -u "${username}:${accessKey}" \
-            -X POST \
-            -d '{ "os":"${{ matrix.os }}", "os_version":"${{ matrix.os-version }}", "url":"http://localhost:1234/__testling?show=true", "browserstack.local":"true", "browser":"${{ matrix.browser }}", "browser_version":"${{ matrix.browser-version }}"}' \
-            https://api.browserstack.com/5/worker \
-            -H 'content-type: application/json' \
-            -o - | tee output.txt
+              --silent \
+              --no-progress-bar \
+              -u "${username}:${accessKey}" \
+              -X POST \
+              -d '{ "os":"${{ matrix.os }}", "os_version":"${{ matrix.os-version }}", "url":"http://localhost:1234/__testling?show=true", "browserstack.local":"true", "browser":"${{ matrix.browser }}", "browser_version":"${{ matrix.browser-version }}"}' \
+              -H 'content-type: application/json' \
+              -o output.txt
+              https://api.browserstack.com/5/worker \
             echo "json=$(cat output.txt)" >> $GITHUB_OUTPUT
           start: npx testling --port=1234 -u
         env:
