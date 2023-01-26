@@ -103,7 +103,13 @@ if [ "${CACHE_HIT-}" != 'true' ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
     echo
     echo
     echo "******> npm ${INSTALL_COMMAND}"
-    npm "${INSTALL_COMMAND}"
+    npm "${INSTALL_COMMAND}" || {
+      export CI_RESET_NODE_VERSION=1
+      echo "******> nvm install --latest-npm node"
+      nvm install --latest-npm node
+      echo "******> npm ${INSTALL_COMMAND}"
+      npm "${INSTALL_COMMAND}"
+    }
 
     if [ "${CI_RESET_NODE_VERSION-}" = 1 ]; then
         echo
