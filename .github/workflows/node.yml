@@ -44,6 +44,7 @@ jobs:
     name: 'latest minors'
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.continue-on-error }}
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
@@ -71,6 +72,7 @@ jobs:
     needs: [matrix, latest]
     name: 'non-latest minors'
     continue-on-error: true
+    timeout-minutes: 30
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
     runs-on: ubuntu-latest
 

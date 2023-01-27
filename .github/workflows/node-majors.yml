@@ -38,6 +38,7 @@ jobs:
     name: 'latest majors'
     runs-on: ubuntu-latest
     continue-on-error: ${{ inputs.continue-on-error }}
+    timeout-minutes: 30
 
     strategy:
       fail-fast: false
