@@ -5,12 +5,16 @@ on:
         description: '`run:` step'
         required: true
         type: string
+      timeout-minutes:
+        required: false
+        type: number
+        default: 30
 
 jobs:
   notable-esm:
     name: 'notable ESM minors'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.timeout-minutes }}
 
     strategy:
       fail-fast: false
