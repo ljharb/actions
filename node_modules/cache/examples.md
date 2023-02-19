@@ -68,7 +68,7 @@ With `actions/cache@v3` you can now exclude unwanted packages with [exclude patt
 ```
 
 Or you could move the cache folder like below.
->Note: This workflow does not work for projects that require files to be placed in user profile package folder
+> **Note** This workflow does not work for projects that require files to be placed in user profile package folder
 
 ```yaml
 env:
@@ -280,7 +280,7 @@ We cache the elements of the Cabal store separately, as the entirety of `~/.caba
 
 ## Java - Gradle
 
->Note: Ensure no Gradle daemons are running anymore when your workflow completes. Creating the cache package might fail due to locks being held by Gradle. Refer to the [Gradle Daemon documentation](https://docs.gradle.org/current/userguide/gradle_daemon.html) on how to disable or stop the Gradle Daemons.
+> **Note** Ensure no Gradle daemons are running anymore when your workflow completes. Creating the cache package might fail due to locks being held by Gradle. Refer to the [Gradle Daemon documentation](https://docs.gradle.org/current/userguide/gradle_daemon.html) on how to disable or stop the Gradle Daemons.
 
 ```yaml
 - uses: actions/cache@v3
@@ -312,7 +312,7 @@ For npm, cache files are stored in `~/.npm` on Posix, or `~\AppData\npm-cache` o
 If using `npm config` to retrieve the cache directory, ensure you run [actions/setup-node](https://github.com/actions/setup-node) first to ensure your `npm` version is correct.
 After [deprecation](https://github.blog/changelog/2022-10-11-github-actions-deprecating-save-state-and-set-output-commands/) of save-state and set-output commands, the correct way to set output is using `${GITHUB_OUTPUT}`. For linux, we can use `${GITHUB_OUTPUT}` whereas for windows we need to use `${env:GITHUB_OUTPUT}` due to two different default shells in these two different OS ie `bash` and `pwsh` respectively.
 
->Note: It is not recommended to cache `node_modules`, as it can break across Node versions and won't work with `npm ci`
+> **Note** It is not recommended to cache `node_modules`, as it can break across Node versions and won't work with `npm ci`
 
 ### **Get npm cache directory using same shell**
 ### Bash shell
@@ -358,7 +358,7 @@ The yarn cache directory will depend on your operating system and version of `ya
 ```yaml
 - name: Get yarn cache directory path
   id: yarn-cache-dir-path
-  run: echo "::set-output name=dir::$(yarn cache dir)"
+  run: echo "dir=$(yarn cache dir)" >> $GITHUB_OUTPUT
 
 - uses: actions/cache@v3
   id: yarn-cache # use this to check for `cache-hit` (`steps.yarn-cache.outputs.cache-hit != 'true'`)
@@ -376,7 +376,7 @@ The yarn 2 cache directory will depend on your config. See https://yarnpkg.com/c
 ```yaml
 - name: Get yarn cache directory path
   id: yarn-cache-dir-path
-  run: echo "::set-output name=dir::$(yarn config get cacheFolder)"
+  run: echo "dir=$(yarn config get cacheFolder)" >> $GITHUB_OUTPUT
 
 - uses: actions/cache@v3
   id: yarn-cache # use this to check for `cache-hit` (`steps.yarn-cache.outputs.cache-hit != 'true'`)
@@ -421,7 +421,7 @@ Esy allows you to export built dependencies and import pre-built dependencies.
 - name: Get Composer Cache Directory
   id: composer-cache
   run: |
-    echo "::set-output name=dir::$(composer config cache-files-dir)"
+    echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
 - uses: actions/cache@v3
   with:
     path: ${{ steps.composer-cache.outputs.dir }}
@@ -508,12 +508,12 @@ jobs:
 
 ### Using pip to get cache location
 
-> Note: This requires pip 20.1+
+> **Note** This requires pip 20.1+
 ```yaml
 - name: Get pip cache dir
   id: pip-cache
   run: |
-    echo "::set-output name=dir::$(pip cache dir)"
+    echo "dir=$(pip cache dir)" >> $GITHUB_OUTPUT
 
 - name: pip cache
   uses: actions/cache@v3
