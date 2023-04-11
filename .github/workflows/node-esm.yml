@@ -10,6 +10,9 @@ on:
         type: number
         default: 30
 
+permissions:  # added using https://github.com/step-security/secure-repo
+  contents: read
+
 jobs:
   notable-esm:
     name: 'notable ESM minors'
@@ -27,6 +30,11 @@ jobs:
           - node-version: '12.17'
 
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
       - uses: actions/checkout@v3
       - uses: ljharb/actions/node/install@main
         name: 'nvm install ${{ matrix.node-version }} && npm install'
@@ -42,4 +50,9 @@ jobs:
     needs: [notable-esm]
     runs-on: ubuntu-latest
     steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
       - run: 'echo tests completed'
