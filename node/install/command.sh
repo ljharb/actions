@@ -130,7 +130,7 @@ if [ "${SKIP_LS_CHECK-}" != 'true' ]; then
   echo
   echo
   echo "******> npm ls >/dev/null"
-  npm ls >/dev/null
+  npm ls # >/dev/null
 fi
 
 echo "${NVM_BIN}" >> $GITHUB_PATH
