@@ -6,6 +6,7 @@ const path = require('path');
 const https = require('https');
 const fs = require('fs');
 const os = require('os');
+const { mkdirp } = require('mkdirp');
 
 const cacheKey = core.getInput('cache-node-modules-key');
 
@@ -26,6 +27,7 @@ async function getLatestNVM() {
 async function installNVM() {
 	const latest = await getLatestNVM();
 	const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), '.nvm');
+	await mkdirp(nvmDir);
 	const url = `https://raw.githubusercontent.com/nvm-sh/nvm/${latest}/nvm.sh`;
 
 	const file = fs.createWriteStream(path.join(nvmDir, 'nvm.sh'));
