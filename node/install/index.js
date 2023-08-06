@@ -43,14 +43,16 @@ async function installNVM() {
 	const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), '.nvm');
 	await mkdirp(nvmDir);
 
-	return Promise.all([
+	await Promise.all([
 		downloadFile(`https://raw.githubusercontent.com/nvm-sh/nvm/${latest}/nvm.sh`, path.join(nvmDir, 'nvm.sh')),
 		downloadFile(`https://raw.githubusercontent.com/nvm-sh/nvm/${latest}/nvm-exec`, path.join(nvmDir, 'nvm-exec')),
 	]);
+
+	return nvmDir;
 }
 
 async function main() {
-	await installNVM();
+	const nvmDir = await installNVM();
 
 	let cacheHit = false;
 	if (cacheKey) {
@@ -91,6 +93,7 @@ async function main() {
 		String(core.getInput('skip-latest-npm')) === 'true',
 	], {
 		cwd: process.cwd(),
+		env: { ...process.env, NVM_DIR: nvmDir },
 		stdio: 'inherit',
 	});
 
