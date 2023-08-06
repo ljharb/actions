@@ -24,13 +24,8 @@ async function getLatestNVM() {
 	});
 }
 
-async function installNVM() {
-	const latest = await getLatestNVM();
-	const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), '.nvm');
-	await mkdirp(nvmDir);
-	const url = `https://raw.githubusercontent.com/nvm-sh/nvm/${latest}/nvm.sh`;
-
-	const file = fs.createWriteStream(path.join(nvmDir, 'nvm.sh'));
+async function downloadFile(url, dest) {
+	const file = fs.createWriteStream(dest);
 	return new Promise((resolve) => {
 		https.get(url, (response) => {
 			response.pipe(file);
@@ -41,6 +36,15 @@ async function installNVM() {
 			});
 		});
 	});
+}
+
+async function installNVM() {
+	const latest = await getLatestNVM();
+	const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), '.nvm');
+	await mkdirp(nvmDir);
+	const url = `https://raw.githubusercontent.com/nvm-sh/nvm/${latest}/nvm.sh`;
+
+	return downloadFile(url, path.join(nvmDir, 'nvm.sh'));
 }
 
 async function main() {
