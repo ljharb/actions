@@ -28,6 +28,11 @@ on:
         required: false
         type: number
         default: 30
+      coverage:
+        description: coverage provider
+        required: false
+        type: string
+        default: codecov
 
 permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
@@ -84,6 +89,12 @@ jobs:
       - run: ${{ inputs.command }}
         if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
       - uses: codecov/codecov-action@v3
+        if: ${{ inputs.coverage == 'codecov' }}
+      - uses: coverallsapp/github-action@v2
+        if: ${{ inputs.coverage == 'coveralls' }}
+        with:
+          parallel: true
+          flag-name: run ${{ join(matrix.*, ' - ') }}
 
   nonlatest:
     needs: [matrix, latest]
@@ -129,4 +140,8 @@ jobs:
         with:
           egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
+      - uses: coverallsapp/github-action@v2
+        if: ${{ inputs.coverage == 'coveralls' }}
+        with:
+          parallel-finished: true
       - run: 'echo tests completed'
