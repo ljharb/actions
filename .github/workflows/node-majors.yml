@@ -5,6 +5,16 @@ on:
         description: node.js semver range
         required: true
         type: string
+      build-command:
+        description: optional build command to run once, prior to all the matrix steps
+        default: ''
+        required: false
+        type: string
+      build-output-dir:
+        description: 'build output directory to cache'
+        default: ''
+        required: false
+        type: string
       command:
         description: '`run:` step'
         required: true
@@ -33,7 +43,24 @@ permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ljharb/actions/node/build@main
+        with:
+          build-command: ${{ inputs.build-command }}
+        if: ${{ inputs.build-command != '' }}
+      - name: 'cache build output'
+        uses: actions/cache/save@v3
+        with:
+          path: ${{ inputs.build-output-dir }}
+          key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+        if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
+      - run: echo no build
+        if: ${{ inputs.build-command == '' }}
+
   matrix:
+    needs: [build]
     runs-on: ubuntu-latest
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
@@ -76,12 +103,21 @@ jobs:
           cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
           skip-ls-check: ${{ inputs.skip-ls-check || startsWith(matrix.node-version, '0') && 'true' || 'false' }}
       - run: echo "PACKAGE_JSON=$(jq -c . < package.json)" >> $GITHUB_ENV
+
+      - name: 'restore build output'
+        uses: actions/cache/restore@v3
+        with:
+          path: ${{ inputs.build-output-dir }}
+          key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+        if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
+
       - if: ${{ startsWith(fromJson(env.PACKAGE_JSON).name, '@') && startsWith(matrix.node-version, '0.') && ! startsWith(matrix.node-version, '0.1') }}
         run: eval $(node -e 'console.log(require("./package.json").scripts["${{ inputs.command }}".slice(8)])')
         env:
           PATH: "./node_modules/.bin/:${{ env.PATH }}"
       - run: ${{ inputs.command }}
         if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
+
       - uses: codecov/codecov-action@v3
         if: ${{ inputs.coverage == 'codecov' }}
       - uses: coverallsapp/github-action@v2
