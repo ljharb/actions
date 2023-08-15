@@ -1,0 +1,58 @@
+name: 'node CI: run the build'
+description: 'install node and npm dependencies, run a build command, and cache/restore the results'
+author: ljharb
+inputs:
+  build-command:
+    description: build command to run once, prior to all the matrix steps
+    required: true
+    type: string
+  skip-install:
+    description: 'skip `npm install` step'
+    default: 'false'
+    required: false
+  before_install:
+    description: 'command to run before `npm install`'
+    required: false
+  after_install:
+    description: 'command to run after `npm install`'
+    required: false
+  after_success:
+    description: 'command to run after everything succeeds. default runs codecov'
+    required: false
+  skip-ls-check:
+    description: 'skip the `npm ls` check (not recommended)'
+    required: false
+    default: 'false'
+  skip-latest-npm:
+    description: 'do not install the latest working npm version'
+    required: false
+    default: 'false'
+  use-npm-ci:
+    description: 'if true, will use `npm ci` instead of `npm install`'
+    required: false
+    default: 'false'
+outputs:
+  PATH:
+    description: 'PATH env variable to use to have node/npm available'
+runs:
+  using: "composite"
+  steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@v2
+      with:
+        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+      if: ${{ inputs.build-command != '' }}
+    - uses: actions/checkout@v3
+      if: ${{ inputs.build-command != '' }}
+    - uses: ljharb/actions/node/install@main
+      with:
+        node-version: lts/*
+        skip-install: ${{ inputs.skip-install }}
+        before_install: ${{ inputs.before_install }}
+        after_install: ${{ inputs.after_install }}
+        after_success: ${{ inputs.after_success }}
+        skip-ls-check: ${{ inputs.skip-ls-check }}
+        skip-latest-npm: ${{ inputs.skip-latest-npm }}
+        use-npm-ci: ${{ inputs.use-npm-ci }}
+    - run: ${{ inputs.build-command }}
+      shell: bash
