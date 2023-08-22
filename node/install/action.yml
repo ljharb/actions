@@ -39,6 +39,6 @@ outputs:
   PATH:
     description: 'PATH env variable to use to have node/npm available'
 runs:
-  using: node16
+  using: node20
   main: ./index.js
   post: ./post.js

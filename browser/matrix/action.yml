@@ -29,5 +29,5 @@ outputs:
   matrix:
     description: 'JSON array with objects containing `os`, `os_version`, `browser`, `browser_version`'
 runs:
-  using: node16
+  using: node20
   main: ./index.js
