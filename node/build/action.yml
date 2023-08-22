@@ -40,7 +40,15 @@ runs:
     - name: Harden Runner
       uses: step-security/harden-runner@v2
       with:
-        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+        disable-sudo: true
+        egress-policy: audit
+        allowed-endpoints: >
+          github.com:443
+          raw.githubusercontent.com:443
+          nodejs.org:443
+          iojs.org:443
+          registry.npmjs.org:443
+          actions-results-receiver-production.githubapp.com:443
       if: ${{ inputs.build-command != '' }}
     - uses: actions/checkout@v3
       if: ${{ inputs.build-command != '' }}
