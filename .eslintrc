@@ -6,5 +6,6 @@
 	"rules": {
 		"func-style": "off",
 		"sort-keys": "off",
+		"max-lines-per-function": "off",
 	},
 }
