@@ -33,7 +33,9 @@ jobs:
       - name: validate semver pattern
         run: npx semver ${{ steps.tag_name.outputs.current_version }}
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
 
       - uses: mindsers/changelog-reader-action@v2
         id: changelog_reader

@@ -117,7 +117,9 @@ jobs:
             registry.npmjs.org:443
             actions-results-receiver-production.githubapp.com:443
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
       - uses: ljharb/actions/node/install@main
         name: 'nvm install ${{ matrix.node-version }} && npm install'
         with:
@@ -176,7 +178,9 @@ jobs:
             registry.npmjs.org:443
             actions-results-receiver-production.githubapp.com:443
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
       - uses: ljharb/actions/node/install@main
         name: 'nvm install ${{ matrix.node-version }} && npm install'
         with:

@@ -50,7 +50,9 @@ runs:
           registry.npmjs.org:443
           actions-results-receiver-production.githubapp.com:443
       if: ${{ inputs.build-command != '' }}
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
+      with:
+        show-progress: false
       if: ${{ inputs.build-command != '' }}
     - uses: ljharb/actions/node/install@main
       with:

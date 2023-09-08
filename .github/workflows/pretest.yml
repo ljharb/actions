@@ -22,7 +22,9 @@ jobs:
             iojs.org:443
             registry.npmjs.org:443
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
       - uses: ljharb/actions/node/install@main
         name: 'nvm install lts/* && npm install'
         with:
@@ -45,7 +47,9 @@ jobs:
             iojs.org:443
             registry.npmjs.org:443
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
       - uses: ljharb/actions/node/install@main
         name: 'nvm install lts/* && npm install'
         with:
