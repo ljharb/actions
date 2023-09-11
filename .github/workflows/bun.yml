@@ -1,0 +1,131 @@
+on:
+  workflow_call:
+    inputs:
+      range:
+        description: "node.js semver range"
+        required: true
+        type: string
+      build-command:
+        description: optional build command to run once, prior to all the matrix steps
+        default: ''
+        required: false
+        type: string
+      build-output-dir:
+        description: 'build output directory to cache'
+        default: ''
+        required: false
+        type: string
+      command:
+        description: '`run:` step'
+        required: true
+        type: string
+      continue-on-error:
+        description: whether to continue on error
+        default: false
+        required: false
+        type: boolean
+      timeout-minutes:
+        required: false
+        type: number
+        default: 30
+      coverage:
+        description: coverage provider
+        required: false
+        type: string
+        default: codecov
+
+permissions:  # added using https://github.com/step-security/secure-repo
+    contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ljharb/actions/bun/build@main
+        with:
+          build-command: ${{ inputs.build-command }}
+        if: ${{ inputs.build-command != '' }}
+      - name: 'cache build output'
+        uses: actions/cache/save@v3
+        with:
+          path: ${{ inputs.build-output-dir }}
+          key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+        if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
+      - run: echo no build
+        if: ${{ inputs.build-command == '' }}
+
+  matrix:
+    needs: [build]
+    runs-on: ubuntu-latest
+    outputs:
+      latest: ${{ steps.set-matrix.outputs.requireds }}
+      nonlatest: ${{ steps.set-matrix.outputs.optionals }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            github.com:443
+            raw.githubusercontent.com:443
+            registry.npmjs.org:443
+            actions-results-receiver-production.githubapp.com:443
+
+      - uses: ljharb/actions/bun/matrix@main
+        id: set-matrix
+        with:
+          versionsAsRoot: true
+          range: ${{ inputs.range }}
+
+  bun-test:
+    needs: [matrix]
+    name: bun
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ inputs.continue-on-error }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJson(needs.matrix.outputs.latest) }}
+
+    steps:
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: ${{ matrix.version }}
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - run: bun install
+      - name: 'restore build output'
+        uses: actions/cache/restore@v3
+        with:
+          path: ${{ inputs.build-output-dir }}
+          key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+        if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
+      - run: cp $(which bun) $(which node)
+      - run: ${{ inputs.command }}
+      - uses: codecov/codecov-action@v3
+        if: ${{ inputs.coverage == 'codecov' }}
+      - uses: coverallsapp/github-action@v2
+        if: ${{ inputs.coverage == 'coveralls' }}
+        with:
+          parallel: true
+          flag-name: run ${{ join(matrix.*, ' - ') }}
+
+  bun:
+    name: bun tests
+    needs: [bun-test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            github.com:443
+            raw.githubusercontent.com:443
+            actions-results-receiver-production.githubapp.com:443
+
+      - run: 'echo tests completed'

@@ -1,0 +1,59 @@
+name: 'bun CI: run the build'
+description: 'install bun dependencies, run a build command, and cache/restore the results'
+author: ljharb
+inputs:
+  build-command:
+    description: build command to run once, prior to all the matrix steps
+    required: true
+    type: string
+  skip-install:
+    description: 'skip `bun install` step'
+    default: 'false'
+    required: false
+  before_install:
+    description: 'command to run before `bun install`'
+    required: false
+  after_install:
+    description: 'command to run after `bun install`'
+    required: false
+  after_success:
+    description: 'command to run after everything succeeds. default runs codecov'
+    required: false
+outputs:
+  PATH:
+    description: 'PATH env variable to use to have bun available'
+runs:
+  using: "composite"
+  steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@v2
+      with:
+        disable-sudo: true
+        egress-policy: audit
+        allowed-endpoints: >
+          github.com:443
+          raw.githubusercontent.com:443
+          registry.npmjs.org:443
+          actions-results-receiver-production.githubapp.com:443
+      if: ${{ inputs.build-command != '' }}
+    - uses: actions/checkout@v4
+      with:
+        show-progress: false
+      if: ${{ inputs.build-command != '' }}
+    - uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: latest
+    - run: ${{ inputs.before_install }}
+      if: ${{ inputs.before_install != '' }}
+      shell: bash
+    - run: bun install
+      if: ${{ !inputs.skip-install }}
+      shell: bash
+    - run: ${{ inputs.after_install }}
+      if: ${{ inputs.after_install != '' }}
+      shell: bash
+    - run: ${{ inputs.build-command }}
+      shell: bash
+    - run: ${{ inputs.after_success }}
+      if: ${{ inputs.after_success != '' }}
+      shell: bash
