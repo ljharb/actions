@@ -83,6 +83,12 @@ if [ "${CACHE_HIT-}" != 'true' ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
         echo "******> nvm install --latest-npm 0.10"
         nvm install --latest-npm 0.10
     ;;
+    1|1.*|2|2.*|3|3.*) # iojs can't seem to handle scoped dev deps, like `@types/*`
+        echo
+        echo
+        echo "******> nvm install --latest-npm 4"
+        nvm install --latest-npm 4
+    ;;
     5.*|6.1|6.2)
         echo
         echo
