@@ -6,8 +6,9 @@ const semver = require('semver');
 const getJSON = require('get-json');
 
 async function getNodeVersions(type = 'nodejs') {
-	const index = await getJSON(`https://${type}.org/dist/index.json`).catch((e) => {
-		console.error(`Error fetching and parsing JSON from \`https://${type}.org/dist/index.json\``);
+	const url = `https://raw.githubusercontent.com/ljharb/actions/${type}/index.json`; // `https://${type}.org/dist/index.json`;
+	const index = await getJSON(url).catch((e) => {
+		console.error(`Error fetching and parsing JSON from \`${url}\``);
 		throw e;
 	});
 	return index.map(({ version }) => version);
