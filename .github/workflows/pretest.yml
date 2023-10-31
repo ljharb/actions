@@ -55,3 +55,8 @@ jobs:
         with:
           node-version: 'lts/*'
       - run: npm run posttest
+
+  engines:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ljharb/actions/node/engines@main
