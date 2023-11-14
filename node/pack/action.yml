@@ -1,5 +1,5 @@
-name: 'node CI: check `engines` field'
-description: 'install node and npm dependencies, and check declared `engines` against the dep graph'
+name: 'node CI: test `npm pack`'
+description: 'install node and npm dependencies, run `npm pack`, and test things'
 author: ljharb
 inputs:
   build-command:
@@ -36,11 +36,6 @@ inputs:
     required: false
     default: false
     type: boolean
-  check-current:
-    description: 'if true, will check that the current version of node is compatible with the `engines` field'
-    required: false
-    default: false
-    type: boolean
 
 outputs:
   PATH:
@@ -73,5 +68,15 @@ runs:
         skip-ls-check: ${{ inputs.skip-ls-check }}
         skip-latest-npm: ${{ inputs.skip-latest-npm }}
         use-npm-ci: ${{ inputs.use-npm-ci }}
-    - run: npx ls-engines --production ${{ !inputs.check-current && '--no-current' }}
+    - name: '`npm pack`'
+      run: echo "tarball=$(npm pack)" >> $GITHUB_OUTPUT
+      shell: bash
+      id: pack
+    - name: list contents of valid tarball
+      run: tar -ztf ${{ steps.pack.outputs.tarball }} | sed 's#^package/##g'
+      shell: bash
+    - name: extract tarball in situ
+      run: tar -zxvf ${{ steps.pack.outputs.tarball }} --strip-components=1 -C . package
+      shell: bash
+    - run: npm run tests-only
       shell: bash
