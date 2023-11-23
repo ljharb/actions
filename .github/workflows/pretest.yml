@@ -1,6 +1,13 @@
 name: 'Tests: pretest/posttest'
 
-on: workflow_call
+on:
+  workflow_call:
+    inputs:
+      skip-engines:
+        description: skip "engines" check
+        default: false
+        required: false
+        type: boolean
 
 permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
@@ -57,6 +64,7 @@ jobs:
       - run: npm run posttest
 
   engines:
+    if: ${{ ! inputs.skip-engines }}
     runs-on: ubuntu-latest
     steps:
       - uses: ljharb/actions/node/engines@main
