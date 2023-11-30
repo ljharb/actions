@@ -36,6 +36,11 @@ inputs:
     required: false
     default: false
     type: boolean
+  working-directory:
+    description: 'working directory for run steps'
+    required: false
+    default: '.'
+    type: string
 
 outputs:
   PATH:
@@ -62,7 +67,7 @@ runs:
       with:
         node-version: lts/*
         skip-install: ${{ inputs.skip-install }}
-        before_install: ${{ inputs.before_install }}
+        before_install: cd ${{ inputs.working-directory }} ; ${{ inputs.before_install }}
         after_install: ${{ inputs.after_install }}
         after_success: ${{ inputs.after_success }}
         skip-ls-check: ${{ inputs.skip-ls-check }}
@@ -72,11 +77,15 @@ runs:
       run: echo "tarball=$(npm pack)" >> $GITHUB_OUTPUT
       shell: bash
       id: pack
+      working-directory: ${{ inputs.working-directory }}
     - name: list contents of valid tarball
       run: tar -ztf ${{ steps.pack.outputs.tarball }} | sed 's#^package/##g'
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
     - name: extract tarball in situ
       run: tar -zxvf ${{ steps.pack.outputs.tarball }} --strip-components=1 -C . package
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
     - run: npm run tests-only
       shell: bash
+      working-directory: ${{ inputs.working-directory }}

@@ -41,6 +41,11 @@ inputs:
     required: false
     default: false
     type: boolean
+  working-directory:
+    description: 'working directory for run steps'
+    required: false
+    default: '.'
+    type: string
 
 outputs:
   PATH:
@@ -67,7 +72,7 @@ runs:
       with:
         node-version: lts/*
         skip-install: ${{ inputs.skip-install }}
-        before_install: ${{ inputs.before_install }}
+        before_install: cd ${{ inputs.working-directory }} ; ${{ inputs.before_install }}
         after_install: ${{ inputs.after_install }}
         after_success: ${{ inputs.after_success }}
         skip-ls-check: ${{ inputs.skip-ls-check }}
@@ -75,3 +80,4 @@ runs:
         use-npm-ci: ${{ inputs.use-npm-ci }}
     - run: npx ls-engines --production ${{ !inputs.check-current && '--no-current' }}
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
