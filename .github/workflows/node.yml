@@ -43,6 +43,11 @@ on:
         required: false
         type: string
         default: codecov
+      subpackage:
+        description: 'subdirectory to `npm install` in'
+        required: false
+        type: string
+        default: ''
 
 permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
@@ -120,12 +125,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           show-progress: false
+
       - uses: ljharb/actions/node/install@main
         name: 'nvm install ${{ matrix.node-version }} && npm install'
         with:
           node-version: ${{ matrix.node-version }}
           cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
           skip-ls-check: ${{ inputs.skip-ls-check || startsWith(matrix.node-version, '0') && 'true' || 'false' }}
+
+      - run: echo "NVM_DIR=${NVM_DIR}" >> $GITHUB_ENV
+      - uses: ljharb/actions/npm/install@main
+        if: ${{ inputs.subpackage != '' }}
+        name: 'npm install, ${{ inputs.subpackage }}'
+        with:
+          nvm-dir: "${{ env.NVM_DIR }}"
+          before_install: cd ${{ inputs.subpackage }}
+          cache-node-modules-key: node_modules-${{ inputs.subpackage }}-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: ${{ inputs.skip-ls-check || startsWith(matrix.node-version, '0') && 'true' || 'false' }}
+
       - run: echo "PACKAGE_JSON=$(jq -c . < package.json)" >> $GITHUB_ENV
 
       - name: 'restore build output'
@@ -141,7 +158,6 @@ jobs:
           PATH: "./node_modules/.bin/:${{ env.PATH }}"
       - run: ${{ inputs.command }}
         if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
-
 
       - uses: codecov/codecov-action@v3
         if: ${{ inputs.coverage == 'codecov' }}
@@ -187,6 +203,18 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
           skip-ls-check: true
+
+      - run: echo "NVM_DIR=${NVM_DIR}" >> $GITHUB_ENV
+      - uses: ljharb/actions/npm/install@main
+        if: ${{ inputs.subpackage != '' }}
+        name: 'npm install, ${{ inputs.subpackage }}'
+        with:
+          node-version: ${{ matrix.node-version }}
+          nvm-dir: "${{ env.NVM_DIR }}"
+          before_install: cd ${{ inputs.subpackage }}
+          cache-node-modules-key: node_modules-${{ inputs.subpackage }}-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: ${{ inputs.skip-ls-check || startsWith(matrix.node-version, '0') && 'true' || 'false' }}
+
       - run: echo "PACKAGE_JSON=$(jq -c . < package.json)" >> $GITHUB_ENV
 
       - name: 'restore build output'
