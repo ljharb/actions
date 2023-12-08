@@ -14,7 +14,7 @@ jobs:
         kind:
           - nodejs
           - iojs
-    
+
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@v2
@@ -36,8 +36,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ matrix.kind }}
-      - run: curl "https://${{ matrix.kind }}.org/index.tab"
-      - run: curl "https://${{ matrix.kind }}.org/index.json"
+      - run: curl -O -J "https://${{ matrix.kind }}.org/dist/index.tab"
+      - run: curl -O -J "https://${{ matrix.kind }}.org/dist/index.json"
+      - run: git diff && git status
       - name: commit changes
         uses: elstudio/actions-js-build/commit@v4
         with:
