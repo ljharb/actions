@@ -49,4 +49,4 @@ jobs:
     needs: [cache]
 
     steps:
-      - run: echo finished
+      - run: true

@@ -56,7 +56,7 @@ jobs:
           path: ${{ inputs.build-output-dir }}
           key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
         if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
-      - run: echo no build
+      - run: true
         if: ${{ inputs.build-command == '' }}
 
   matrix:
@@ -166,4 +166,4 @@ jobs:
         if: ${{ inputs.coverage == 'coveralls' }}
         with:
           parallel-finished: true
-      - run: 'echo tests completed'
+      - run: true
