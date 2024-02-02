@@ -136,7 +136,7 @@ jobs:
       - run: ${{ inputs.command }}
         if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
 
-      - uses: codecov/codecov-action@v3
+      - uses: codecov/codecov-action@v3.1.5
         if: ${{ inputs.coverage == 'codecov' }}
       - uses: coverallsapp/github-action@v2
         if: ${{ inputs.coverage == 'coveralls' }}
