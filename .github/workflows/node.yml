@@ -237,6 +237,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
+        if: ${{ inputs.coverage == 'coveralls' }}
         uses: step-security/harden-runner@v2
         with:
           disable-sudo: true
