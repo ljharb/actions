@@ -136,7 +136,7 @@ jobs:
       - run: echo "NVM_DIR=${NVM_DIR}" >> $GITHUB_ENV
       - uses: ljharb/actions/npm/install@main
         if: ${{ inputs.subpackage != '' }}
-        name: 'npm install, ${{ inputs.subpackage }}'
+        name: 'npm install, subpackage: ${{ inputs.subpackage }}'
         with:
           nvm-dir: "${{ env.NVM_DIR }}"
           before_install: cd ${{ inputs.subpackage }}
@@ -206,7 +206,7 @@ jobs:
       - run: echo "NVM_DIR=${NVM_DIR}" >> $GITHUB_ENV
       - uses: ljharb/actions/npm/install@main
         if: ${{ inputs.subpackage != '' }}
-        name: 'npm install, ${{ inputs.subpackage }}'
+        name: 'npm install, subpackage: ${{ inputs.subpackage }}'
         with:
           node-version: ${{ matrix.node-version }}
           nvm-dir: "${{ env.NVM_DIR }}"
