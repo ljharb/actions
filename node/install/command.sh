@@ -89,7 +89,7 @@ if [ "${CACHE_HIT-}" != 'true' ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
         echo "******> nvm install --latest-npm 4"
         nvm install --latest-npm 4
     ;;
-    5.*|6.1|6.2)
+    5.*|6.0|6.1|6.2)
         echo
         echo
         echo "******> nvm install --latest-npm 6"
