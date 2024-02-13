@@ -170,7 +170,6 @@ jobs:
   nonlatest:
     needs: [matrix, latest]
     name: 'non-latest minors'
-    continue-on-error: true
     timeout-minutes: ${{ inputs.timeout-minutes }}
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
     runs-on: ubuntu-latest
@@ -228,8 +227,10 @@ jobs:
         run: eval $(node -e 'console.log(require("./package.json").scripts["${{ inputs.command }}".slice(8)])')
         env:
           PATH: "./node_modules/.bin/:${{ env.PATH }}"
+        continue-on-error: true
       - run: ${{ inputs.command }}
         if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
+        continue-on-error: true
 
   node:
     name: node ${{ inputs.type }} @ ${{ inputs.range }}
