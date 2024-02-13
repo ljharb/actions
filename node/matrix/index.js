@@ -46,7 +46,7 @@ function get0xReqs(filter) {
 	const optionals = [
 		'0.11',
 		'0.9',
-		'0.6',
+		// '0.6',
 		// '0.4',
 	].filter((x) => !filter || filter.some((f) => semver.satisfies(f, x)));
 	return { requireds, optionals };
