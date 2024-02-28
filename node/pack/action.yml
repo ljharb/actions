@@ -74,7 +74,7 @@ runs:
         skip-latest-npm: ${{ inputs.skip-latest-npm }}
         use-npm-ci: ${{ inputs.use-npm-ci }}
     - name: '`npm pack`'
-      run: echo "tarball=$(npm pack)" >> $GITHUB_OUTPUT
+      run: echo "tarball=$(npm pack 2>/dev/null | tail -n1)" >> $GITHUB_OUTPUT
       shell: bash
       id: pack
       working-directory: ${{ inputs.working-directory }}
