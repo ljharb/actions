@@ -8,7 +8,8 @@ const hijackActionsCore = require('../helpers/hijackActionsCore');
 const { status: nvmStatus } = spawnSync('node', [require.resolve('setup-node-nvm')]);
 
 if (nvmStatus !== 0) {
-	process.exitCode = nvmStatus;
+	process.exitCode ||= nvmStatus ?? 1;
+	// @ts-expect-error top-level return is valid in CJS
 	return;
 }
 
@@ -38,17 +39,19 @@ async function main() {
 		throw new TypeError('One of `command` or `shell-command` must be provided');
 	}
 
-	const { status } = spawnSync('bash', [
+	const bashArgs = [
 		path.join(__dirname, 'command.sh'),
 		core.getInput('node-version', { required: true }),
 		shellCmd || `npm run "${cmd}"`,
 		core.getInput('before_install'),
-		String(cacheHit),
+		cacheHit,
 		core.getInput('after_install'),
 		String(core.getInput('skip-ls-check')) === 'true',
 		String(core.getInput('skip-install')) === 'true',
 		installCommand,
-	], {
+	].map(String);
+
+	const { status } = spawnSync('bash', bashArgs, {
 		cwd: process.cwd(),
 		stdio: 'inherit',
 	});
@@ -69,7 +72,5 @@ main().catch((error) => {
 	if (error) {
 		console.error(error);
 	}
-	if (!process.exitCode) {
-		process.exitCode = 1;
-	}
+	process.exitCode ||= 1;
 });

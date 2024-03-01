@@ -3,6 +3,7 @@
 const fs = require('fs');
 const https = require('https');
 
+/** @type {(url: string, dest: fs.PathLike) => Promise<void>} */
 module.exports = async function downloadFile(url, dest) {
 	const file = fs.createWriteStream(dest);
 	return new Promise((resolve) => {

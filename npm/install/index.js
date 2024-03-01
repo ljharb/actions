@@ -25,23 +25,25 @@ async function main() {
 		await require('cache/dist/restore').default(); // eslint-disable-line global-require
 	}
 
-	const { status } = spawnSync('bash', [
+	const bashArgs = [
 		path.join(__dirname, 'command.sh'),
 		core.getInput('node-version', { required: true }),
 		core.getInput('before_install'),
-		String(cacheHit),
+		cacheHit,
 		core.getInput('after_install'),
 		String(core.getInput('skip-ls-check')) === 'true',
 		String(core.getInput('skip-install')) === 'true',
 		installCommand,
 		String(core.getInput('skip-latest-npm')) === 'true',
-	], {
+	].map(String);
+
+	const { status } = spawnSync('bash', bashArgs, {
 		cwd: process.cwd(),
 		env: { ...process.env, NVM_DIR: nvmDir },
 		stdio: 'inherit',
 	});
 
-	process.exitCode = status;
+	process.exitCode ||= status ?? 1;
 
 	core.info(`got status code ${status}`);
 
@@ -59,7 +61,5 @@ main().catch((error) => {
 	if (error) {
 		console.error(error);
 	}
-	if (!process.exitCode) {
-		process.exitCode = 1;
-	}
+	process.exitCode ||= 1;
 });

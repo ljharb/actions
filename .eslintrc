@@ -6,7 +6,9 @@
 	"rules": {
 		"func-style": "off",
 		"sort-keys": "off",
+		"max-len": "off",
 		"max-lines-per-function": "off",
 		"max-statements-per-line": ["error", { "max": 2 }],
+		"multiline-comment-style": "off",
 	},
 }
