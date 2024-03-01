@@ -3,6 +3,7 @@
 const core = require('@actions/core');
 const { spawnSync } = require('child_process');
 const path = require('path');
+const hijackActionsCore = require('../helpers/hijackActionsCore');
 
 const { status: nvmStatus } = spawnSync('node', [require.resolve('setup-node-nvm')]);
 
@@ -24,22 +25,7 @@ async function main() {
 		process.env.INPUT_PATH = 'node_modules';
 		core.getInput('path', { required: true }); // assert
 
-		const { write } = process.stdout;
-		process.stdout.write = function (arg) {
-			if (typeof arg === 'string') {
-				if (arg.startsWith('::save-state name=')) {
-					const [name, value] = arg.slice('::save-state name='.length).split('::');
-					core.info(`hijacking core.saveState output: ${name.split(',')}=${value}`);
-					name.split(',').forEach((x) => {
-						process.env[`STATE_${x}`] = value;
-					});
-				} else if (arg.startsWith('::set-output name=cache-hit::')) {
-					core.info(`hijacking core.setOutput output: ${arg}`);
-					cacheHit = arg === '::set-output name=cache-hit::true';
-				}
-			}
-			return write.apply(process.stdout, arguments); // eslint-disable-line prefer-rest-params
-		};
+		hijackActionsCore((x) => { cacheHit = x; });
 
 		await require('cache/dist/restore').default(); // eslint-disable-line global-require
 	}
