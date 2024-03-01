@@ -5,6 +5,10 @@ on:
         description: "node.js semver range"
         required: true
         type: string
+      notable:
+        description: "notable versions range"
+        required: false
+        type: string
       type:
         description: 'majors or minors'
         default: majors
@@ -95,6 +99,7 @@ jobs:
           versionsAsRoot: true
           type: ${{ inputs.type }}
           preset: ${{ inputs.range }}
+          notable: ${{ inputs.notable || '' }}
 
   latest:
     needs: [matrix]

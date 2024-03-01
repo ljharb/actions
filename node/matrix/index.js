@@ -68,17 +68,19 @@ function comparator(a, b) {
 
 /** @type {(filter?: nvmVersionish[]) => ReqOptMap} */
 function get0xReqs(filter) {
+	/** @type {(x: string) => boolean} */
+	const filterer = (x) => !filter || filter.some((f) => semver.satisfies(f, x));
 	const requireds = [
 		'0.12',
 		'0.10',
 		'0.8',
-	].filter((x) => !filter || filter.some((f) => semver.satisfies(f, x)));
+	].filter(filterer);
 	const optionals = [
 		'0.11',
 		'0.9',
 		// '0.6',
 		// '0.4',
-	].filter((x) => !filter || filter.some((f) => semver.satisfies(f, x)));
+	].filter(filterer);
 	/* eslint no-extra-parens: 0, object-shorthand: 0 */
 	return {
 		requireds: /** @type {ReqOptMap['requireds']} */ (requireds),
@@ -93,8 +95,8 @@ function iojsMapper(x) {
 	return semver.satisfies(x, iojsRange) ? `iojs-v${x}` : x;
 }
 
-/** @type {(regRange: string, optRange: string, type: Type) => Promise<ReqOptMap>} */
-async function getReqOpts(reqRange, optRange, type) {
+/** @type {(regRange: string, optRange: string, type: Type, isNotable?: boolean) => Promise<ReqOptMap>} */
+async function getReqOpts(reqRange, optRange, type, isNotable) {
 	const versions = (await allVersions)
 		.filter((v) => (reqRange && semver.satisfies(v, reqRange)) || (optRange && semver.satisfies(v, optRange)));
 	const map = getMinorsByMajor(versions);
@@ -105,6 +107,7 @@ async function getReqOpts(reqRange, optRange, type) {
 	let requireds = [];
 	/** @type {ReqOptMap['optionals']} */
 	let optionals = [];
+
 	if (type === 'majors') {
 		if (reqRange) {
 			const entries = (/** @type {[MajMin | Maj, Version[]]} */ (/** @type {unknown} */ (Object.entries(map))));
@@ -129,6 +132,8 @@ async function getReqOpts(reqRange, optRange, type) {
 					))
 			);
 		}
+	} else if (isNotable) {
+		return { requireds: values.flat().sort(comparator), optionals };
 	} else if (reqRange && !optRange) {
 		const reqs = values.flat();
 		requireds = reqs.filter((x) => semver.subset(x, '>= 1') || req0x.includes(x));
@@ -157,6 +162,20 @@ async function getReqOpts(reqRange, optRange, type) {
 	return { requireds, optionals };
 }
 
+/** @type {(map: Awaited<ReturnType<typeof getReqOpts>>, opts: { type: Type, notable: string }) => Promise<typeof map>} */
+async function addNotable({ requireds: oldReqs, optionals: oldOpts }, { type, notable }) {
+	const { requireds: notableVersions } = await getReqOpts(notable, '', type, true);
+
+	/** @type {Set<nvmVersionish>} */ // @ts-expect-error TS sucks with concat
+	const requiredSet = new Set([].concat(notableVersions, oldReqs));
+
+	const requireds = Array.from(requiredSet).sort(comparator);
+
+	const optionals = oldOpts.filter((x) => !requiredSet.has(x));
+
+	return { requireds, optionals };
+}
+
 /** @type {(preset: '0.x' | 'iojs' | string, type: Type) => Promise<ReqOptMap>} */
 async function getPreset(preset, type) {
 	if (preset === '0.x') {
@@ -178,6 +197,7 @@ async function main() {
 	const optionals = core.getInput('optionals');
 	const type = /** @type {Type} */ (core.getInput('type'));
 	const preset = core.getInput('preset');
+	const notable = core.getInput('notable');
 	/** @type {Record<string, string>} */
 	const envs = JSON.parse(core.getInput('envs') || 'null');
 	if (envs && versionsAsRoot) {
@@ -189,6 +209,9 @@ async function main() {
 	}
 	if (preset && (requireds || optionals)) {
 		throw new TypeError('if `preset` is provided, `requireds` and `optionals` must not be');
+	}
+	if (!preset && notable) {
+		throw new TypeError('`notable` may only be provided if `preset` is provided');
 	}
 	if (type && (type !== 'majors' && type !== 'minors')) {
 		throw new TypeError('`type` must be "majors" or "minors"');
@@ -209,9 +232,12 @@ async function main() {
 	const {
 		requireds: reqs,
 		optionals: opts,
-	} = await (preset
-		? getPreset(preset, type)
-		: getReqOpts(requireds, optionals, type)
+	} = await addNotable(
+		await (preset
+			? getPreset(preset, type)
+			: getReqOpts(requireds, optionals, type)
+		),
+		{ notable, type },
 	);
 
 	const requiredsOutput = makePayload(reqs);

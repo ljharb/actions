@@ -12,8 +12,11 @@ inputs:
     description: 'semver range for optional versions'
   preset:
     description: 'optional preset, takes precedence over requireds/optionals'
+  notable:
+    description: 'semver range for notable versions, that should be pulled from "preset" into "required"'
   type:
     description: 'majors, or minors?'
+    choices: ['majors', 'minors']
   envs:
     description: 'optional env variables to add to the matrix'
     required: false
