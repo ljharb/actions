@@ -78,6 +78,10 @@ runs:
       shell: bash
       id: pack
       working-directory: ${{ inputs.working-directory }}
+    - name: tarball name is nonempty
+      run: ls -lah; npm pack --loglevel=silly; exit 1
+      shell: bash
+      if: steps.pack.outputs.tarball == ''
     - name: list contents of valid tarball
       run: tar -ztf ${{ steps.pack.outputs.tarball }} | sed 's#^package/##g'
       shell: bash
