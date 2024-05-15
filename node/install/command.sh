@@ -48,6 +48,11 @@ case "${VERSION}" in
     SKIP_LS_CHECK=true
   ;;
   *)
+    if nvm_has arch; then
+      echo "******> set +e (in theory, this is a Mac)"
+      set +e
+    fi
+
     echo
     echo
     if [ "${SKIP_LATEST_NPM-}" != 'true' ]; then
@@ -56,6 +61,22 @@ case "${VERSION}" in
     else
       echo "******> nvm install $VERSION"
       nvm install "${VERSION}"
+    fi
+
+    if nvm_has arch; then
+      echo "******> set -e (in theory, this is a Mac)"
+      set -e
+    fi
+    if [ $? -ne 0 ] && nvm_has arch; then
+      echo
+      echo
+      if [ "${SKIP_LATEST_NPM-}" != 'true' ]; then
+        echo "******> arch -x86_64 /bin/bash -c 'nvm install --latest-npm $VERSION'"
+        arch -x86_64 /bin/bash -c "nvm install --latest-npm ${VERSION}"
+      else
+        echo "******> arch -x86_64 /bin/bash -c 'nvm install $VERSION'"
+        arch -x86_64 /bin/bash -c "nvm install ${VERSION}"
+      fi
     fi
   ;;
 esac
