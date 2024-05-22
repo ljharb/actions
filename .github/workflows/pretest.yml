@@ -8,6 +8,11 @@ on:
         default: false
         required: false
         type: boolean
+      skip-pack:
+        description: skip "pack" check
+        default: false
+        required: false
+        type: boolean
 
 permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
@@ -70,6 +75,7 @@ jobs:
       - uses: ljharb/actions/node/engines@main
 
   pack:
+    if: ${{ ! inputs.skip-pack }}
     runs-on: ubuntu-latest
     steps:
       - uses: ljharb/actions/node/pack@main
