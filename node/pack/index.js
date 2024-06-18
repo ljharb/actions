@@ -24,6 +24,8 @@ async function main() {
 		hijackActionsCore((x) => { cacheHit = x; });
 
 		await require('cache/dist/restore').default(); // eslint-disable-line global-require
+
+		execSync('git checkout -- node_modules'); // for bundled deps, like tape-lib
 	}
 
 	const bashArgs = [
