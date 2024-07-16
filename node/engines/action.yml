@@ -2,6 +2,10 @@ name: 'node CI: check `engines` field'
 description: 'install node and npm dependencies, and check declared `engines` against the dep graph'
 author: ljharb
 inputs:
+  node-version:
+    description: 'version of node to use via nvm'
+    required: false
+    default: 'lts/*'
   build-command:
     description: build command to run once, prior to all the matrix steps
     required: false
@@ -70,7 +74,7 @@ runs:
         show-progress: false
     - uses: ljharb/actions/node/install@main
       with:
-        node-version: lts/*
+        node-version: ${{ inputs.node-version }}
         skip-install: ${{ inputs.skip-install }}
         before_install: cd ${{ inputs.working-directory }} ; ${{ inputs.before_install }}
         after_install: ${{ inputs.after_install }}

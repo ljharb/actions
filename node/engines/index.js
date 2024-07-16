@@ -44,7 +44,7 @@ async function main() {
 		stdio: 'inherit',
 	});
 
-	process.exitCode = status;
+	process.exitCode ||= status ?? 0;
 
 	core.info(`got status code ${status}`);
 

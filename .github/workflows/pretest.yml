@@ -18,8 +18,27 @@ permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
 
 jobs:
+  determine-node-version:
+    runs-on: ubuntu-latest
+    outputs:
+      node-version: ${{ steps.node-version.outputs.v }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - name: debug info
+        run: npm --version
+      - name: 'get node version'
+        id: node-version
+        run: |
+          npm install --no-save @pkgjs/nv@0.2 semver@^7
+          echo "v=$(node -e "var v = require('./package.json').engines?.node || '^20'; require('@pkgjs/nv')(v).then(x => console.log(require('semver/ranges/max-satisfying')(x.map(y => y.version), v)))")" >> $GITHUB_OUTPUT
+          cat $GITHUB_OUTPUT
+        shell: bash
+
   pretest:
     runs-on: ubuntu-latest
+    needs: [determine-node-version]
 
     steps:
       - name: Harden Runner
@@ -38,13 +57,14 @@ jobs:
         with:
           show-progress: false
       - uses: ljharb/actions/node/install@main
-        name: 'nvm install lts/* && npm install'
+        name: 'nvm install ${{ needs.determine-node-version.outputs.node-version }} && npm install'
         with:
-          node-version: 'lts/*'
+          node-version: ${{ needs.determine-node-version.outputs.node-version }}
       - run: npm run pretest
 
   posttest:
     runs-on: ubuntu-latest
+    needs: [determine-node-version]
 
     steps:
       - name: Harden Runner
@@ -63,19 +83,27 @@ jobs:
         with:
           show-progress: false
       - uses: ljharb/actions/node/install@main
-        name: 'nvm install lts/* && npm install'
+        name: 'nvm install ${{ needs.determine-node-version.outputs.node-version }} && npm install'
         with:
-          node-version: 'lts/*'
+          node-version: ${{ needs.determine-node-version.outputs.node-version }}
       - run: npm run posttest
 
   engines:
     if: ${{ ! inputs.skip-engines }}
     runs-on: ubuntu-latest
+    needs: [determine-node-version]
+
     steps:
       - uses: ljharb/actions/node/engines@main
+        with:
+          node-version: ${{ needs.determine-node-version.outputs.node-version }}
 
   pack:
     if: ${{ ! inputs.skip-pack }}
     runs-on: ubuntu-latest
+    needs: [determine-node-version]
+
     steps:
       - uses: ljharb/actions/node/pack@main
+        with:
+          node-version: ${{ needs.determine-node-version.outputs.node-version }}

@@ -1,7 +1,7 @@
 'use strict';
 
 const core = require('@actions/core');
-const { spawnSync } = require('child_process');
+const { spawnSync, execSync } = require('child_process');
 const path = require('path');
 
 const hijackActionsCore = require('../helpers/hijackActionsCore');
@@ -46,7 +46,7 @@ async function main() {
 		stdio: 'inherit',
 	});
 
-	process.exitCode = status;
+	process.exitCode ||= status ?? 0;
 
 	core.info(`got status code ${status}`);
 
