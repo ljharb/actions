@@ -27,7 +27,8 @@ async function getNodeVersions(type = 'nodejs') {
 			throw e;
 		})
 	);
-	return index.map(({ version }) => version);
+	console.log(index.map(({ version }) => version));
+	return index.map(({ version }) => version).filter((x) => x !== 'v22.5.0');
 }
 
 const nodeVersions = getNodeVersions();

@@ -32,7 +32,7 @@ jobs:
         id: node-version
         run: |
           npm install --no-save @pkgjs/nv@0.2 semver@^7
-          echo "v=$(node -e "var v = require('./package.json').engines?.node; var nv = require('@pkgjs/nv'); var satisfies = require('semver/functions/satisfies'); v ? Promise.all([nv('lts/*'), nv(v)]).then(([[{ version }], vVersions]) => { if (satisfies(version, v)) { console.log('lts/*'); } else { console.log(vVersions[vVersions.length - 1].version); } }) : console.log('lts/*')")" >> $GITHUB_OUTPUT
+          echo "v=$(node -e "var v = require('./package.json').engines?.node; var nv = require('@pkgjs/nv'); var satisfies = require('semver/functions/satisfies'); v ? Promise.all([nv('lts/*'), nv(v)]).then(([[{ version }], vVersions]) => { if (satisfies(version, v)) { console.log('lts/*'); } else { const vVs = vVersions.filter((x) => x.version !== '22.5.0'); console.log(vVs[vVs.length - 1].version); } }) : console.log('lts/*')")" >> $GITHUB_OUTPUT
           cat $GITHUB_OUTPUT
         shell: bash
 
