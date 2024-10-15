@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.2.0](https://github.com/ljharb/tsconfig/compare/v0.1.1...v0.2.0) - 2024-03-08
+
+### Commits
+
+- [meta] use tabs [`be27c01`](https://github.com/ljharb/tsconfig/commit/be27c01fd896887be3f5e81cb5246209bef0bcb7)
+- [New] enable a few more errors [`d5d25b7`](https://github.com/ljharb/tsconfig/commit/d5d25b714b8960f69dd87385527953641a6e01cd)
+
 ## [v0.1.1](https://github.com/ljharb/tsconfig/compare/v0.1.0...v0.1.1) - 2024-03-08
 
 ### Commits

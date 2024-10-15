@@ -1,7 +1,8 @@
 {
 	"private": true,
 	"scripts": {
-		"lint": "eslint --ext=js,mjs ."
+		"lint": "eslint --ext=js,mjs .",
+		"postlint": "tsc -p ."
 	},
 	"dependencies": {
 		"@actions/core": "^1.10.1",
@@ -13,10 +14,11 @@
 		"setup-node-nvm": "github:dcodeIO/setup-node-nvm#v4"
 	},
 	"devDependencies": {
-		"@ljharb/eslint-config": "^21.1.0",
-		"@ljharb/tsconfig": "^0.1.1",
+		"@ljharb/eslint-config": "^21.1.1",
+		"@ljharb/tsconfig": "^0.2.0",
+		"@types/node": "^20.16.11",
 		"@types/semver": "^7.5.8",
 		"eslint": "=8.8.0",
-		"typescript": "^5.5.0-dev.20240301"
+		"typescript": "next"
 	}
 }
