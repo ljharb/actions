@@ -9,7 +9,7 @@ jobs:
   _:
     name: "Automatic Rebase"
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     permissions:
       contents: write  # for ljharb/rebase to push code to rebase

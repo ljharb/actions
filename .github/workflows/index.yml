@@ -5,7 +5,7 @@ on:
 
 jobs:
   cache:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     continue-on-error: true
 
     strategy:
@@ -45,7 +45,7 @@ jobs:
           commitMessage: "curl \"https://${{ matrix.kind }}.org/dist/index.tab\" (and .json)"
 
   finisher:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [cache]
 
     steps:

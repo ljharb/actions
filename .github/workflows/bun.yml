@@ -39,7 +39,7 @@ permissions:  # added using https://github.com/step-security/secure-repo
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: ljharb/actions/bun/build@main
         with:
@@ -56,7 +56,7 @@ jobs:
 
   matrix:
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
       nonlatest: ${{ steps.set-matrix.outputs.optionals }}
@@ -81,7 +81,7 @@ jobs:
   bun-test:
     needs: [matrix]
     name: bun
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     strategy:
@@ -116,7 +116,7 @@ jobs:
   bun:
     name: bun tests
     needs: [bun-test]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@v2

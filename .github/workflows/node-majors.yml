@@ -44,7 +44,7 @@ permissions:  # added using https://github.com/step-security/secure-repo
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: ljharb/actions/node/build@main
         with:
@@ -61,7 +61,7 @@ jobs:
 
   matrix:
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
     steps:
@@ -88,7 +88,7 @@ jobs:
   latest:
     needs: [matrix]
     name: 'latest majors'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -147,7 +147,7 @@ jobs:
   node:
     name: node majors
     needs: [latest]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@v2

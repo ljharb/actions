@@ -58,7 +58,7 @@ permissions:  # added using https://github.com/step-security/secure-repo
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: ljharb/actions/node/build@main
         with:
@@ -75,7 +75,7 @@ jobs:
 
   matrix:
     needs: [build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
       nonlatest: ${{ steps.set-matrix.outputs.optionals }}
@@ -104,7 +104,7 @@ jobs:
   latest:
     needs: [matrix]
     name: 'latest minors'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -177,7 +177,7 @@ jobs:
     name: 'non-latest minors'
     timeout-minutes: ${{ inputs.timeout-minutes }}
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     strategy:
       fail-fast: false
@@ -240,7 +240,7 @@ jobs:
   node:
     name: node ${{ inputs.type }} @ ${{ inputs.range }}
     needs: [latest, nonlatest]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner
         if: ${{ inputs.coverage == 'coveralls' }}

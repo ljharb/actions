@@ -21,7 +21,7 @@ on:
 
 jobs:
   matrix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
@@ -35,7 +35,7 @@ jobs:
   tests:
     name: '${{ matrix.browser }} ${{ matrix.browser-version }}, on ${{ matrix.os }} ${{ matrix.os-version }}'
     needs: [matrix]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     strategy:
       fail-fast: false
@@ -129,6 +129,6 @@ jobs:
   browser:
     name: 'Browser Tests (${{ inputs.browser }})'
     needs: [tests]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - run: true

@@ -16,7 +16,7 @@ permissions:  # added using https://github.com/step-security/secure-repo
 jobs:
   notable-esm:
     name: 'notable ESM minors'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
     strategy:
@@ -58,7 +58,7 @@ jobs:
   node:
     name: 'node, notable ESM minors'
     needs: [notable-esm]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@v2

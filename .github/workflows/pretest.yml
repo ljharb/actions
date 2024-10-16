@@ -19,7 +19,7 @@ permissions:  # added using https://github.com/step-security/secure-repo
 
 jobs:
   determine-node-version:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
       node-version: ${{ steps.node-version.outputs.v }}
     steps:
@@ -37,7 +37,7 @@ jobs:
         shell: bash
 
   pretest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [determine-node-version]
 
     steps:
@@ -63,7 +63,7 @@ jobs:
       - run: npm run pretest
 
   posttest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [determine-node-version]
 
     steps:
@@ -90,7 +90,7 @@ jobs:
 
   engines:
     if: ${{ ! inputs.skip-engines }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [determine-node-version]
 
     steps:
@@ -100,7 +100,7 @@ jobs:
 
   pack:
     if: ${{ ! inputs.skip-pack }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: [determine-node-version]
 
     steps:
