@@ -17,7 +17,7 @@
 	"devDependencies": {
 		"@ljharb/eslint-config": "^21.1.1",
 		"@ljharb/tsconfig": "^0.2.0",
-		"@types/node": "^20.16.11",
+		"@types/node": "^20.16.15",
 		"@types/semver": "^7.5.8",
 		"eslint": "=8.8.0",
 		"typescript": "next"
