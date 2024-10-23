@@ -9,7 +9,7 @@ const installNVM = require('../helpers/installNVM');
 
 const cacheKey = core.getInput('cache-node-modules-key');
 
-const installCommand = core.getInput('use-npm-ci', { required: true }) === 'true' ? 'ci' : 'install';
+const installCommand = core.getInput('use-npm-ci') === 'true' ? 'ci' : 'install';
 
 async function main() {
 	const nvmDir = await installNVM();
