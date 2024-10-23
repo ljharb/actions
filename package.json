@@ -10,6 +10,7 @@
 		"cache": "github:actions/cache#v4.1.1",
 		"get-json": "^1.1.0",
 		"mkdirp": "^3.0.1",
+		"pacote": "^20.0.0",
 		"semver": "^7.6.3",
 		"setup-node-nvm": "github:dcodeIO/setup-node-nvm#v4"
 	},
