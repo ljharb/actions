@@ -30,6 +30,7 @@ echo "* AFTER_INSTALL: $AFTER_INSTALL"
 echo "* SKIP_LS_CHECK: $SKIP_LS_CHECK"
 echo "* SKIP_INSTALL: $SKIP_INSTALL"
 echo "* INSTALL_COMMAND: $INSTALL_COMMAND"
+echo "* SKIP_LATEST_NPM: $SKIP_LATEST_NPM"
 echo '**** end debug ****'
 
 case "${VERSION}" in

@@ -1,5 +1,5 @@
 name: 'node CI: use nvm-installed node to install npm dependencies'
-description: 'install npm dependencies'
+description: 'install dependencies with npm'
 author: ljharb
 inputs:
   node-version:
@@ -25,7 +25,7 @@ inputs:
     description: 'command to run after `npm install`'
     required: false
   after_success:
-    description: 'command to run after everything succeeds. default runs codecov'
+    description: 'command to run after everything succeeds'
     required: false
   skip-ls-check:
     description: 'skip the `npm ls` check (not recommended)'
