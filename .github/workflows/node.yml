@@ -74,7 +74,6 @@ jobs:
         if: ${{ inputs.build-command == '' }}
 
   matrix:
-    needs: [build]
     runs-on: ubuntu-22.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
@@ -102,7 +101,6 @@ jobs:
           notable: ${{ inputs.notable || '' }}
 
   vlt-matrix:
-    needs: [build]
     runs-on: ubuntu-22.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
@@ -129,7 +127,7 @@ jobs:
           notable: ${{ inputs.notable || '' }}
 
   vlt-latest:
-    needs: [vlt-matrix]
+    needs: [build, vlt-matrix]
     name: 'vlt, latest'
     runs-on: ubuntu-22.04
     continue-on-error: ${{ inputs.continue-on-error }}
@@ -208,7 +206,7 @@ jobs:
           flag-name: run ${{ join(matrix.*, ' - ') }}
 
   latest:
-    needs: [matrix]
+    needs: [build, matrix]
     name: 'latest'
     runs-on: ubuntu-22.04
     continue-on-error: ${{ inputs.continue-on-error }}
@@ -279,7 +277,7 @@ jobs:
           flag-name: run ${{ join(matrix.*, ' - ') }}
 
   nonlatest:
-    needs: [matrix, latest]
+    needs: [build, matrix, latest]
     name: 'non-latest'
     timeout-minutes: ${{ inputs.timeout-minutes }}
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}

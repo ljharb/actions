@@ -60,7 +60,6 @@ jobs:
         if: ${{ inputs.build-command == '' }}
 
   matrix:
-    needs: [build]
     runs-on: ubuntu-22.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
@@ -86,7 +85,7 @@ jobs:
           preset: ${{ inputs.range }}
 
   latest:
-    needs: [matrix]
+    needs: [build, matrix]
     name: 'latest majors'
     runs-on: ubuntu-22.04
     continue-on-error: ${{ inputs.continue-on-error }}
