@@ -1,0 +1,34 @@
+name: 'node CI: use nvm-installed node to install npm dependencies with bun'
+description: 'install dependencies with bun'
+author: ljharb
+inputs:
+  node-version:
+    description: 'version of node to use via nvm'
+    required: false
+    default: 'lts/*'
+  nvm-dir:
+    description: '`$NVM_DIR` location'
+    required: true
+    type: string
+  cache-node-modules-key:
+    description: 'if provided, cache node_modules under this cache key'
+    required: false
+    default: ''
+  before_install:
+    description: 'command to run before `bun install`'
+    required: false
+  after_install:
+    description: 'command to run after `bun install`'
+    required: false
+  after_success:
+    description: 'command to run after everything succeeds'
+    required: false
+  skip-ls-check:
+    description: 'skip the `npm ls` check (not recommended)'
+    required: false
+    default: 'false'
+
+runs:
+  using: node20
+  main: ./index.js
+  post: ./post.js
