@@ -101,9 +101,115 @@ jobs:
           preset: ${{ inputs.range }}
           notable: ${{ inputs.notable || '' }}
 
+  vlt-matrix:
+    needs: [build]
+    runs-on: ubuntu-22.04
+    outputs:
+      latest: ${{ steps.set-matrix.outputs.requireds }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            github.com:443
+            raw.githubusercontent.com:443
+            nodejs.org:443
+            iojs.org:443
+            registry.npmjs.org:443
+            actions-results-receiver-production.githubapp.com:443
+
+      - uses: ljharb/actions/node/matrix@main
+        id: set-matrix
+        with:
+          versionsAsRoot: true
+          type: ${{ inputs.type }}
+          preset: ${{ inputs.range }} 20 || ${{ inputs.range }} >=22 # vlt is `20 || >= 22`
+          notable: ${{ inputs.notable || '' }}
+
+  vlt-latest:
+    needs: [vlt-matrix]
+    name: 'vlt, latest'
+    runs-on: ubuntu-22.04
+    continue-on-error: ${{ inputs.continue-on-error }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJson(needs.vlt-matrix.outputs.latest) }}
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            github.com:443
+            raw.githubusercontent.com:443
+            nodejs.org:443
+            iojs.org:443
+            registry.npmjs.org:443
+            actions-results-receiver-production.githubapp.com:443
+
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+
+      - uses: ljharb/actions/node/install@main
+        name: 'nvm install ${{ matrix.node-version }}'
+        with:
+          node-version: ${{ matrix.node-version }}
+          skip-ls-check: true
+          skip-install: true
+
+      - run: echo "NVM_DIR=${NVM_DIR}" >> $GITHUB_ENV
+
+      - uses: ljharb/actions/vlt/install@main
+        name: 'vlt install'
+        with:
+          nvm-dir: "${{ env.NVM_DIR }}"
+          cache-node-modules-key: vlt-node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: ${{ inputs.skip-ls-check && 'true' || 'false' }}
+
+      - uses: ljharb/actions/vlt/install@main
+        if: ${{ inputs.subpackage != '' }}
+        name: 'vlt install, subpackage: ${{ inputs.subpackage }}'
+        with:
+          nvm-dir: "${{ env.NVM_DIR }}"
+          before_install: cd ${{ inputs.subpackage }}
+          cache-node-modules-key: vlt-node_modules-${{ inputs.subpackage }}-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+          skip-ls-check: ${{ inputs.skip-ls-check && 'true' || 'false' }}
+
+      - run: echo "PACKAGE_JSON=$(jq -c . < package.json)" >> $GITHUB_ENV
+
+      - name: 'restore build output'
+        uses: actions/cache/restore@v3
+        with:
+          path: ${{ inputs.build-output-dir }}
+          key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
+        if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
+
+      - if: ${{ startsWith(fromJson(env.PACKAGE_JSON).name, '@') && startsWith(matrix.node-version, '0.') && ! startsWith(matrix.node-version, '0.1') }}
+        run: eval $(node -e 'console.log(require("./package.json").scripts["${{ inputs.command }}".slice(8)])')
+        env:
+          PATH: "./node_modules/.bin/:${{ env.PATH }}"
+      - run: ${{ inputs.command }}
+        if: ${{ ! startsWith(fromJson(env.PACKAGE_JSON).name, '@') || ! startsWith(matrix.node-version, '0') || startsWith(matrix.node-version, '0.1') }}
+
+      - uses: codecov/codecov-action@v3.1.5
+        if: ${{ inputs.coverage == 'codecov' }}
+      - uses: coverallsapp/github-action@v2
+        if: ${{ inputs.coverage == 'coveralls' }}
+        with:
+          parallel: true
+          flag-name: run ${{ join(matrix.*, ' - ') }}
+
   latest:
     needs: [matrix]
-    name: 'latest minors'
+    name: 'latest'
     runs-on: ubuntu-22.04
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -174,7 +280,7 @@ jobs:
 
   nonlatest:
     needs: [matrix, latest]
-    name: 'non-latest minors'
+    name: 'non-latest'
     timeout-minutes: ${{ inputs.timeout-minutes }}
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
     runs-on: ubuntu-22.04
@@ -239,7 +345,7 @@ jobs:
 
   node:
     name: node ${{ inputs.type }} @ ${{ inputs.range }}
-    needs: [latest, nonlatest]
+    needs: [latest, nonlatest, vlt-latest]
     runs-on: ubuntu-22.04
     steps:
       - name: Harden Runner

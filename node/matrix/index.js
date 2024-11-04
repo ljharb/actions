@@ -206,7 +206,7 @@ async function main() {
 	}
 
 	if (preset && !presets.includes(preset) && !semver.validRange(preset)) {
-		throw new TypeError(`\`preset\`, if provided, must be a valid semver range, or one of: \`${presets.join(', ')}\``);
+		throw new TypeError(`\`preset\`, if provided, must be a valid semver range, or one of: \`${presets.join(', ')}\` (got \`${preset}\``);
 	}
 	if (preset && (requireds || optionals)) {
 		throw new TypeError('if `preset` is provided, `requireds` and `optionals` must not be');
