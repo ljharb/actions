@@ -127,6 +127,7 @@ jobs:
           notable: ${{ inputs.notable || '' }}
 
   vlt-latest:
+    if: ${{ needs.vlt-matrix.outputs.latest != '[]' }}
     needs: [build, vlt-matrix]
     name: 'vlt, latest'
     runs-on: ubuntu-22.04
