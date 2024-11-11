@@ -237,7 +237,7 @@ jobs:
     needs: [build, bun-matrix]
     name: 'latest (bun i)'
     runs-on: ubuntu-22.04
-    continue-on-error: ${{ inputs.continue-on-error }}
+    continue-on-error: true # see https://github.com/oven-sh/bun/issues/8780 # ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
     strategy:
