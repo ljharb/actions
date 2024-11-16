@@ -451,10 +451,14 @@ jobs:
         continue-on-error: true
 
   node:
-    name: node ${{ inputs.type }} @ ${{ inputs.range }}
+    name: node tests
     needs: [latest, nonlatest, vlt-latest, bun-latest]
+    if: ${{ ! cancelled() }}
     runs-on: ubuntu-22.04
     steps:
+      - name: fail if previous jobs failed
+        if: ${{ contains(needs.*.result, 'failure') }}
+        run: exit 1
       - name: Harden Runner
         if: ${{ inputs.coverage == 'coveralls' }}
         uses: step-security/harden-runner@v2
