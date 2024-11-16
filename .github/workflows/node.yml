@@ -123,7 +123,8 @@ jobs:
         with:
           versionsAsRoot: true
           type: ${{ inputs.type }}
-          preset: ${{ contains(inputs.range, '-') }} && '< 0' || (${{ inputs.range }}' 20' || ${{ inputs.range }} '>=22') # vlt is `20 || >= 22`
+          empty: ${{ contains(inputs.range, '-') }}
+          preset: ${{ inputs.range }} 20 || ${{ inputs.range }} >=22 # vlt is `20 || >= 22`
           notable: ${{ inputs.notable || '' }}
 
   bun-matrix:
@@ -149,7 +150,8 @@ jobs:
         with:
           versionsAsRoot: true
           type: ${{ inputs.type }}
-          preset: ${{ contains(inputs.range, '-') }} && '< 0' || (${{ inputs.range }} '>= 20') # only run bun install on node 20+
+          empty: ${{ contains(inputs.range, '-') }}
+          preset: '${{ inputs.range }} >= 20' # only run bun install on node 20+
           notable: ${{ inputs.notable || '' }}
 
   vlt-latest:

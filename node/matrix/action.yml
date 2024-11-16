@@ -10,6 +10,10 @@ inputs:
     description: 'semver range for required versions'
   optionals:
     description: 'semver range for optional versions'
+  empty:
+    description: 'if true, preset is ignored and an empty list is returned'
+    required: false
+    default: false
   preset:
     description: 'optional preset, takes precedence over requireds/optionals'
   notable:
