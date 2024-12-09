@@ -31,7 +31,9 @@ jobs:
         shell: bash
 
       - name: validate semver pattern
-        run: npx semver ${{ steps.tag_name.outputs.current_version }}
+        env:
+          VERSION: ${{ steps.tag_name.outputs.current_version }}
+        run: npx semver "${VERSION}"
 
       - uses: actions/checkout@v4
         with:
