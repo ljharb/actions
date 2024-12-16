@@ -159,7 +159,7 @@ jobs:
           notable: ${{ inputs.notable || '' }}
 
   vlt-latest:
-    if: ${{ needs.vlt-matrix.outputs.latest != '[]' }}
+    if: ${{ needs.vlt-matrix.outputs.latest != '[]' || inputs.after_install != '' }}
     needs: [build, vlt-matrix]
     name: 'latest (vlt i)'
     runs-on: ubuntu-22.04
@@ -240,7 +240,7 @@ jobs:
           flag-name: run ${{ join(matrix.*, ' - ') }}
 
   bun-latest:
-    if: ${{ needs.bun-matrix.outputs.latest != '[]' }}
+    if: ${{ needs.bun-matrix.outputs.latest != '[]' || inputs.after_install != '' }}
     needs: [build, bun-matrix]
     name: 'latest (bun i)'
     runs-on: ubuntu-22.04
