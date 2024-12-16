@@ -18,6 +18,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        persist-credentials: true
         show-progress: false
     - uses: ljharb/rebase@master
       env:

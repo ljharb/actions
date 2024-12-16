@@ -35,6 +35,7 @@ jobs:
           skip-latest-npm: true
       - uses: actions/checkout@v4
         with:
+          persist-credentials: true
           ref: ${{ matrix.kind }}
       - run: curl -O -J "https://${{ matrix.kind }}.org/dist/index.tab"
       - run: curl -O -J "https://${{ matrix.kind }}.org/dist/index.json"

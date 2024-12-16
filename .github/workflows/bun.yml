@@ -95,6 +95,7 @@ jobs:
           bun-version: ${{ matrix.version }}
       - uses: actions/checkout@v4
         with:
+          persist-credentials: false
           show-progress: false
       - run: bun install
       - name: 'restore build output'

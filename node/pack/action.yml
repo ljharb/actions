@@ -66,6 +66,7 @@ runs:
           actions-results-receiver-production.githubapp.com:443
     - uses: actions/checkout@v4
       with:
+        persist-credentials: false
         show-progress: false
     - uses: ljharb/actions/node/install@main
       with:

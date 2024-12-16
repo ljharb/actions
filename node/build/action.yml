@@ -52,6 +52,7 @@ runs:
       if: ${{ inputs.build-command != '' }}
     - uses: actions/checkout@v4
       with:
+        persist-credentials: false
         show-progress: false
       if: ${{ inputs.build-command != '' }}
     - uses: ljharb/actions/node/install@main
