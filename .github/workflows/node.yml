@@ -128,7 +128,7 @@ jobs:
           versionsAsRoot: true
           type: ${{ inputs.type }}
           empty: ${{ contains(inputs.range, '-') }}
-          preset: ${{ inputs.range }} 20 || ${{ inputs.range }} >=22 # vlt is `20 || >= 22`
+          preset: "${{ inputs.range }} >=22" # vlt is `20 || >= 22`
           notable: ${{ inputs.notable || '' }}
 
   bun-matrix:
@@ -155,7 +155,7 @@ jobs:
           versionsAsRoot: true
           type: ${{ inputs.type }}
           empty: ${{ contains(inputs.range, '-') }}
-          preset: '${{ inputs.range }} >= 20' # only run bun install on node 20+
+          preset: '${{ inputs.range }} >= 22' # only run bun install on node 22+
           notable: ${{ inputs.notable || '' }}
 
   vlt-latest:
@@ -163,7 +163,7 @@ jobs:
     needs: [build, vlt-matrix]
     name: 'latest (vlt i)'
     runs-on: ubuntu-22.04
-    continue-on-error: ${{ inputs.continue-on-error }}
+    continue-on-error: true # see https://github.com/vltpkg/vltpkg/issues/267 # ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
     strategy:
