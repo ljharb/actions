@@ -4,6 +4,7 @@
 	"extends": "@ljharb/eslint-config/node/20",
 
 	"rules": {
+		"complexity": "off",
 		"func-style": "off",
 		"sort-keys": "off",
 		"max-len": "off",

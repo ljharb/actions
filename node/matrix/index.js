@@ -224,7 +224,7 @@ function setOutput({
 
 async function main() {
 	const empty = core.getInput('empty') === 'true';
-	const key = /** @type {'node-version'} */ (core.getInput('version_key'));
+	const key = /** @type {'node-version'} */ (core.getInput('version_key')) || 'node-version';
 	const versionsAsRoot = !!core.getInput('versionsAsRoot');
 
 	const requireds = core.getInput('requireds');
