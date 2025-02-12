@@ -51,7 +51,7 @@ jobs:
           build-command: ${{ inputs.build-command }}
         if: ${{ inputs.build-command != '' }}
       - name: 'cache build output'
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           path: ${{ inputs.build-output-dir }}
           key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
@@ -123,7 +123,7 @@ jobs:
       - run: echo "PACKAGE_JSON=$(jq -c . < package.json)" >> $GITHUB_ENV
 
       - name: 'restore build output'
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         with:
           path: ${{ inputs.build-output-dir }}
           key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
