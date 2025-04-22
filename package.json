@@ -7,7 +7,7 @@
 	"dependencies": {
 		"@actions/core": "^1.11.1",
 		"@actions/github": "^6.0.0",
-		"cache": "github:actions/cache#v4.1.1",
+		"cache": "github:actions/cache#v4.2.3",
 		"get-json": "^1.1.0",
 		"mkdirp": "^3.0.1",
 		"semver": "^7.6.3",
