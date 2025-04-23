@@ -16,14 +16,16 @@ async function main() {
 
 	let cacheHit = false;
 	if (cacheKey) {
-		process.env.INPUT_KEY = cacheKey;
-		core.getInput('key', { required: true }); // assert
-		process.env.INPUT_PATH = 'node_modules';
-		core.getInput('path', { required: true }); // assert
+		try {
+			process.env.INPUT_KEY = cacheKey;
+			core.getInput('key', { required: true }); // assert
+			process.env.INPUT_PATH = 'node_modules';
+			core.getInput('path', { required: true }); // assert
 
-		hijackActionsCore((x) => { cacheHit = x; });
+			hijackActionsCore((x) => { cacheHit = x; });
 
-		await require('cache/dist/restore').default(); // eslint-disable-line global-require
+			await require('cache/dist/restore').default(); // eslint-disable-line global-require
+		} catch {}
 	}
 
 	const bashArgs = [
@@ -53,7 +55,9 @@ async function main() {
 	}
 
 	if (cacheKey) {
-		await require('cache/dist/save').default(); // eslint-disable-line global-require
+		try {
+			await require('cache/dist/save').default(); // eslint-disable-line global-require
+		} catch {}
 	}
 
 	core.setOutput('PATH', process.env.PATH);
