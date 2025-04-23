@@ -77,7 +77,7 @@ if [ -n "${BEFORE_INSTALL-}" ]; then
   eval $BEFORE_INSTALL
 fi
 
-if [ "${CACHE_HIT-}" != 'true' ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
+if [ -z "${CACHE_HIT-}" ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
     export CI_RESET_NODE_VERSION=1
     case "${VERSION}" in
     0.5|0.5.*|0.6|0.6.*|0.7|0.7.*|0.8|0.8.*|0.9|0.9.*)

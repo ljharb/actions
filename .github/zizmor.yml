@@ -1,0 +1,4 @@
+rules:
+  rules.template-injection:
+    ignore:
+      - .github/workflows/node.yml

@@ -67,7 +67,7 @@ if [ -n "${BEFORE_INSTALL-}" ]; then
   eval $BEFORE_INSTALL
 fi
 
-if [ "${CACHE_HIT-}" != 'true' ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
+if [ -z "${CACHE_HIT-}" ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
     echo
     echo
     echo "******> bun ${INSTALL_COMMAND}"
