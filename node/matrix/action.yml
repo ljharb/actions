@@ -21,6 +21,9 @@ inputs:
   type:
     description: 'majors, or minors?'
     choices: ['majors', 'minors']
+  fullSemver:
+    description: 'if true, the full semver triple is returned instead of just the major or minor version'
+    required: false
   envs:
     description: 'optional env variables to add to the matrix'
     required: false

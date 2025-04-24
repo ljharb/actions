@@ -96,9 +96,15 @@ function iojsMapper(x) {
 	return semver.satisfies(x, iojsRange) ? `iojs-v${x}` : x;
 }
 
-/** @type {(regRange: string, optRange: string, type: Type, isNotable?: boolean) => Promise<ReqOptMap>} */
+/**
+ * @param {string} reqRange
+ * @param {string} optRange
+ * @param {Type} type
+ * @param {boolean} isNotable
+ * @param {boolean} fullSemver
+ */
 // eslint-disable-next-line max-params
-async function getReqOpts(reqRange, optRange, type, isNotable) {
+async function 	getReqOpts(reqRange, optRange, type, isNotable, fullSemver) {
 	const versions = (await allVersions)
 		.filter((v) => (reqRange && semver.satisfies(v, reqRange)) || (optRange && semver.satisfies(v, optRange)));
 	const map = getMinorsByMajor(versions);
@@ -155,6 +161,10 @@ async function getReqOpts(reqRange, optRange, type, isNotable) {
 	}
 	requireds.sort(comparator);
 	optionals.sort(comparator);
+	if (fullSemver) {
+		requireds = requireds.map((x) => /** @type {typeof x} */ (semver.coerce(x)?.version) ?? x);
+		optionals = optionals.map((x) => /** @type {typeof x} */ (semver.coerce(x)?.version) ?? x);
+	}
 
 	// @ts-expect-error FIXME figure out how to untangle this type
 	requireds = requireds.map(iojsMapper);
@@ -166,7 +176,7 @@ async function getReqOpts(reqRange, optRange, type, isNotable) {
 
 /** @type {(map: Awaited<ReturnType<typeof getReqOpts>>, opts: { type: Type, notable: string }) => Promise<typeof map>} */
 async function addNotable({ requireds: oldReqs, optionals: oldOpts }, { type, notable }) {
-	const { requireds: notableVersions } = await getReqOpts(notable, '', type, true);
+	const { requireds: notableVersions } = await getReqOpts(notable, '', type, true, false);
 
 	/** @type {Set<nvmVersionish>} */ // @ts-expect-error TS sucks with concat
 	const requiredSet = new Set([].concat(notableVersions, oldReqs));
@@ -178,8 +188,11 @@ async function addNotable({ requireds: oldReqs, optionals: oldOpts }, { type, no
 	return { requireds, optionals };
 }
 
-/** @type {(preset: '0.x' | 'iojs' | string, type: Type) => Promise<ReqOptMap>} */
-async function getPreset(preset, type) {
+/**
+ * @param {'0.x' | 'iojs' | string} preset
+ * @param {Type} type @param {boolean} fullSemver
+ */
+async function getPreset(preset, type, fullSemver) {
 	if (preset === '0.x') {
 		if (type) {
 			throw new TypeError('the `0.x` preset is incompatible with `type`');
@@ -187,9 +200,9 @@ async function getPreset(preset, type) {
 		return get0xReqs();
 	}
 	if (preset === 'iojs') {
-		return getReqOpts(iojsRange, iojsRange, type);
+		return getReqOpts(iojsRange, iojsRange, type, false, fullSemver);
 	}
-	return getReqOpts(preset, preset, type);
+	return getReqOpts(preset, preset, type, false, fullSemver);
 }
 
 /** @type {(opts: { envs: Record<string, string>, key: 'node-version', versionsAsRoot: boolean, reqs: nvmVersionish[], opts: nvmVersionish[] }) => void} */
@@ -232,6 +245,7 @@ async function main() {
 	const type = /** @type {Type} */ (core.getInput('type'));
 	const preset = core.getInput('preset');
 	const notable = core.getInput('notable');
+	const fullSemver = core.getInput('fullSemver') === 'true';
 	/** @type {Record<string, string>} */
 	const envs = JSON.parse(core.getInput('envs') || 'null');
 	if (envs && versionsAsRoot) {
@@ -270,8 +284,8 @@ async function main() {
 		optionals: opts,
 	} = await addNotable(
 		await (preset
-			? getPreset(preset, type)
-			: getReqOpts(requireds, optionals, type)
+			? getPreset(preset, type, fullSemver)
+			: getReqOpts(requireds, optionals, type, true, fullSemver)
 		),
 		{ notable, type },
 	);
