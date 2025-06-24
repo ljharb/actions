@@ -322,7 +322,7 @@ jobs:
 
   latest:
     needs: [build, matrix]
-    name: 'latest'
+    name: 'latest - ${{ matrix.node-version }}'
     runs-on: ubuntu-22.04
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
@@ -378,6 +378,10 @@ jobs:
           key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
         if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
 
+      - run: curl https://raw.githubusercontent.com/npm/cli/4673e9c165b39563e16409f3b1ca06fdc32e7d44/.github/matchers/tap.json -o .github/tap-matcher.json
+      - name: Add Problem Matcher
+        run: echo "::add-matcher::.github/tap-matcher.json"
+
       - if: ${{ startsWith(fromJson(env.PACKAGE_JSON).name, '@') && startsWith(matrix.node-version, '0.') && ! startsWith(matrix.node-version, '0.1') }}
         run: eval $(node -e 'console.log(require("./package.json").scripts["${{ inputs.command }}".slice(8)])')
         env:
@@ -395,7 +399,7 @@ jobs:
 
   nonlatest:
     needs: [build, matrix, latest]
-    name: 'non-latest'
+    name: 'non-latest - ${{ matrix.node-version }}'
     timeout-minutes: ${{ inputs.timeout-minutes }}
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
     runs-on: ubuntu-22.04
@@ -450,6 +454,10 @@ jobs:
           path: ${{ inputs.build-output-dir }}
           key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
         if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
+
+      - run: curl https://raw.githubusercontent.com/npm/cli/4673e9c165b39563e16409f3b1ca06fdc32e7d44/.github/matchers/tap.json -o .github/tap-matcher.json
+      - name: Add Problem Matcher
+        run: echo "::add-matcher::.github/tap-matcher.json"
 
       - if: ${{ startsWith(fromJson(env.PACKAGE_JSON).name, '@') && startsWith(matrix.node-version, '0.') && ! startsWith(matrix.node-version, '0.1') }}
         run: eval $(node -e 'console.log(require("./package.json").scripts["${{ inputs.command }}".slice(8)])')
