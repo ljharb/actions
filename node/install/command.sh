@@ -48,7 +48,7 @@ case "${VERSION}" in
     SKIP_LS_CHECK=true
   ;;
   *)
-    if nvm_has arch; then
+    if [ "$(nvm_get_os)" = 'darwin' ]; then
       echo "******> set +e (in theory, this is a Mac)"
       set +e
     fi
@@ -63,7 +63,7 @@ case "${VERSION}" in
       nvm install "${VERSION}"
     fi
 
-    if nvm_has arch; then
+    if [ "$(nvm_get_os)" = 'darwin' ]; then
       echo "******> set -e (in theory, this is a Mac)"
       set -e
     fi
