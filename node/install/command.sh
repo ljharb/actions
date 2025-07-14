@@ -48,6 +48,11 @@ case "${VERSION}" in
     SKIP_LS_CHECK=true
   ;;
   *)
+    if ! nvm_has curl && ! nvm_has wget; then
+      echo '******> no curl or wget detected!'
+      exit 42
+    fi
+
     if [ "$(nvm_get_os)" = 'darwin' ]; then
       echo "******> set +e (in theory, this is a Mac)"
       set +e
