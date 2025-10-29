@@ -83,6 +83,6 @@ runs:
         skip-ls-check: ${{ inputs.skip-ls-check }}
         skip-latest-npm: ${{ inputs.skip-latest-npm }}
         use-npm-ci: ${{ inputs.use-npm-ci }}
-    - run: npx ls-engines --production ${{ !inputs.check-current && '--no-current' }}
+    - run: npx ls-engines --production ${{ inputs.check-current && '' || '--no-current' }}
       shell: bash
       working-directory: ${{ inputs.working-directory }}
