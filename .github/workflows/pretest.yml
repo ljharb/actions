@@ -110,3 +110,12 @@ jobs:
       - uses: ljharb/actions/node/pack@main
         with:
           node-version: ${{ needs.determine-node-version.outputs.node-version }}
+
+  prepublish:
+    runs-on: ubuntu-22.04
+    needs: [determine-node-version]
+
+    steps:
+      - uses: ljharb/actions/node/prepublish@main
+        with:
+          node-version: ${{ needs.determine-node-version.outputs.node-version }}
