@@ -152,6 +152,9 @@ if [ -z "${CACHE_HIT-}" ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
 fi
 
 if [ -n "${AFTER_INSTALL-}" ]; then
+  if [ "${CI_RESET_NODE_VERSION-}" = 1 ]; then
+    rm -f node_modules/.package-lock.json
+  fi
   echo
   echo
   echo "******> $AFTER_INSTALL"
