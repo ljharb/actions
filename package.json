@@ -14,11 +14,11 @@
 		"setup-node-nvm": "github:dcodeIO/setup-node-nvm#v4"
 	},
 	"devDependencies": {
-		"@ljharb/eslint-config": "^21.1.1",
-		"@ljharb/tsconfig": "^0.2.0",
-		"@types/node": "^20.16.11",
-		"@types/semver": "^7.5.8",
-		"eslint": "=8.8.0",
+		"@ljharb/eslint-config": "^22.2.3",
+		"@ljharb/tsconfig": "^0.3.2",
+		"@types/node": "^24.12.4",
+		"@types/semver": "^7.7.1",
+		"eslint": "^8.57.1",
 		"typescript": "next"
 	}
 }
