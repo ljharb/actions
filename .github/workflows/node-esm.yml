@@ -43,7 +43,7 @@ jobs:
             registry.npmjs.org:443
             actions-results-receiver-production.githubapp.com:443
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
           show-progress: false

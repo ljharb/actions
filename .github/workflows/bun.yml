@@ -46,7 +46,7 @@ jobs:
           build-command: ${{ inputs.build-command }}
         if: ${{ inputs.build-command != '' }}
       - name: 'cache build output'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ inputs.build-output-dir }}
           key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
@@ -93,13 +93,13 @@ jobs:
       - uses: oven-sh/setup-bun@v1
         with:
           bun-version: ${{ matrix.version }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: false
           show-progress: false
       - run: bun install
       - name: 'restore build output'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ inputs.build-output-dir }}
           key: build-output-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}

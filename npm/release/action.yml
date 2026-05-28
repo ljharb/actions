@@ -35,7 +35,7 @@ jobs:
           VERSION: ${{ steps.tag_name.outputs.current_version }}
         run: npx semver "${VERSION}"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           persist-credentials: true
           show-progress: false
