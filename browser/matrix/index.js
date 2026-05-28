@@ -1,12 +1,10 @@
-'use strict';
+import util from 'util';
+import { execSync } from 'child_process';
 
-const util = require('util');
-const { execSync } = require('child_process');
-
-const core = require('@actions/core');
-const semverCoerce = require('semver/functions/coerce');
-const semverCompare = require('semver/functions/compare');
-const satisfies = require('semver/functions/satisfies');
+import * as core from '@actions/core';
+import semverCoerce from 'semver/functions/coerce.js';
+import semverCompare from 'semver/functions/compare.js';
+import satisfies from 'semver/functions/satisfies.js';
 
 const username = core.getInput('username', { required: true });
 const accessKey = core.getInput('accessKey', { required: true });

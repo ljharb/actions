@@ -1,13 +1,11 @@
-'use strict';
+import os from 'os';
+import path from 'path';
+import { mkdirp } from 'mkdirp';
 
-const os = require('os');
-const path = require('path');
-const { mkdirp } = require('mkdirp');
+import downloadFile from './downloadFile.js';
+import getLatestNVM from './getLatestNVM.js';
 
-const downloadFile = require('./downloadFile');
-const getLatestNVM = require('./getLatestNVM');
-
-module.exports = async function installNVM() {
+export default async function installNVM() {
 	const latest = await getLatestNVM();
 	const nvmDir = process.env.NVM_DIR || path.join(os.homedir(), '.nvm');
 	await mkdirp(nvmDir);
@@ -18,4 +16,4 @@ module.exports = async function installNVM() {
 	]);
 
 	return nvmDir;
-};
+}

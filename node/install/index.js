@@ -1,11 +1,10 @@
-'use strict';
+import { spawnSync, execSync } from 'child_process';
+import path from 'path';
 
-const cache = require('@actions/cache');
-const core = require('@actions/core');
-const { spawnSync, execSync } = require('child_process');
-const path = require('path');
+import * as cache from '@actions/cache';
+import * as core from '@actions/core';
 
-const installNVM = require('../helpers/installNVM');
+import installNVM from '../helpers/installNVM.js';
 
 const cacheKey = core.getInput('cache-node-modules-key');
 const cachePaths = ['node_modules'];
@@ -23,7 +22,7 @@ async function main() {
 	}
 
 	const bashArgs = [
-		path.join(__dirname, 'command.sh'),
+		path.join(import.meta.dirname, 'command.sh'),
 		core.getInput('node-version', { required: true }),
 		core.getInput('before_install'),
 		cacheID || '',

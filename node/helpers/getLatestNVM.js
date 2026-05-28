@@ -1,9 +1,7 @@
-'use strict';
-
-const https = require('https');
+import https from 'https';
 
 /** @type {() => Promise<string>} */
-module.exports = async function getLatestNVM() {
+export default async function getLatestNVM() {
 	return new Promise((resolve) => {
 		https.get('https://github.com/nvm-sh/nvm/releases/latest', (res) => {
 			if (res.statusCode === 302) {
@@ -14,4 +12,4 @@ module.exports = async function getLatestNVM() {
 			}
 		});
 	});
-};
+}

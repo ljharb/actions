@@ -3,6 +3,11 @@
 
 	"extends": "@ljharb/eslint-config/node/20",
 
+	"parserOptions": {
+		"sourceType": "module",
+		"ecmaVersion": 2022,
+	},
+
 	"rules": {
 		"complexity": "off",
 		"func-style": "off",

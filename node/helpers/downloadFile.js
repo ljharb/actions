@@ -1,10 +1,8 @@
-'use strict';
-
-const fs = require('fs');
-const https = require('https');
+import fs from 'fs';
+import https from 'https';
 
 /** @type {(url: string, dest: fs.PathLike) => Promise<void>} */
-module.exports = async function downloadFile(url, dest) {
+export default async function downloadFile(url, dest) {
 	const file = fs.createWriteStream(dest);
 	return new Promise((resolve) => {
 		https.get(url, (response) => {
@@ -16,4 +14,4 @@ module.exports = async function downloadFile(url, dest) {
 			});
 		});
 	});
-};
+}

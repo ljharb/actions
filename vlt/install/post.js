@@ -1,14 +1,12 @@
-'use strict';
+import { spawnSync } from 'child_process';
+import path from 'path';
 
-const { spawnSync } = require('child_process');
-const path = require('path');
-
-const core = require('@actions/core');
+import * as core from '@actions/core';
 
 const afterSuccess = core.getInput('after_success');
 
 spawnSync(
 	'bash',
-	[path.join(__dirname, 'post.sh'), afterSuccess],
+	[path.join(import.meta.dirname, 'post.sh'), afterSuccess],
 	{ cwd: process.cwd(), stdio: 'inherit' },
 );

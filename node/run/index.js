@@ -1,16 +1,15 @@
-'use strict';
+import { spawnSync, execSync } from 'child_process';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const cache = require('@actions/cache');
-const core = require('@actions/core');
-const { spawnSync, execSync } = require('child_process');
-const path = require('path');
+import * as cache from '@actions/cache';
+import * as core from '@actions/core';
 
-const { status: nvmStatus } = spawnSync('node', [require.resolve('setup-node-nvm')]);
+const { status: nvmStatus } = spawnSync('node', [fileURLToPath(import.meta.resolve('setup-node-nvm'))]);
 
 if (nvmStatus !== 0) {
 	process.exitCode ||= nvmStatus ?? 1;
-	// @ts-expect-error top-level return is valid in CJS
-	return;
+	process.exit();
 }
 
 const cacheKey = core.getInput('cache-node-modules-key');
@@ -35,7 +34,7 @@ async function main() {
 	}
 
 	const bashArgs = [
-		path.join(__dirname, 'command.sh'),
+		path.join(import.meta.dirname, 'command.sh'),
 		core.getInput('node-version', { required: true }),
 		shellCmd || `npm run "${cmd}"`,
 		core.getInput('before_install'),

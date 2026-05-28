@@ -2,6 +2,8 @@
 	"extends": "@ljharb/tsconfig",
 	"compilerOptions": {
 		"target": "es2022",																	/* Set the JavaScript language version for emitted JavaScript and include compatible library declarations. */
+		"module": "nodenext",																/* Honor `"type": "module"` in package.json for module emit. */
+		"moduleResolution": "nodenext",
 		"maxNodeModuleJsDepth": 0,													 /* Specify the maximum folder depth used for checking JavaScript files from `node_modules`. Only applicable with `allowJs`. */
 	},
 	"exclude": [

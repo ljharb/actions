@@ -1,9 +1,7 @@
-'use strict';
-
-const core = require('@actions/core');
-const github = require('@actions/github');
-const semver = require('semver');
-const getJSON = require('get-json');
+import * as core from '@actions/core';
+import * as github from '@actions/github';
+import semver from 'semver';
+import getJSON from 'get-json';
 
 /** @typedef {`${number}.${number}.${number}`} BareVersion */
 /** @typedef {`v${BareVersion}`} Version */
