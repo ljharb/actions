@@ -5,12 +5,12 @@
 		"postlint": "tsc -p ."
 	},
 	"dependencies": {
-		"@actions/cache": "^4.0.3",
+		"@actions/cache": "^4.1.0",
 		"@actions/core": "^1.11.1",
-		"@actions/github": "^6.0.0",
+		"@actions/github": "^6.0.1",
 		"get-json": "^1.1.0",
 		"mkdirp": "^3.0.1",
-		"semver": "^7.6.3",
+		"semver": "^7.8.1",
 		"setup-node-nvm": "github:dcodeIO/setup-node-nvm#v4"
 	},
 	"devDependencies": {
