@@ -37,5 +37,5 @@ inputs:
     default: 'false'
 runs:
   using: node24
-  main: ./index.js
-  post: ./post.js
+  main: ./index.mjs
+  post: ./post.mjs

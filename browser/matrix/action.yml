@@ -30,4 +30,4 @@ outputs:
     description: 'JSON array with objects containing `os`, `os_version`, `browser`, `browser_version`'
 runs:
   using: node24
-  main: ./index.js
+  main: ./index.mjs

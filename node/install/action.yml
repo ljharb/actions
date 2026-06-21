@@ -40,5 +40,5 @@ outputs:
     description: 'PATH env variable to use to have node/npm available'
 runs:
   using: node24
-  main: ./index.js
-  post: ./post.js
+  main: ./index.mjs
+  post: ./post.mjs

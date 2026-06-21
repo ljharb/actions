@@ -37,4 +37,4 @@ outputs:
     description: 'JSON object containing allowed-to-fail versions'
 runs:
   using: node24
-  main: ./index.js
+  main: ./index.mjs

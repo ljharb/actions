@@ -4,12 +4,12 @@ import path from 'path';
 import * as cache from '@actions/cache';
 import * as core from '@actions/core';
 
-import installNVM from '../helpers/installNVM.js';
+import installNVM from '../helpers/installNVM.mjs';
 
 const cacheKey = core.getInput('cache-node-modules-key');
 const cachePaths = ['node_modules'];
 
-const installCommand = core.getInput('use-npm-ci', { required: true }) === 'true' ? 'ci' : 'install';
+const installCommand = core.getInput('use-npm-ci') === 'true' ? 'ci' : 'install';
 
 async function main() {
 	const nvmDir = await installNVM();

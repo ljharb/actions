@@ -2,8 +2,8 @@ import os from 'os';
 import path from 'path';
 import { mkdirp } from 'mkdirp';
 
-import downloadFile from './downloadFile.js';
-import getLatestNVM from './getLatestNVM.js';
+import downloadFile from './downloadFile.mjs';
+import getLatestNVM from './getLatestNVM.mjs';
 
 export default async function installNVM() {
 	const latest = await getLatestNVM();

@@ -1,6 +1,5 @@
 {
 	"private": true,
-	"type": "module",
 	"scripts": {
 		"lint": "eslint --ext=js,mjs .",
 		"postlint": "tsc -p ."

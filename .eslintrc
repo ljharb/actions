@@ -17,4 +17,13 @@
 		"max-statements-per-line": ["error", { "max": 2 }],
 		"multiline-comment-style": "off",
 	},
+
+	"overrides": [
+		{
+			"files": ["**/*.js"],
+			"parserOptions": {
+				"sourceType": "script",
+			},
+		},
+	],
 }
