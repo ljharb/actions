@@ -84,6 +84,8 @@ fi
 if [ "${SKIP_LS_CHECK-}" != 'true' ]; then
   echo
   echo
+  echo "******> node hidden-lockfile.js"
+  node "$(dirname "${BASH_SOURCE[0]}")/hidden-lockfile.js"
   echo "******> npm ls"
   npm ls # >/dev/null
 fi
