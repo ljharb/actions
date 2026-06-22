@@ -23,7 +23,7 @@ jobs:
     outputs:
       node-version: ${{ steps.node-version.outputs.v }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           show-progress: false
@@ -60,7 +60,7 @@ jobs:
             iojs.org:443
             registry.npmjs.org:443
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           show-progress: false
@@ -87,7 +87,7 @@ jobs:
             iojs.org:443
             registry.npmjs.org:443
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           show-progress: false

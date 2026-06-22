@@ -33,7 +33,7 @@ jobs:
           skip-install: true
           skip-ls-check: true
           skip-latest-npm: true
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: true
           ref: ${{ matrix.kind }}

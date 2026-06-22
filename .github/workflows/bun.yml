@@ -93,7 +93,7 @@ jobs:
       - uses: oven-sh/setup-bun@v1
         with:
           bun-version: ${{ matrix.version }}
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           show-progress: false
