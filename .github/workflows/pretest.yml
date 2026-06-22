@@ -27,6 +27,12 @@ jobs:
         with:
           persist-credentials: false
           show-progress: false
+      - uses: ljharb/actions/node/install@main
+        name: 'install node lts/*'
+        with:
+          node-version: lts/*
+          skip-install: true
+          skip-ls-check: true
       - name: debug info
         run: npm --version
       - name: 'get node version'
