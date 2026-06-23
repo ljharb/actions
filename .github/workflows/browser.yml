@@ -21,7 +21,7 @@ on:
 
 jobs:
   matrix:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
@@ -130,6 +130,6 @@ jobs:
   browser:
     name: 'Browser Tests (${{ inputs.browser }})'
     needs: [tests]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - run: true

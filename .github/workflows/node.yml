@@ -62,7 +62,7 @@ permissions:  # added using https://github.com/step-security/secure-repo
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: ljharb/actions/node/build@main
         with:
@@ -78,7 +78,7 @@ jobs:
         if: ${{ inputs.build-command == '' }}
 
   matrix:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
       nonlatest: ${{ steps.set-matrix.outputs.optionals }}
@@ -105,7 +105,7 @@ jobs:
           notable: ${{ inputs.notable || '' }}
 
   vlt-matrix:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
     steps:
@@ -132,7 +132,7 @@ jobs:
           notable: ${{ inputs.notable || '' }}
 
   bun-matrix:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
     steps:
@@ -162,7 +162,7 @@ jobs:
     if: ${{ needs.vlt-matrix.outputs.latest != '[]' }}
     needs: [build, vlt-matrix]
     name: 'latest (vlt i)'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     continue-on-error: true # see https://github.com/vltpkg/vltpkg/issues/267 # ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -243,7 +243,7 @@ jobs:
     if: ${{ needs.bun-matrix.outputs.latest != '[]' }}
     needs: [build, bun-matrix]
     name: 'latest (bun i)'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     continue-on-error: true # see https://github.com/oven-sh/bun/issues/8780 # ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -323,7 +323,7 @@ jobs:
   latest:
     needs: [build, matrix]
     name: 'latest - ${{ matrix.node-version }}'
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -402,7 +402,7 @@ jobs:
     name: 'non-latest - ${{ matrix.node-version }}'
     timeout-minutes: ${{ inputs.timeout-minutes }}
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     strategy:
       fail-fast: false
@@ -472,7 +472,7 @@ jobs:
     name: node tests
     needs: [latest, nonlatest, vlt-latest, bun-latest]
     if: ${{ ! cancelled() }}
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: fail if previous jobs failed
         if: ${{ contains(needs.*.result, 'failure') }}
