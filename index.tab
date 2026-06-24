@@ -1,4 +1,5 @@
 version	date	files	npm	v8	uv	zlib	openssl	modules	lts	security
+v26.4.0	2026-06-24	aix-ppc64,headers,linux-arm64,linux-ppc64le,linux-s390x,linux-x64,osx-arm64-tar,osx-x64-pkg,osx-x64-tar,src,win-arm64-7z,win-arm64-zip,win-x64-7z,win-x64-exe,win-x64-msi,win-x64-zip	11.17.0	14.6.202.34	1.52.1	1.3.2.1-motley	3.5.7	147	-	-
 v26.3.1	2026-06-17	aix-ppc64,headers,linux-arm64,linux-ppc64le,linux-s390x,linux-x64,osx-arm64-tar,osx-x64-pkg,osx-x64-tar,src,win-arm64-7z,win-arm64-zip,win-x64-7z,win-x64-exe,win-x64-msi,win-x64-zip	11.16.0	14.6.202.34	1.52.1	1.3.1	3.5.7	147	-	true
 v26.3.0	2026-06-01	aix-ppc64,headers,linux-arm64,linux-ppc64le,linux-s390x,linux-x64,osx-arm64-tar,osx-x64-pkg,osx-x64-tar,src,win-arm64-7z,win-arm64-zip,win-x64-7z,win-x64-exe,win-x64-msi,win-x64-zip	11.16.0	14.6.202.34	1.52.1	1.3.1	3.5.6	147	-	-
 v26.2.0	2026-05-20	aix-ppc64,headers,linux-arm64,linux-ppc64le,linux-s390x,linux-x64,osx-arm64-tar,osx-x64-pkg,osx-x64-tar,src,win-arm64-7z,win-arm64-zip,win-x64-7z,win-x64-exe,win-x64-msi,win-x64-zip	11.13.0	14.6.202.34	1.52.1	1.3.1	3.5.6	147	-	-
