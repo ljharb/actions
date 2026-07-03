@@ -90,7 +90,7 @@ jobs:
         version: ${{ fromJson(needs.matrix.outputs.latest) }}
 
     steps:
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ matrix.version }}
       - uses: actions/checkout@v7
