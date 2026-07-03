@@ -106,7 +106,7 @@ jobs:
         if: ${{ inputs.build-command != '' && inputs.build-output-dir != '' }}
       - run: cp $(which bun) $(which node)
       - run: ${{ inputs.command }}
-      - uses: codecov/codecov-action@v3.1.5
+      - uses: codecov/codecov-action@v7.0.0
         if: ${{ inputs.coverage == 'codecov' }}
       - uses: coverallsapp/github-action@v2
         if: ${{ inputs.coverage == 'coveralls' }}
