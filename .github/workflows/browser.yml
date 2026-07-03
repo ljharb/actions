@@ -56,7 +56,7 @@ jobs:
           cache-node-modules-key: node_modules-${{ github.workflow }}-${{ github.action }}-${{ github.run_id }}
           skip-ls-check: true
 
-      - uses: browserstack/github-actions/setup-env@v1.0.1
+      - uses: browserstack/github-actions/setup-env@v1.0.4
         name: 'BrowserStack Env Setup'
         with:
           username: ${{ secrets.username }}
@@ -65,7 +65,7 @@ jobs:
           project-name: ${{ env.GITHUB_REPOSITORY }}
 
       - name: 'BrowserStack Local Tunnel Setup'  # Invokes the setup-local action
-        uses: browserstack/github-actions/setup-local@v1.0.1
+        uses: browserstack/github-actions/setup-local@v1.0.4
         with:
           local-testing: start
           username: ${{ secrets.username }}
@@ -120,7 +120,7 @@ jobs:
           username: ${{ secrets.username }}
           accessKey: ${{ secrets.accessKey }}
 
-      - uses: browserstack/github-actions/setup-local@v1.0.1
+      - uses: browserstack/github-actions/setup-local@v1.0.4
         name: 'BrowserStack Local Tunnel Stop'  # Terminating the BrowserStackLocal tunnel connection
         if: always()
         continue-on-error: true
