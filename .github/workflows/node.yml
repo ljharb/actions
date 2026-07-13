@@ -65,6 +65,10 @@ on:
 permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     runs-on: ${{ inputs.os }}
