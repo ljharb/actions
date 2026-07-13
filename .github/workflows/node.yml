@@ -56,13 +56,18 @@ on:
         required: false
         type: string
         default: ''
+      os:
+        description: 'the runner OS to run the test matrix on'
+        required: false
+        type: string
+        default: ubuntu-24.04
 
 permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.os }}
     steps:
       - uses: ljharb/actions/node/build@main
         with:
@@ -162,7 +167,7 @@ jobs:
     if: ${{ needs.vlt-matrix.outputs.latest != '[]' }}
     needs: [build, vlt-matrix]
     name: 'latest (vlt i)'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.os }}
     continue-on-error: true # see https://github.com/vltpkg/vltpkg/issues/267 # ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -243,7 +248,7 @@ jobs:
     if: ${{ needs.bun-matrix.outputs.latest != '[]' }}
     needs: [build, bun-matrix]
     name: 'latest (bun i)'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.os }}
     continue-on-error: true # see https://github.com/oven-sh/bun/issues/8780 # ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -323,7 +328,7 @@ jobs:
   latest:
     needs: [build, matrix]
     name: 'latest - ${{ matrix.node-version }}'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.os }}
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -402,7 +407,7 @@ jobs:
     name: 'non-latest - ${{ matrix.node-version }}'
     timeout-minutes: ${{ inputs.timeout-minutes }}
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ inputs.os }}
 
     strategy:
       fail-fast: false
