@@ -18,7 +18,9 @@ async function main() {
 	let cacheID;
 	if (cacheKey) {
 		cacheID = await cache.restoreCache(cachePaths, cacheKey).catch(() => void undefined);
-		execSync('git checkout -- node_modules ||:'); // for bundled deps, like tape-lib
+		try {
+			execSync('git checkout -- node_modules'); // for bundled deps, like tape-lib
+		} catch {/**/}
 	}
 
 	const bashArgs = [
