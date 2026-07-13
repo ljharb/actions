@@ -1,5 +1,7 @@
 set -e
 
+unset npm_config_prefix # GHA Windows runners preset this to /c/npm/prefix, which nvm refuses to run alongside
+
 . $NVM_DIR/nvm.sh
 
 VERSION="${1:-default}"

@@ -2,6 +2,8 @@
 
 set -e
 
+unset npm_config_prefix # GHA Windows runners preset this to /c/npm/prefix, which nvm refuses to run alongside
+
 #. $HOME/.nvm/nvm.sh
 . $NVM_DIR/nvm.sh
 
