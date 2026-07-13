@@ -110,7 +110,8 @@ jobs:
         with:
           versionsAsRoot: true
           type: ${{ inputs.type }}
-          preset: ${{ inputs.range }}
+          # node 5 shipped no win-x64 binary on nodejs.org, so nvm can't install it; drop it on Windows
+          preset: ${{ startsWith(inputs.os, 'windows') && format('{0} <5 || {0} >=6', inputs.range) || inputs.range }}
           notable: ${{ inputs.notable || '' }}
 
   vlt-matrix:
