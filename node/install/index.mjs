@@ -13,6 +13,7 @@ const installCommand = core.getInput('use-npm-ci') === 'true' ? 'ci' : 'install'
 
 async function main() {
 	const nvmDir = await installNVM();
+	core.exportVariable('NVM_DIR', nvmDir);
 
 	/** @type {Awaited<ReturnType<typeof cache.restoreCache>>} */
 	let cacheID;
