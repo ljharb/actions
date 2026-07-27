@@ -45,11 +45,6 @@ inputs:
     required: false
     default: '.'
     type: string
-  install-workspace-root:
-    description: 'for a monorepo subpackage (working-directory != "."), run `npm install` at the monorepo root instead of in working-directory, so the full workspace dev environment (root devDependencies, workspace `file:` deps, and hoisted bins like npmignore) is available to the subpackage `prepack` and to a root-delegated `npm run tests-only`'
-    required: false
-    default: false
-    type: boolean
 
 outputs:
   PATH:
@@ -73,11 +68,20 @@ runs:
       with:
         persist-credentials: false
         show-progress: false
+    - name: 'install at the monorepo root when packing a workspaces subpackage'
+      id: install-dir
+      shell: bash
+      run: |
+        dir='${{ inputs.working-directory }}'
+        if [ "$dir" != '.' ] && node -e 'process.exit(require("./package.json").workspaces ? 0 : 1)' 2>/dev/null; then
+          dir='.'
+        fi
+        printf 'dir=%s\n' "$dir" >> "$GITHUB_OUTPUT"
     - uses: ljharb/actions/node/install@main
       with:
         node-version: ${{ inputs.node-version }}
         skip-install: ${{ inputs.skip-install }}
-        before_install: cd ${{ inputs.install-workspace-root == 'true' && '.' || inputs.working-directory }} ; ${{ inputs.before_install }}
+        before_install: cd ${{ steps.install-dir.outputs.dir }} ; ${{ inputs.before_install }}
         after_install: ${{ inputs.after_install }}
         after_success: ${{ inputs.after_success }}
         skip-ls-check: ${{ inputs.skip-ls-check }}
