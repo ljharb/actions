@@ -73,6 +73,7 @@ if [ -z "${CACHE_HIT-}" ] && [ "${SKIP_INSTALL-}" != 'true' ]; then
     echo
     echo
     echo "******> vlt ${INSTALL_COMMAND}"
+    export VLT_REGISTRY=https://registry.npmjs.org/
     vlt "${INSTALL_COMMAND}" || vlt "${INSTALL_COMMAND}" # double install is for EPIPE error
 fi
 
