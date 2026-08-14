@@ -52,7 +52,7 @@ esac
 echo
 echo
 echo "******> npm install -g bun"
-npm install -g bun
+NPM_CONFIG_ALLOW_SCRIPTS=bun npm install -g bun
 
 echo '**** debug ****'
 echo "* node: $(which node) ($(node -v))"
