@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: "*/5 * * * *"
 
+cache-mode: none
+
 jobs:
   cache:
     runs-on: ubuntu-24.04

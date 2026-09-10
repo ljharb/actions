@@ -40,6 +40,7 @@ permissions:  # added using https://github.com/step-security/secure-repo
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # cache-mode deliberately unset: saving `build-output-dir` needs the trigger's default (`write`). See README.
     steps:
       - uses: ljharb/actions/bun/build@main
         with:
@@ -57,6 +58,7 @@ jobs:
   matrix:
     needs: [build]
     runs-on: ubuntu-24.04
+    cache-mode: none
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
       nonlatest: ${{ steps.set-matrix.outputs.optionals }}
@@ -82,6 +84,7 @@ jobs:
     needs: [matrix]
     name: bun
     runs-on: ubuntu-24.04
+    cache-mode: read
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
     strategy:
@@ -118,6 +121,7 @@ jobs:
     name: bun tests
     needs: [bun-test]
     runs-on: ubuntu-24.04
+    cache-mode: none
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@v2

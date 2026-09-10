@@ -17,6 +17,7 @@ jobs:
   notable-esm:
     name: 'notable ESM minors'
     runs-on: ubuntu-24.04
+    cache-mode: read
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
     strategy:
@@ -60,6 +61,7 @@ jobs:
     name: 'node, notable ESM minors'
     needs: [notable-esm]
     runs-on: ubuntu-24.04
+    cache-mode: none
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@v2

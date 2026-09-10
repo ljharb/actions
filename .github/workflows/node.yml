@@ -72,6 +72,7 @@ defaults:
 jobs:
   build:
     runs-on: ${{ inputs.os }}
+    # cache-mode deliberately unset: saving `build-output-dir` needs the trigger's default (`write`). See README.
     steps:
       - uses: ljharb/actions/node/build@main
         with:
@@ -88,6 +89,7 @@ jobs:
 
   matrix:
     runs-on: ubuntu-24.04
+    cache-mode: none
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
       nonlatest: ${{ steps.set-matrix.outputs.optionals }}
@@ -116,6 +118,7 @@ jobs:
 
   vlt-matrix:
     runs-on: ubuntu-24.04
+    cache-mode: none
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
     steps:
@@ -143,6 +146,7 @@ jobs:
 
   bun-matrix:
     runs-on: ubuntu-24.04
+    cache-mode: none
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
     steps:
@@ -173,6 +177,7 @@ jobs:
     needs: [build, vlt-matrix]
     name: 'latest (vlt i)'
     runs-on: ${{ inputs.os }}
+    cache-mode: read
     continue-on-error: true # see https://github.com/vltpkg/vltpkg/issues/267 # ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -254,6 +259,7 @@ jobs:
     needs: [build, bun-matrix]
     name: 'latest (bun i)'
     runs-on: ${{ inputs.os }}
+    cache-mode: read
     continue-on-error: true # see https://github.com/oven-sh/bun/issues/8780 # ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -334,6 +340,7 @@ jobs:
     needs: [build, matrix]
     name: 'latest - ${{ matrix.node-version }}'
     runs-on: ${{ inputs.os }}
+    cache-mode: read
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -413,6 +420,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     if: ${{ needs.matrix.outputs.nonlatest != '[]' && (!github.head_ref || !startsWith(github.head_ref, 'renovate')) }}
     runs-on: ${{ inputs.os }}
+    cache-mode: read
 
     strategy:
       fail-fast: false
@@ -483,6 +491,7 @@ jobs:
     needs: [latest, nonlatest, vlt-latest, bun-latest]
     if: ${{ ! cancelled() }}
     runs-on: ubuntu-24.04
+    cache-mode: none
     steps:
       - name: fail if previous jobs failed
         if: ${{ contains(needs.*.result, 'failure') }}

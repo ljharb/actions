@@ -6,6 +6,9 @@ on:
       tag:
         description: "Tag to create a release from"
         required: true
+
+cache-mode: none
+
 jobs:
   release:
     if: github.event.repository.fork == false

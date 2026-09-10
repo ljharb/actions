@@ -45,6 +45,7 @@ permissions:  # added using https://github.com/step-security/secure-repo
 jobs:
   build:
     runs-on: ubuntu-24.04
+    # cache-mode deliberately unset: saving `build-output-dir` needs the trigger's default (`write`). See README.
     steps:
       - uses: ljharb/actions/node/build@main
         with:
@@ -61,6 +62,7 @@ jobs:
 
   matrix:
     runs-on: ubuntu-24.04
+    cache-mode: none
     outputs:
       latest: ${{ steps.set-matrix.outputs.requireds }}
     steps:
@@ -88,6 +90,7 @@ jobs:
     needs: [build, matrix]
     name: 'latest majors'
     runs-on: ubuntu-24.04
+    cache-mode: read
     continue-on-error: ${{ inputs.continue-on-error }}
     timeout-minutes: ${{ inputs.timeout-minutes }}
 
@@ -148,6 +151,7 @@ jobs:
     name: node majors
     needs: [latest]
     runs-on: ubuntu-24.04
+    cache-mode: none
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@v2

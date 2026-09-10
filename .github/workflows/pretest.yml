@@ -17,6 +17,8 @@ on:
 permissions:  # added using https://github.com/step-security/secure-repo
   contents: read
 
+cache-mode: none
+
 jobs:
   determine-node-version:
     runs-on: ubuntu-24.04
