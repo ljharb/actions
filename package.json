@@ -2,10 +2,11 @@
 	"private": true,
 	"scripts": {
 		"lint": "eslint --ext=js,mjs .",
-		"postlint": "tsc -p ."
+		"postlint": "tsc -p .",
+		"dependencies": "node -p \"process.env.npm_command\" | npx \"dt-clean@^1.2.2\" --auto"
 	},
 	"dependencies": {
-		"@actions/cache": "^6.0.1",
+		"@actions/cache": "^6.2.0",
 		"@actions/core": "^3.0.1",
 		"@actions/github": "^9.1.1",
 		"get-json": "^1.1.0",
@@ -14,10 +15,11 @@
 		"setup-node-nvm": "github:dcodeIO/setup-node-nvm#v4"
 	},
 	"devDependencies": {
-		"@ljharb/eslint-config": "^22.2.3",
+		"@ljharb/eslint-config": "^22.2.4",
 		"@ljharb/tsconfig": "^0.3.2",
-		"@types/node": "^24.12.4",
-		"@types/semver": "^7.7.1",
+		"@types/eslint": "^8.56.12",
+		"@types/node": "^24.13.4",
+		"@types/semver": "^7.8.0",
 		"eslint": "^8.57.1",
 		"typescript": "next"
 	}
