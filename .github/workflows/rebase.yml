@@ -1,5 +1,11 @@
 on:
   workflow_call:
+    inputs:
+      committer-date-is-author-date:
+        description: 'Whether to pass --committer-date-is-author-date to git rebase (true/false).'
+        type: boolean
+        required: false
+        default: false
     secrets:
       token:
         description: 'Github Token'
@@ -22,6 +28,9 @@ jobs:
       with:
         persist-credentials: true
         show-progress: false
+
     - uses: ljharb/rebase@master
+      with:
+        committer-date-is-author-date: ${{ inputs.committer-date-is-author-date }}
       env:
         GITHUB_TOKEN: ${{ secrets.token }}
