@@ -170,4 +170,18 @@ if [ "${SKIP_LS_CHECK-}" != 'true' ]; then
   npm ls # >/dev/null
 fi
 
+# node builds with OpenSSL 1.1 prior to v14.21 / v16.17 read the system openssl.cnf's `openssl_conf` section;
+# on ubuntu 24.04 that contains the OpenSSL-3-only `providers` directive, which 1.1 tries and fails to dlopen,
+# leaving a "DSO support routines" error queued that surfaces in a later crypto call.
+if [ "$(nvm_get_os)" = 'linux' ]; then
+  case "$(node -p 'process.versions.openssl' 2>/dev/null || true)" in
+    1.1.*)
+      echo
+      echo
+      echo "******> OPENSSL_CONF=/dev/null"
+      echo "OPENSSL_CONF=/dev/null" >> $GITHUB_ENV
+    ;;
+  esac
+fi
+
 echo "${NVM_BIN}" >> $GITHUB_PATH
