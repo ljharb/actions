@@ -24,7 +24,7 @@ async function main() {
 		cacheID = await cache.restoreCache(cachePaths, cacheKey).catch(() => void undefined);
 		try {
 			execSync('git checkout -- node_modules'); // for bundled deps, like tape-lib
-		} catch {/**/}
+		} catch { /**/ }
 	}
 
 	const cmd = core.getInput('command');
