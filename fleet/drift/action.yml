@@ -1,0 +1,41 @@
+name: 'fleet: workflow drift report'
+description: 'Compare the workflow files of every repository a GitHub App is installed on against templates, and keep a single issue up to date with the discrepancies'
+author: ljharb
+inputs:
+  app-id:
+    description: 'the GitHub App’s ID or client ID'
+    required: true
+  private-key:
+    description: 'the GitHub App’s private key'
+    required: true
+  accounts:
+    description: 'space- or comma-separated accounts (users or orgs) whose App installations may be processed; any other installation is ignored (default: the owner of the repository running this)'
+    required: false
+    default: ''
+  source-accounts:
+    description: 'space- or comma-separated accounts (users or orgs) whose repositories are checked when they are the source of a fork the App is installed on, and `committer` has committed to them; forks themselves are never checked'
+    required: false
+    default: ''
+  committer:
+    description: 'the login whose commits (as committer) to a fork’s source mean it’s maintained here, and so checked'
+    required: false
+    default: ${{ github.repository_owner }}
+  token:
+    description: 'token that can create and edit issues in `issue-repository`'
+    required: false
+    default: ${{ github.token }}
+  issue-author:
+    description: 'the login that `token` creates issues as, used to find the report issue'
+    required: false
+    default: 'github-actions[bot]'
+  issue-repository:
+    description: '`owner/name` of the repository to keep the report issue in'
+    required: false
+    default: ${{ github.repository }}
+  dry-run:
+    description: 'check and summarize, but create, edit, or close no issue'
+    required: false
+    default: 'false'
+runs:
+  using: node24
+  main: ./index.mjs

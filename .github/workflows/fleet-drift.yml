@@ -1,0 +1,48 @@
+name: 'fleet: workflow drift report'
+
+on:
+  schedule:
+    - cron: '47 6 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'check and summarize, but create, edit, or close no issue'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+cache-mode: none
+
+concurrency:
+  group: fleet-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    if: vars.FLEET_APP_ID != ''
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: read
+      issues: write  # to keep the report issue up to date
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+            raw.githubusercontent.com:443
+
+      - uses: ljharb/actions/fleet/drift@main
+        with:
+          app-id: ${{ vars.FLEET_APP_ID }}
+          private-key: ${{ secrets.FLEET_APP_PRIVATE_KEY }}
+          accounts: ${{ vars.FLEET_ACCOUNTS }}
+          source-accounts: ${{ vars.FLEET_SOURCE_ACCOUNTS }}
+          dry-run: ${{ inputs.dry-run == true }}

@@ -12,6 +12,7 @@
 		"@actions/cache": "^6.2.0",
 		"@actions/core": "^3.0.1",
 		"@actions/github": "^9.1.1",
+		"@octokit/auth-app": "^8.3.1",
 		"get-json": "^1.1.0",
 		"mkdirp": "^3.0.1",
 		"semver": "^7.8.5",
