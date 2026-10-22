@@ -49,7 +49,7 @@ async function getReqOpts(range, type) {
 	let requireds = [];
 	let optionals = [];
 	if (type === 'majors') {
-		requireds = Object.entries(map).flatMap(([x, [latest]]) => (semver.subset(x, '>= 1') && semver.subset(latest, range)) || []);
+		requireds = Object.entries(map).flatMap(([x, [latest]]) => (semver.subset(x, '>= 1') && semver.subset(latest, range) ? [x] : []));
 		optionals = Object.keys(map)
 			.flat()
 			.filter((x) => !requireds.includes(x) && semver.subset(map[x][0], range));
