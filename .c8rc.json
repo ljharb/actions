@@ -1,0 +1,10 @@
+{
+	"100": true,
+	"check-coverage": true,
+	"reporter": ["html", "text", "text-summary"],
+	"exclude": [
+		"coverage/**",
+		"node_modules/**",
+		"test/**"
+	]
+}

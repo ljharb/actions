@@ -1,0 +1,26 @@
+name: 'Tests'
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+cache-mode: none
+
+jobs:
+  tests:
+    name: 'unit tests'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          show-progress: false
+      - uses: ljharb/actions/node/install@main
+        name: 'install node 24'
+        with:
+          node-version: '24'
+          skip-install: true
+          skip-ls-check: true
+      - run: npm run tests-only
