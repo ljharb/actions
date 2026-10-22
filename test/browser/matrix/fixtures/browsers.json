@@ -1,0 +1,122 @@
+{
+	"Windows": {
+		"10": [
+			{
+				"browser": "chrome",
+				"browser_version": "120.0",
+				"device": null
+			},
+			{
+				"browser": "chrome",
+				"browser_version": "119.0",
+				"device": null
+			},
+			{
+				"browser": "firefox",
+				"browser_version": "121.0",
+				"device": null
+			},
+			{
+				"browser": "edge",
+				"browser_version": "79.0",
+				"device": null
+			},
+			{
+				"browser": "edge",
+				"browser_version": "80.0",
+				"device": null
+			},
+			{
+				"browser": "opera",
+				"browser_version": "12.16",
+				"device": null
+			},
+			{
+				"browser": "opera",
+				"browser_version": "15.0",
+				"device": null
+			},
+			{
+				"browser": "ie",
+				"browser_version": "11.0",
+				"device": null
+			},
+			{
+				"browser": "chrome",
+				"browser_version": "118",
+				"device": null
+			}
+		],
+		"11": [
+			{
+				"browser": "chrome",
+				"browser_version": "120.0",
+				"device": null
+			},
+			{
+				"browser": "firefox",
+				"browser_version": "beta",
+				"device": null
+			},
+			{
+				"browser": "ie",
+				"browser_version": "11",
+				"device": null
+			},
+			{
+				"browser": "yandex",
+				"browser_version": "23",
+				"device": null
+			}
+		],
+		"8.1": [
+			{
+				"browser": "chrome",
+				"browser_version": "118.0",
+				"device": null
+			}
+		]
+	},
+	"OS X": {
+		"Sonoma": [
+			{
+				"browser": "safari",
+				"browser_version": "17.0",
+				"device": null
+			},
+			{
+				"browser": "firefox",
+				"browser_version": "dev",
+				"device": null
+			},
+			{
+				"browser": "chrome",
+				"browser_version": "117",
+				"device": null
+			}
+		],
+		"Ventura": [
+			{
+				"browser": "chrome",
+				"browser_version": "117.0",
+				"device": null
+			}
+		],
+		"10.15": [
+			{
+				"browser": "yandex",
+				"browser_version": "23.0",
+				"device": null
+			}
+		]
+	},
+	"ios": {
+		"17": [
+			{
+				"browser": "iphone",
+				"browser_version": null,
+				"device": "iPhone 15"
+			}
+		]
+	}
+}
