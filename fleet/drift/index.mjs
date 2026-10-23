@@ -2,7 +2,7 @@ import * as core from '@actions/core';
 import { getOctokit } from '@actions/github';
 
 import { appAuth, discover, parseAccounts } from '../lib/app.mjs';
-import { code } from '../lib/markdown.mjs';
+import { code, html } from '../lib/markdown.mjs';
 import { checkRepo } from './check.mjs';
 
 /** @typedef {import('./check.mjs').Result} Result */
@@ -54,9 +54,11 @@ function section({
 		...unreadable.length > 0 ? [`- unreadable: ${list(unreadable)}`] : [],
 		...drifted.flatMap(({ name, diff }) => [
 			'',
-			`${code(name)}:`,
+			`<details><summary>drifted: <code>${html(name)}</code></summary>`,
 			'',
 			fence(diff.length > maxDiffLength ? `${diff.slice(0, maxDiffLength)}\n… (truncated)` : diff, 'diff'),
+			'',
+			'</details>',
 		]),
 		'',
 		'</details>',

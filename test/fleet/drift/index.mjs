@@ -160,7 +160,7 @@ test('fleet/drift: creates the report issue', (t) => {
 	t.ok(body.includes('- unexpected, per `engines.node`: `node-tens.yml`'), 'section: unexpected');
 	t.ok(body.includes('- unreadable: `node.yml`'), 'section: unreadable');
 	t.ok(body.includes('- ⚠️ `could not read the repository’s state`'), 'section: error');
-	t.match(body, /\n`rebase\.yml`:\n\n````diff\n--- rebase\.yml \(actual\)\n\+\+\+ rebase\.yml \(expected\)\n[^]*?-# has ``` fences\n[^]*?\n````\n/, 'a diff with backticks is fenced longer than they are');
+	t.match(body, /\n<details><summary>drifted: <code>rebase\.yml<\/code><\/summary>\n\n````diff\n--- rebase\.yml \(actual\)\n\+\+\+ rebase\.yml \(expected\)\n[^]*?-# has ``` fences\n[^]*?\n````\n\n<\/details>\n/, 'each drifted file is its own collapsed section, with its diff fenced longer than any backticks in it');
 	t.match(body, /\n```diff\n--- rebase\.yml \(actual\)\n[^`]*\n… \(truncated\)\n```\n/, 'a long diff is truncated');
 	t.notOk(body.includes('x'.repeat(6001)), 'only the first 6000 characters of a diff are kept');
 	t.notOk(body.includes('omitted'), 'nothing is omitted');
@@ -335,7 +335,7 @@ test('fleet/drift: keeps the issue body and run summary within GitHub’s limits
 	t.ok(rows > 100, 'many rows are shown');
 	const sectionsOmitted = body.match(/\n_…details for (?<n>\d+) more repositories omitted for length; see \[the run summary\]\([^)]+\)\._$/);
 	t.ok(sectionsOmitted, 'the details note how many sections were omitted, at the end');
-	const sections = (body.match(/^<details>/gm) ?? []).length;
+	const sections = (body.match(/^<details><summary><a href=/gm) ?? []).length;
 	t.equal(sections + Number(sectionsOmitted?.groups?.n), 300, 'shown and omitted sections add up');
 
 	t.ok(Buffer.byteLength(summary) <= 1000000, 'the summary fits in a step summary');
@@ -344,7 +344,7 @@ test('fleet/drift: keeps the issue body and run summary within GitHub’s limits
 	t.equal((summary.match(/^\| \[`ljharb\/a-repository-[\w-]+`\]/gm) ?? []).length, 300, 'every row is in the summary');
 	const fullOmitted = summary.match(/\n_…details for (?<n>\d+) more repositories omitted: the run summary is full\._$/);
 	t.ok(fullOmitted, 'the summary notes how many sections were omitted');
-	t.equal((summary.match(/^<details>/gm) ?? []).length + Number(fullOmitted?.groups?.n), 300, 'shown and omitted summary sections add up');
+	t.equal((summary.match(/^<details><summary><a href=/gm) ?? []).length + Number(fullOmitted?.groups?.n), 300, 'shown and omitted summary sections add up');
 
 	t.end();
 });
