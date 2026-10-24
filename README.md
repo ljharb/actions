@@ -14,9 +14,9 @@ A GitHub App, installed on the repositories to manage, lets scheduled jobs in th
 
 ### Setup
 
-1. Create a GitHub App (no webhook needed) with these repository permissions: Contents (read) and Metadata (read).
+1. Create a GitHub App (no webhook needed) with these repository permissions: Contents (read) and Metadata (read). For the [commands](#commands), it also needs Pull requests (read) for a dry run, and Contents (write), Pull requests (write), and Workflows (write) to open PRs.
 2. Install it on each account, for all or selected repositories. Installing it is what opts a repository in. (Installing it on more than one account requires making it public, which lets anyone install it; see `FLEET_ACCOUNTS`.)
-3. In this repo, set the `FLEET_APP_ID` Actions variable to the App’s ID or client ID, and the `FLEET_APP_PRIVATE_KEY` Actions secret to one of its private keys. Without `FLEET_APP_ID`, the fleet workflows are skipped.
+3. In this repo, set the `FLEET_APP_ID` Actions variable to the App’s ID or client ID, and the `FLEET_APP_PRIVATE_KEY` Actions secret to one of its private keys. Without `FLEET_APP_ID`, the fleet workflows (`fleet-drift.yml` and `fleet-commands.yml`) are skipped.
 4. Set the `FLEET_ACCOUNTS` Actions variable to the space-separated accounts (users and organizations) whose installations may be processed, eg `ljharb es-shims inspect-js`. Installations on any other account are ignored. When unset, only this repo’s owner is allowed.
 5. Optionally, set the `FLEET_SOURCE_ACCOUNTS` Actions variable to the space-separated accounts whose repositories may be checked as the source of a fork (see below).
 
@@ -45,11 +45,12 @@ Forks are never checked. A fork’s source is checked instead (by the workflow d
 
 ### Private repositories
 
-This repo is public, and so is everything its fleet workflows output: run logs (including the inputs GitHub shows for each step, and job names), annotations, summaries, step outputs, and the drift report. So private repositories the App is installed on are processed like any other, but nothing about any one of them is ever output; at most, how many there are, and how many had each kind of outcome:
+This repo is public, and so is everything its fleet workflows output: run logs (including the inputs GitHub shows for each step, and job names), annotations, summaries, step outputs, and the drift report and its replies. So private repositories the App is installed on are processed like any other, but nothing about any one of them is ever output; at most, how many there are, and how many had each kind of outcome (and for [commands](#commands), not even that):
 
-- None is ever named, nor are its files, contents, branches, PRs, errors, or tool output shown.
-- An error is only shown for a public repository; a private one’s is only counted, and never fails anything else. An error not about any one repository (eg, an installation that couldn’t be read) shows only its HTTP status or GraphQL error types, never its message, which could quote what it couldn’t read.
-- A private `.github` repository’s defaults apply only to its account’s private repositories: any effect on a public one (a file it requires, ignores, or forbids; or its being invalid) would show in that one’s public report, and so would show what’s in the private file. Its account’s public repositories are treated as if it had no defaults; to share defaults with them, make the `.github` repository public. When those defaults are invalid, a private repository’s error only says so, not what’s wrong.
+- None is ever named, nor are its files, contents, branches, PRs, errors, or tool output shown. Each has no log line of its own: its outcome is at most counted, in a line after all the public repositories’, so that neither where one would fall among them by name, nor how long one took, is shown.
+- An error is only shown for a public repository; a private one’s is at most counted, and never fails anything else. An error not about any one repository (eg, an installation that couldn’t be read) shows only its HTTP status or GraphQL error types, never its message, which could quote what it couldn’t read.
+- A [command](#commands) fixes (or, in a dry run, plans) the private repositories its filters match, exactly as it does public ones, so a private repository can be named. But since its filters can be as narrow as one repository, its output says nothing about them at all, not even how many matched or failed: whether any private repository matched, exists, or failed is never confirmed. Its reply always ends with the same sentence saying that any matching private repositories were processed too, so a reply for filters that match only private repositories is identical to one for filters that match nothing. They’re fixed after every public one, with no log line, warning, or annotation of their own, and a private repository’s failure never fails the run; it only shows in that repository itself (eg, as its PR not being opened or updated).
+- A private `.github` repository’s defaults apply only to its account’s private repositories: any effect on a public one (a file it requires, ignores, or forbids; or its being invalid) would show in that one’s public report or fix, and so would show what’s in the private file. Its account’s public repositories are treated as if it had no defaults; to share defaults with them, make the `.github` repository public. When those defaults are invalid, a private repository’s error only says so, not what’s wrong.
 - An installation on an account that isn’t allowed is skipped without naming the account, which may have installed the App only on its private repositories.
 
 An account’s `.github` repository is skipped by the workflow drift report unless its own `.github/ljharb-actions.json`
@@ -72,3 +73,31 @@ It only reads; it never changes another repository.
 - Other workflow files are not reported.
 - The report groups repositories by account, each a collapsed table. Every file it lists links to that file (a missing one, to its template, when there is one), and each drifted file expands to show its full diff. Diffs are never cut short: when the issue would be too long for GitHub, whole diffs (then, if still needed, whole rows) are left out of it, and the run’s summary has as many of them as fit in its own, larger, limit.
 - [Private repositories](#private-repositories) are only counted, never named, since the issue is public. A run that couldn’t check every repository says so, and never closes the issue.
+- The report ends with a short legend of the [commands](#commands) that act on it.
+
+### Commands
+
+`fleet-commands.yml`, in this repo, runs on every new comment on an issue here, and acts only on a comment on the workflow drift report whose first line is one of:
+
+- `/fix <filters>`: in each matching repository, open (or update) a PR that makes its workflow files match the templates.
+- `/dry-run fix <filters>`: reply with what `/fix` would do (which PR it would create, update, or reopen, and with which files), without changing anything.
+
+At least one filter is required, since every repository at once is too broad. Filters are separated by spaces (or commas), and are case-insensitive; each is one of:
+
+- `owner/name`: a repository
+- `owner`: an account
+- a workflow file name (`*.yml` or `*.yaml`): only that file
+- `missing`, `drifted`, or `unexpected`: only that kind of discrepancy
+
+Filters of the same kind match any one of them; filters of different kinds must all match. For example, `/fix ljharb es-shims rebase.yml missing` adds `rebase.yml` wherever it’s missing in `ljharb`’s and `es-shims`’ repositories, and changes nothing else. A repository with nothing matching the filters is only listed when it’s named. Anything else starting with `/` gets a reply explaining the commands.
+
+Only people with write (or maintain, or admin) permission on this repo can run them: a command from anyone else gets a reply saying so, and does nothing else. Every command from someone allowed gets a 👀 reaction; one that runs then gets one reply with a table of what happened in each public repository, which is also the run’s summary. [Private repositories](#private-repositories) that match are fixed too, but are never listed, counted, or otherwise mentioned, beyond one sentence that every such reply ends with whether or not any matched. The run fails if any public repository could not be fixed, after trying every other one; a private repository’s failure only shows in that repository.
+
+Commands run one at a time, in order. GitHub keeps only one waiting behind the one running, though: a command posted while one runs and another waits cancels the waiting one, which then gets no reaction and no reply, so post it again once the first is done.
+
+Only the repositories the App is installed on are fixed; fork sources never are. In each, `/fix` works on a `fleet/workflows` branch, and its PR into the default branch:
+
+- Missing files are written from their templates, drifted ones are rewritten from their templates (keeping the values of their placeholders, where it can recover them), and unexpected ones are deleted. When a node test file is added after an existing one whose version range is open-ended, that range is closed where the added file’s starts. A file that can’t be written (eg, with no template, or no way to know its node version range) is left as it is, and listed as such.
+- An open PR from that branch is updated, and a closed, unmerged one is reopened; once one is merged, the next `/fix` opens a new one. The branch is always built on its current tip, merged with the default branch, and is never force-pushed.
+- A workflow file (or a directory on the way to it) that is a symbolic link is never written through: a linked file is replaced with a regular one, and a linked directory fails that repository.
+- The commits are the App’s own. If the branch has commits by anyone else, or changes to any file other than the ones being fixed, nothing is pushed: fix or delete the branch, and run the command again. So while a PR is open, a later `/fix` for that repository must cover every file the PR already changes (eg, by filtering by repository rather than by file).

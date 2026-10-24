@@ -1,6 +1,6 @@
 import test from 'tape';
 
-import { isShard } from '../../../fleet/drift/shards.mjs';
+import { isShard, shardDecade } from '../../../fleet/drift/shards.mjs';
 import { evalModule, moduleURL } from './helpers/child.mjs';
 import { versionFixture } from './helpers/versions.mjs';
 
@@ -28,6 +28,18 @@ test('isShard', (t) => {
 	]) {
 		t.notOk(isShard(name), `${name} is not a node test shard`);
 	}
+
+	t.end();
+});
+
+test('shardDecade', (t) => {
+	t.equal(shardDecade('node.yml'), null, '`node.yml` covers every decade');
+	t.equal(shardDecade('rebase.yml'), null, 'not a shard');
+	t.equal(shardDecade('node-aught.yml'), 0, 'aught');
+	t.equal(shardDecade('node-tens.yml'), 1, 'tens');
+	t.equal(shardDecade('node-nineties.yml'), 9, 'nineties');
+	t.equal(shardDecade('node-100s.yml'), 10, 'past nineties');
+	t.equal(shardDecade('node-250s.yml'), 25, 'further past nineties');
 
 	t.end();
 });

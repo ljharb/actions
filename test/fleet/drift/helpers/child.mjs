@@ -46,8 +46,9 @@ function baseEnv() {
  * }} ChildResult
  */
 
-/** @type {(args: string[], options: { scenario: ChildScenario, env?: Record<string, string> }) => ChildResult} */
-export function runChild(args, { scenario, env = {} }) {
+// `preload` is the URL of the module that sets up the scenario in the child: by default, this directory's
+/** @type {(args: string[], options: { scenario: ChildScenario, env?: Record<string, string>, preload?: string }) => ChildResult} */
+export function runChild(args, { scenario, env = {}, preload: preloadURL = preload }) {
 	const dir = mkdtempSync(path.join(tmpdir(), 'fleet-drift-test-'));
 	const log = path.join(dir, 'requests.jsonl');
 	const out = path.join(dir, 'out.json');
@@ -57,7 +58,7 @@ export function runChild(args, { scenario, env = {} }) {
 	const summary = path.join(dir, 'summary.md');
 	writeFileSync(summary, '');
 
-	const result = spawnSync(process.execPath, ['--import', preload, ...args], {
+	const result = spawnSync(process.execPath, ['--import', preloadURL, ...args], {
 		cwd: root,
 		env: {
 			...baseEnv(),

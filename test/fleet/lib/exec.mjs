@@ -8,7 +8,8 @@ import path from 'path';
 
 import test from 'tape';
 
-import { exec } from '../../../fleet/lib/exec.mjs';
+import { exec, gitAuthEnv } from '../../../fleet/lib/exec.mjs';
+import { gitIsolation, tempDir } from './helpers/git.mjs';
 
 const node = process.execPath;
 
@@ -88,6 +89,35 @@ test('exec: spawn error', (t) => {
 		(/** @type {unknown} */ e) => e instanceof Error && 'code' in e && e.code === 'ENOENT',
 		'even with allowFailure',
 	);
+
+	t.end();
+});
+
+test('gitAuthEnv', (t) => {
+	const env = gitAuthEnv('ghs_secret');
+
+	t.deepEqual(env, {
+		GIT_CONFIG_COUNT: '1',
+		GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+		GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from('x-access-token:ghs_secret').toString('base64')}`,
+		GIT_TERMINAL_PROMPT: '0',
+	}, 'configures a basic auth header for github.com, and disables prompting');
+	t.equal(
+		Buffer.from(env.GIT_CONFIG_VALUE_0.replace('AUTHORIZATION: basic ', ''), 'base64').toString('utf8'),
+		'x-access-token:ghs_secret',
+		'the header encodes the token as an installation access token',
+	);
+	t.ok(Object.values(env).every((value) => !value.includes('ghs_secret')), 'the token never appears in the clear');
+
+	t.equal(gitAuthEnv('x', 'https://ghe.example.com').GIT_CONFIG_KEY_0, 'http.https://ghe.example.com/.extraheader', 'scopes the header to another server');
+	t.equal(gitAuthEnv('x', 'https://ghe.example.com//').GIT_CONFIG_KEY_0, 'http.https://ghe.example.com/.extraheader', 'ignoring trailing slashes');
+
+	const cwd = tempDir(t, 'git-auth-env');
+	exec('git', ['init', '--quiet'], { cwd, env: gitIsolation });
+	const { stdout } = exec('git', ['config', '--get', 'http.https://github.com/.extraheader'], { cwd, env: { ...gitIsolation, ...env } });
+	t.equal(stdout.trim(), env.GIT_CONFIG_VALUE_0, 'git sees the header as config');
+	const local = exec('git', ['config', '--local', '--get', 'http.https://github.com/.extraheader'], { cwd, env: { ...gitIsolation, ...env }, allowFailure: true });
+	t.equal(local.status, 1, 'without it being written to `.git/config`');
 
 	t.end();
 });

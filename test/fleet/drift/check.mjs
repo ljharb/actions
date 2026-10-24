@@ -8,7 +8,13 @@ import path from 'path';
 
 import test from 'tape';
 
-import { checkRepo, checkSafely, normalize, templateFor } from '../../../fleet/drift/check.mjs';
+import {
+	checkRepo,
+	checkSafely,
+	normalize,
+	placeholders,
+	templateFor,
+} from '../../../fleet/drift/check.mjs';
 import { evalModule, moduleURL } from './helpers/child.mjs';
 import {
 	nodeWorkflow,
@@ -79,6 +85,13 @@ test('normalize', (t) => {
 	t.equal(normalize('a'), 'a\n', 'adds a final newline');
 	t.equal(normalize(''), '\n', 'empty');
 	t.equal(normalize('  a\n\n  b'), '  a\n\n  b\n', 'keeps leading indentation and inner blank lines');
+
+	t.end();
+});
+
+test('placeholders', (t) => {
+	t.deepEqual(placeholders(template('node.yml')), ['label', 'range', 'type', 'command'], 'each once, in order of first appearance');
+	t.deepEqual(placeholders(template('rebase.yml')), [], 'a GitHub Actions expression is not a placeholder');
 
 	t.end();
 });

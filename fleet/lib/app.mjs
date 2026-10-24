@@ -1,4 +1,5 @@
 import { getOctokit } from '@actions/github';
+import { defaults } from '@actions/github/lib/utils';
 import { createAppAuth } from '@octokit/auth-app';
 
 import { mergeConfig, parseConfig } from './config.mjs';
@@ -56,6 +57,21 @@ fragment state on Repository {
 	}
 }`;
 
+/** @type {() => void} */
+function ignore() {}
+
+/**
+ * An Octokit for one repository's requests: for a private one, Octokit's own log (eg, its deprecation warnings) is dropped, since it quotes request URLs, which name the repository, and run logs are public.
+ * @type {(token: string, isPrivate: boolean) => Octokit}
+ */
+export function octokitFor(token, isPrivate) {
+	const log = {
+		debug: ignore, info: ignore, warn: ignore, error: ignore,
+	};
+	// Octokit's own log, and the one its requests use (which is otherwise `console`); `request` replaces the default one rather than merging with it, so the default's proxy-aware `agent` and `fetch` are kept explicitly
+	return isPrivate ? getOctokit(token, { log, request: { ...defaults.request, log } }) : getOctokit(token);
+}
+
 /**
  * A failure's message for public output: an API error's text can quote what it couldn't read (eg, an organization's restrictions, or a private repository's name), so only its HTTP status and GraphQL error types are kept.
  * @type {(error: unknown) => string}
@@ -79,10 +95,10 @@ export function appAuth(appId, privateKey) {
 	return createAppAuth({ appId, privateKey });
 }
 
-/** @type {(auth: ReturnType<typeof createAppAuth>) => Promise<Octokit>} */
-export async function appOctokit(auth) {
+/** @type {(auth: ReturnType<typeof createAppAuth>, quiet?: boolean) => Promise<Octokit>} */
+export async function appOctokit(auth, quiet = false) {
 	const { token } = await auth({ type: 'app' });
-	return getOctokit(token);
+	return octokitFor(token, quiet);
 }
 
 /** @type {(auth: ReturnType<typeof createAppAuth>, installationId: number, options?: { repositoryNames?: string[], permissions?: Record<string, string> }) => Promise<string>} */
@@ -126,7 +142,7 @@ function toState({
 }, r, repo) {
 	const own = parseConfig(repo?.config?.text, '`.github/ljharb-actions.json`');
 	const isPrivate = Boolean(r.private || repo?.isPrivate);
-	// a private `.github` repository's defaults (and their errors) apply only to private repositories: any effect on a public one's public report would show what's in a private file
+	// a private `.github` repository's defaults (and their errors) apply only to private repositories: any effect on a public one's public report, or fixing, would show what's in a private file
 	const inherited = account.private && !isPrivate ? parseConfig(null, '') : account;
 	const config = mergeConfig(inherited.config, own.config);
 	// an account's `.github` repository holds its defaults, and usually has no workflows of its own, so it's only checked when its own file asks for that
@@ -323,6 +339,17 @@ async function sourceStates(auth, installed, {
 	return { states: states.filter((s) => !s.fork), failures };
 }
 
+/** @type {WeakSet<Failure>} */
+const skips = new WeakSet();
+
+/**
+ * Whether a failure from `discover` is only an installation on an account that isn't allowed, which was skipped on purpose, rather than something that couldn't be read.
+ * @type {(failure: Failure) => boolean}
+ */
+export function isSkippedAccount(failure) {
+	return skips.has(failure);
+}
+
 /** @type {(auth: ReturnType<typeof createAppAuth>, accounts: Set<string>, options?: Options) => Promise<{ states: RepoState[], failures: Failure[] }>} */
 export async function discover(auth, accounts, { sourceAccounts = new Set(), committer = '' } = {}) {
 	const app = await appOctokit(auth);
@@ -334,7 +361,9 @@ export async function discover(auth, accounts, { sourceAccounts = new Set(), com
 		const login = accountLogin(i);
 		if (!accounts.has(login.toLowerCase())) {
 			// this is logged, and listed in the public drift issue, but an account that isn't allowed may have installed the App only on its private repositories, so its login isn't named
-			failures.push({ scope: `installation ${i.id}`, message: 'its account is not in the allowed accounts; skipped' });
+			const failure = { scope: `installation ${i.id}`, message: 'its account is not in the allowed accounts; skipped' };
+			skips.add(failure);
+			failures.push(failure);
 			return false;
 		}
 		return !i.suspended_at;

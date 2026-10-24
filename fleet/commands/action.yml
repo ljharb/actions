@@ -1,0 +1,25 @@
+name: 'fleet: workflow drift commands'
+description: 'Run the slash commands (`/fix`, `/dry-run fix`) commented on the workflow drift report issue: open or update PRs that make workflow files match the templates'
+author: ljharb
+inputs:
+  app-id:
+    description: 'the GitHub App’s ID or client ID'
+    required: true
+  private-key:
+    description: 'the GitHub App’s private key'
+    required: true
+  accounts:
+    description: 'space- or comma-separated accounts (users or orgs) whose App installations may be processed; any other installation is ignored (default: the owner of the repository running this)'
+    required: false
+    default: ''
+  token:
+    description: 'token that can read collaborators’ permissions on, and comment and react on issues in, the repository running this'
+    required: false
+    default: ${{ github.token }}
+  issue-author:
+    description: 'the login that the drift report creates its issue as; comments on any other issue are ignored'
+    required: false
+    default: 'github-actions[bot]'
+runs:
+  using: node24
+  main: ./index.mjs

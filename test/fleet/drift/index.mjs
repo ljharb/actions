@@ -2,6 +2,7 @@ import path from 'path';
 
 import test from 'tape';
 
+import { legend } from '../../../fleet/commands/syntax.mjs';
 import { installedRepo, privateKey } from '../lib/helpers/github.mjs';
 import { runChild } from './helpers/child.mjs';
 import { nodeWorkflow, standardWorkflows, template } from './helpers/states.mjs';
@@ -155,6 +156,14 @@ function rowCost(text, { shown, omitted, diffsNoted }) {
 	return first.length + newline + accountCount + diffsNote + omittedNote;
 }
 
+// every report ends with the commands' legend; this is the rest of it
+/** @type {(t: import('tape').Test, text: string) => string} */
+function withoutLegend(t, text) {
+	const tail = `\n\n${legend()}`;
+	t.ok(text.endsWith(tail), 'ends with the commands’ legend');
+	return text.slice(0, -tail.length);
+}
+
 /** @type {(text: string, pattern: RegExp) => number} */
 function count(text, pattern) {
 	return (text.match(pattern) ?? []).length;
@@ -274,11 +283,13 @@ test('fleet/drift: creates the report issue', (t) => {
 	];
 	t.ok(body.includes(`\n\n${accountTable('ljharb', '8 repositories', rows)}`), 'one collapsed table for the account, with a row per listed repository, in order, and every cell exactly as expected');
 	t.equal(count(body, /<table>/g), 1, 'and no other table');
-	t.ok(body.endsWith(`\n${accountTable('ljharb', '8 repositories', rows)}`), 'nothing follows the table, since nothing is omitted');
+	t.ok(withoutLegend(t, body).endsWith(`\n${accountTable('ljharb', '8 repositories', rows)}`), 'nothing follows the table, since nothing is omitted');
 	t.ok(body.includes('x'.repeat(7000)), 'a diff over 6000 characters is kept whole');
 	t.notOk(body.includes('truncated'), 'and never truncated');
 	t.notOk(body.includes('omitted'), 'nothing is omitted');
 
+	t.equal(body.split(legend()).length, 2, 'the legend appears once');
+	t.ok(body.includes('`/fix <filters>`') && body.includes('`/dry-run fix <filters>`'), 'explaining both commands');
 	t.equal(summary, body, 'the run summary has the same full report');
 
 	t.end();
@@ -464,7 +475,7 @@ test('fleet/drift: groups repositories by account, case-insensitively, in result
 	const missing = ['node-pretest.yml', 'rebase.yml', 'require-allow-edits.yml'].map((name) => templateLink(server, name));
 	const alphaDiff = summary.match(/<li><details><summary><a href="https:\/\/github\.com\/LJHarb\/alpha\/blob\/HEAD\/\.github\/workflows\/rebase\.yml"><code>rebase\.yml<\/code><\/a><\/summary>\n\n```diff\n(?<diff>[^`]+)\n```\n\n<\/details><\/li>/)?.groups?.diff ?? '';
 	t.ok(alphaDiff.startsWith('--- rebase.yml (actual)\n+++ rebase.yml (expected)\n'), 'the drifted file has its diff');
-	t.ok(summary.endsWith([
+	t.ok(withoutLegend(t, summary).endsWith([
 		'',
 		accountTable('es-shims', '1 repository', [row(server, 'es-shims/three', { missing })]),
 		accountTable('LJHarb', '2 repositories', [
@@ -494,7 +505,7 @@ test('fleet/drift: leaves out whole diffs that don’t fit, keeping every row', 
 	t.ok(body.length + diffCost(body) - 1 > 60000, 'with no room for another diff (the note’s count could lose a digit)');
 	t.equal(count(body, /<tr><td>/g), 20, 'every row is shown');
 	t.notOk(body.includes('_…'), 'so no rows are noted as omitted');
-	const omitted = body.match(/\n\n_Diffs for (?<n>\d+) more repositories are omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._$/);
+	const omitted = withoutLegend(t, body).match(/\n\n_Diffs for (?<n>\d+) more repositories are omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._$/);
 	t.ok(omitted, 'the body ends noting how many repositories’ diffs were omitted');
 	const shown = count(body, /<li><details><summary>/g);
 	t.ok(shown > 0, 'some diffs are shown');
@@ -535,7 +546,7 @@ test('fleet/drift: leaves out whole rows that don’t fit, then diffs', (t) => {
 	t.ok(body.length > 50000, 'and uses most of the space');
 	const rows = count(body, /<tr><td><a href="https:\/\/github\.com\/ljharb\/a-repository-/g);
 	t.ok(rows > 50, 'many rows are shown');
-	const notes = body.match(/\n\n_Diffs for (?<diffs>\d+) more repositories are omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._\n\n_…(?<rows>\d+) more repositories omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._$/);
+	const notes = withoutLegend(t, body).match(/\n\n_Diffs for (?<diffs>\d+) more repositories are omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._\n\n_…(?<rows>\d+) more repositories omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._$/);
 	t.ok(notes, 'the body ends noting the omitted diffs, then the omitted rows');
 	t.equal(rows + Number(notes?.groups?.rows), 300, 'shown and omitted rows add up');
 	t.ok(body.length + rowCost(body, { shown: rows, omitted: 300 - rows, diffsNoted: rows }) > 60000, 'with no room for another row');
@@ -548,7 +559,7 @@ test('fleet/drift: leaves out whole rows that don’t fit, then diffs', (t) => {
 	t.ok(Buffer.byteLength(summary) + diffCost(summary) - 1 > 1000000, 'with no room for another diff (the note’s count could lose a digit)');
 	t.equal(count(summary, /<tr><td><a href="https:\/\/github\.com\/ljharb\/a-repository-/g), 300, 'every row is in the summary');
 	t.notOk(summary.includes('_…'), 'so no rows are noted as omitted');
-	const fullOmitted = summary.match(/\n\n_Diffs for (?<n>\d+) more repositories are omitted: the run summary is full\._$/);
+	const fullOmitted = withoutLegend(t, summary).match(/\n\n_Diffs for (?<n>\d+) more repositories are omitted: the run summary is full\._$/);
 	t.ok(fullOmitted, 'the summary ends noting how many repositories’ diffs were omitted');
 	const shown = count(summary, /<li><details><summary>/g);
 	t.ok(shown > 100, 'many diffs are in the summary');
@@ -571,7 +582,7 @@ test('fleet/drift: leaves out rows that don’t fit, even when none do', (t) => 
 	t.equal(status, 0, 'exits successfully');
 	const [create] = issueWrites(requests);
 	const { body } = create.body;
-	t.match(body, /15 have discrepancies\. This issue is updated in place on every run, and closed when there are none\.\n+_…15 more repositories omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._$/, 'when not even one row fits, the body has no rows, and notes them all as omitted');
+	t.match(withoutLegend(t, body), /15 have discrepancies\. This issue is updated in place on every run, and closed when there are none\.\n+_…15 more repositories omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._$/, 'when not even one row fits, the body has no rows, and notes them all as omitted');
 	t.notOk(body.includes('<table>') || body.includes('long-error-'), 'with no table, and no repository named');
 	t.notOk(body.includes('Diffs for'), 'and no diffs to note, since none drifted');
 
@@ -580,7 +591,7 @@ test('fleet/drift: leaves out rows that don’t fit, even when none do', (t) => 
 	t.ok(rows > 0 && rows < 14, `some rows (${rows}) are in the summary`);
 	t.ok(Buffer.byteLength(summary) + rowCost(summary, { shown: rows, omitted: 15 - rows }) > 1000000, 'with no room for another row');
 	t.ok(summary.includes(`<code>\`engines.node\` in \`package.json\` is not a valid semver range: ${range}</code>`), 'each with its whole error');
-	t.ok(summary.endsWith(`\n\n_…${15 - rows} more repositories omitted: the run summary is full._`), 'and the summary ends noting the rest as omitted');
+	t.ok(withoutLegend(t, summary).endsWith(`\n\n_…${15 - rows} more repositories omitted: the run summary is full._`), 'and the summary ends noting the rest as omitted');
 	t.ok(summary.includes(`<code>ljharb/${names[rows - 1]}</code>`), 'the leading rows are shown');
 	t.notOk(summary.includes(names[rows]), 'and the rest are not');
 	t.ok(summary.includes(`<b>ljharb</b>: ${rows} of 15 repositories</summary>`), 'the account counts the rows shown, of all of its rows');
@@ -745,7 +756,7 @@ test('fleet/drift: third-party text in HTML is kept to one inert line', (t) => {
 	t.notOk((/\n\s*\n/).test(cell), 'with no blank line to end the HTML block');
 	t.notOk((/^\s*(?:\[x\]|!\[i\]|````|<b>)/m).test(body), 'so no link, image, fence, or markup starts a line of its own');
 	const missing = ['node-pretest.yml', 'rebase.yml', 'require-allow-edits.yml'].map((name) => templateLink(server, name));
-	t.ok(body.endsWith(`\n${accountTable('zzz', '1 repository', [row(server, 'zzz/after', { missing })])}`), 'and a later account’s table is intact');
+	t.ok(withoutLegend(t, body).endsWith(`\n${accountTable('zzz', '1 repository', [row(server, 'zzz/after', { missing })])}`), 'and a later account’s table is intact');
 	t.equal(summary, body, 'the summary is the same');
 
 	t.end();
@@ -822,7 +833,7 @@ test('fleet/drift: an account whose rows don’t all fit counts the rows shown, 
 		['<details><summary><b>aaa</b>: 1 repository</summary>', '<details><summary><b>bbb</b>: 1 of 2 repositories</summary>'],
 		'an account with every row shown counts them plainly, in the singular; one with only some shown counts “N of M”, in the plural, by M',
 	);
-	t.ok(body.endsWith('\n\n_…4 more repositories omitted for length; see [the run summary](https://github.com/ljharb/actions/actions/runs/42)._'), 'and the rest are noted as omitted');
+	t.ok(withoutLegend(t, body).endsWith('\n\n_…4 more repositories omitted for length; see [the run summary](https://github.com/ljharb/actions/actions/runs/42)._'), 'and the rest are noted as omitted');
 
 	t.end();
 });
@@ -851,7 +862,7 @@ test('fleet/drift: fits a huge failures list, noting how many more there are', (
 	t.equal(shown + Number(more?.groups?.n), 1500, 'shown and omitted failures add up');
 	t.ok(body.includes(`- installation ${1000 + shown - 1}: `) && !body.includes(`- installation ${1000 + shown}: `), 'the leading failures are listed, and the rest are not');
 	const tail = body.slice(body.indexOf(more?.[0] ?? '\0'));
-	t.match(tail, /^- _…\d+ more omitted for length; [^\n]*\n\n+_…1 more repositories omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._$/, 'and no row fits after them, so it is noted as omitted');
+	t.match(withoutLegend(t, tail), /^- _…\d+ more omitted for length; [^\n]*\n\n+_…1 more repositories omitted for length; see \[the run summary\]\(https:\/\/github\.com\/ljharb\/actions\/actions\/runs\/42\)\._$/, 'and no row fits after them, so it is noted as omitted');
 
 	t.equal(count(summary, /^- installation \d+: /gm), 1500, 'the summary lists every failure');
 	t.notOk(summary.includes('more omitted'), 'with none omitted');

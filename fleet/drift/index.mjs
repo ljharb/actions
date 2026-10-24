@@ -1,15 +1,16 @@
 import * as core from '@actions/core';
 import { getOctokit } from '@actions/github';
 
+import { legend } from '../commands/syntax.mjs';
 import { appAuth, discover, parseAccounts } from '../lib/app.mjs';
 import { code, html } from '../lib/markdown.mjs';
 import { checkSafely, templateFor } from './check.mjs';
+import { marker } from './marker.mjs';
 
 /** @typedef {import('./check.mjs').Result} Result */
 /** @typedef {import('../lib/app.mjs').Failure} Failure */
 /** @typedef {{ title: string, body: string, full: string }} Report */
 
-const marker = '<!-- ljharb/actions: fleet workflow drift -->';
 const maxBodyLength = 60000; // GitHub's limit is 65536 characters
 const maxSummaryBytes = 1000000; // GitHub's limit is 1 MiB
 
@@ -167,6 +168,9 @@ function report(results, privateCount, failures, checked) {
 				...accountTables(results.slice(0, shown), diffs, totals),
 				...withDiffs < drifted ? ['', `_Diffs for ${drifted - withDiffs} more repositories are ${where}._`] : [],
 				...shown < results.length ? ['', `_…${results.length - shown} more repositories ${where}._`] : [],
+				// last, and always kept, so it's where anyone looking for how to act on the report expects it
+				'',
+				legend(),
 			].join('\n');
 		};
 		// failures first, then every row it can, then as many whole diffs as fit: a diff is never cut short

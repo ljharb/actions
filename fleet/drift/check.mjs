@@ -32,6 +32,11 @@ export function templateFor(name) {
 const placeholder = /\{\{(?<name>\w+)\}\}/g;
 const hasPlaceholder = /\{\{\w+\}\}/;
 
+/** @type {(text: string) => string[]} */
+export function placeholders(text) {
+	return [...new Set(Array.from(text.matchAll(placeholder), (m) => m[1]))];
+}
+
 /** @type {(text: string) => string} */
 export function normalize(text) {
 	return `${text.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n+$/, '')}\n`;
@@ -60,13 +65,13 @@ function compile(text, flags = '') {
 }
 
 /** @type {(text: string, values: Record<string, string>) => string} */
-function render(text, values) {
+export function render(text, values) {
 	return text.replace(placeholder, (match, name) => (Object.hasOwn(values, name) ? values[name] : match));
 }
 
 // for the diff of a file that doesn't match, recover what values we can, one template line at a time
 /** @type {(text: string, actual: string) => Record<string, string>} */
-function guessValues(text, actual) {
+export function guessValues(text, actual) {
 	/** @type {Record<string, string>} */
 	const values = {};
 	for (const line of text.split('\n').filter((l) => hasPlaceholder.test(l))) {
@@ -94,7 +99,7 @@ function unifiedDiff(name, actual, expected) {
 const templates = new Map();
 
 /** @type {(name: string) => string} */
-function loadTemplate(name) {
+export function loadTemplate(name) {
 	let text = templates.get(name);
 	if (typeof text !== 'string') {
 		text = normalize(readFileSync(path.join(templateDir, name), 'utf8'));
@@ -104,7 +109,7 @@ function loadTemplate(name) {
 }
 
 /** @type {(packageJson: string | null) => { range: string | null, error: string | null }} */
-function nodeEngines(packageJson) {
+export function nodeEngines(packageJson) {
 	if (typeof packageJson !== 'string') {
 		return { range: null, error: null };
 	}
@@ -124,7 +129,7 @@ function nodeEngines(packageJson) {
 
 // the matrix type decides how many jobs, so how many files, a range needs
 /** @type {(files: Map<string, string | null>) => import('./shards.mjs').Type} */
-function nodeType(files) {
+export function nodeType(files) {
 	const types = [...files]
 		.filter(([name, text]) => isShard(name) && typeof text === 'string')
 		.map(([, text]) => text?.match(/^\s+type:\s*['"]?(?<type>majors|minors)\b/m)?.groups?.type);

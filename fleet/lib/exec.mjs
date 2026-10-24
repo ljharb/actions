@@ -26,3 +26,14 @@ export function exec(command, args, {
 		stderr: result.stderr,
 	};
 }
+
+// passed via git's env-based config, so the token never appears in argv or in a `.git/config`
+/** @type {(token: string, serverURL?: string) => Record<string, string>} */
+export function gitAuthEnv(token, serverURL = 'https://github.com') {
+	return {
+		GIT_CONFIG_COUNT: '1',
+		GIT_CONFIG_KEY_0: `http.${serverURL.replace(/\/+$/, '')}/.extraheader`,
+		GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
+		GIT_TERMINAL_PROMPT: '0',
+	};
+}

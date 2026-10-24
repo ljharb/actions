@@ -1,4 +1,5 @@
-// covers what keeps private repositories out of `fleet/lib/app.mjs`'s public output: failure messages, a private fork's source, and a private `.github` repository's defaults
+// covers what keeps private repositories out of `fleet/lib/app.mjs`'s public output: failure messages, a private fork's source, a private `.github` repository's defaults, and Octokit's own log
+import { defaults } from '@actions/github/lib/utils';
 import nock from 'nock';
 import test from 'tape';
 
@@ -6,6 +7,7 @@ import {
 	appAuth,
 	discover,
 	failureMessage,
+	octokitFor,
 	parseAccounts,
 } from '../../../fleet/lib/app.mjs';
 import { installedRepo, mockGitHub, privateKey } from './helpers/github.mjs';
@@ -123,4 +125,34 @@ test('discover: a private `.github` repository’s defaults apply only to privat
 	t.equal(find(states, 'es-shims/invalid-secret').configError, 'the account’s defaults are invalid', 'but are a private repository’s, without saying what’s wrong');
 	t.deepEqual(configOf(find(states, 'inspect-js/public-defaults')), { workflows: { 'public-required.yml': true } }, 'a public `.github` repository’s defaults apply to its public repositories');
 	t.notOk('withheld' in find(states, 'ljharb/plain'), 'nothing is withheld, since nothing private is applied');
+});
+
+test('octokitFor', async (t) => {
+	setup(t, {});
+	/** @type {string[]} */
+	const warnings = [];
+	const { warn } = console;
+	console.warn = (/** @type {unknown[]} */ ...args) => { warnings.push(args.join(' ')); };
+	t.teardown(() => {
+		console.warn = warn;
+	});
+	nock('https://api.github.com')
+		.get('/repos/acme/visible')
+		.reply(200, {}, { deprecation: 'true' })
+		.get('/repos/acme/secret')
+		.reply(200, {}, { deprecation: 'true' });
+
+	await octokitFor('token', false).request('GET /repos/acme/visible');
+	await octokitFor('token', true).request('GET /repos/acme/secret');
+	t.equal(warnings.length, 1, 'only one warning');
+	t.ok(warnings[0].includes('/repos/acme/visible'), 'a public repository’s Octokit logs its deprecation warning, which quotes the URL');
+	t.notOk(warnings.join('\n').includes('secret'), 'a private repository’s logs nothing');
+
+	/** @type {(octokit: import('../../../fleet/lib/app.mjs').Octokit) => Record<string, unknown>} */
+	const requestDefaults = (octokit) => octokit.request.endpoint.DEFAULTS.request ?? {};
+	const proxy = defaults.request ?? {};
+	const quiet = requestDefaults(octokitFor('token', true));
+	t.equal(quiet.fetch, proxy.fetch, 'a private repository’s Octokit keeps the default, proxy-aware `fetch`');
+	t.equal(quiet.agent, proxy.agent, 'and `agent`');
+	t.equal(requestDefaults(octokitFor('token', false)).fetch, proxy.fetch, 'as a public repository’s does');
 });

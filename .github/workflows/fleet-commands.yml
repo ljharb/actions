@@ -1,0 +1,41 @@
+name: 'fleet: workflow drift commands'
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+cache-mode: none
+
+jobs:
+  commands:
+    if: vars.FLEET_APP_ID != '' && !github.event.issue.pull_request && startsWith(github.event.comment.body, '/')
+    runs-on: ubuntu-24.04
+
+    # on the job, not the workflow, so that only commands wait their turn: every other comment's run is skipped before it joins the group
+    concurrency:
+      group: fleet-commands
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+      issues: write  # to react to the command, and reply with its outcome
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+            github.com:443
+            raw.githubusercontent.com:443
+
+      - uses: ljharb/actions/fleet/commands@main
+        with:
+          app-id: ${{ vars.FLEET_APP_ID }}
+          private-key: ${{ secrets.FLEET_APP_PRIVATE_KEY }}
+          accounts: ${{ vars.FLEET_ACCOUNTS }}

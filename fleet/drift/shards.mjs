@@ -24,11 +24,22 @@ function shardName(decade) {
 	return `node-${decades[decade] ?? `${decade}0s`}.yml`;
 }
 
-const shardPattern = new RegExp(`^node(?:-(?:${decades.join('|')}|\\d+0s))?\\.yml$`);
+const shardPattern = new RegExp(`^node(?:-(?<suffix>${decades.join('|')}|\\d+0s))?\\.yml$`);
 
 /** @type {(name: string) => boolean} */
 export function isShard(name) {
 	return shardPattern.test(name);
+}
+
+// the decade of node majors a shard covers, counted from 0 for `node-aught.yml`; `null` for `node.yml`, which covers them all
+/** @type {(name: string) => number | null} */
+export function shardDecade(name) {
+	const suffix = name.match(shardPattern)?.groups?.suffix;
+	if (!suffix) {
+		return null;
+	}
+	const index = decades.indexOf(suffix);
+	return index >= 0 ? index : Number(suffix.slice(0, -2));
 }
 
 /** @type {(comparators: readonly semver.Comparator[]) => string} */
