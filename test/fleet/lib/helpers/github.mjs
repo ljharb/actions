@@ -61,6 +61,7 @@ import nock from 'nock';
  *   commitsDelay?: number,
  *   issues?: unknown[],
  *   created?: Record<string, unknown>,
+ *   createError?: ErrorReply,
  * }} Scenario
  */
 /** @typedef {{ method: string, path: string, body: any, authorization: string }} Recorded */
@@ -218,7 +219,9 @@ export function mockGitHub(scenario, record) {
 	}));
 	graphql.reply(handle(({ body }) => graphqlReply(scenario, body.variables)));
 	listIssues.reply(handle(() => [200, scenario.issues ?? []]));
-	createIssue.reply(handle(() => [201, scenario.created ?? { number: 1, html_url: 'https://github.com/created/1' }])); // eslint-disable-line camelcase
+	createIssue.reply(handle(() => (scenario.createError
+		? [scenario.createError.status, scenario.createError.body ?? { message: 'error' }]
+		: [201, scenario.created ?? { number: 1, html_url: 'https://github.com/created/1' }]))); // eslint-disable-line camelcase
 	updateIssue.reply(handle(() => [200, {}]));
 	comment.reply(handle(() => [201, {}]));
 	// keyed by `owner/name` as requested; unspecified, a repository has no matching commits

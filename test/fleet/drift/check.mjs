@@ -8,7 +8,7 @@ import path from 'path';
 
 import test from 'tape';
 
-import { checkRepo, checkSafely, normalize } from '../../../fleet/drift/check.mjs';
+import { checkRepo, checkSafely, normalize, templateFor } from '../../../fleet/drift/check.mjs';
 import { evalModule, moduleURL } from './helpers/child.mjs';
 import {
 	nodeWorkflow,
@@ -79,6 +79,20 @@ test('normalize', (t) => {
 	t.equal(normalize('a'), 'a\n', 'adds a final newline');
 	t.equal(normalize(''), '\n', 'empty');
 	t.equal(normalize('  a\n\n  b'), '  a\n\n  b\n', 'keeps leading indentation and inner blank lines');
+
+	t.end();
+});
+
+test('templateFor', (t) => {
+	for (const name of ['rebase.yml', 'node-pretest.yml', 'require-allow-edits.yml']) {
+		t.equal(templateFor(name), name, `${name} has its own template`);
+	}
+	for (const name of ['node.yml', 'node-aught.yml', 'node-tens.yml', 'node-twenties.yml', 'node-100s.yml']) {
+		t.equal(templateFor(name), 'node.yml', `${name}, a node test shard, has the node template`);
+	}
+	for (const name of ['custom.yml', 'node-tests.yml', 'node.yaml', 'toString', '__proto__', 'hasOwnProperty']) {
+		t.equal(templateFor(name), null, `${name} has no template`);
+	}
 
 	t.end();
 });

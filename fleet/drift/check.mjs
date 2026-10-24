@@ -21,6 +21,14 @@ const standard = {
 	'require-allow-edits.yml': { template: 'require-allow-edits.yml', required: true },
 };
 
+/** @type {(name: string) => string | null} */
+export function templateFor(name) {
+	if (Object.hasOwn(standard, name)) {
+		return standard[name].template;
+	}
+	return isShard(name) ? 'node.yml' : null;
+}
+
 const placeholder = /\{\{(?<name>\w+)\}\}/g;
 const hasPlaceholder = /\{\{\w+\}\}/;
 
