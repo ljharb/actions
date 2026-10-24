@@ -1,6 +1,6 @@
 import semver from 'semver';
 
-import { allVersions, getPreset } from '../../node/matrix/versions.mjs';
+import { allVersions, getPreset, presets } from '../../node/matrix/versions.mjs';
 
 /** @typedef {import('../../node/matrix/versions.mjs').Type} Type */
 
@@ -50,7 +50,8 @@ function decadeRange(from) {
 
 /** @type {(range: string, type: Type) => Promise<number>} */
 async function jobs(range, type) {
-	const { requireds, optionals } = await getPreset(range, type, false);
+	// `0.x` is a valid range, but `getPreset` would read it as the name of its preset
+	const { requireds, optionals } = await getPreset(presets.includes(range) ? new semver.Range(range).range : range, type, false);
 	return Math.max(requireds.length, optionals.length);
 }
 

@@ -35,9 +35,10 @@ import nock from 'nock';
 /**
  * An account's `.github` repository: with `text`, its `ljharb-actions.json` has that text; with `noFile`, the repository exists without one;
  * `error` fails the query outright; `nullData` fails it with errors and no usable partial data;
- * `partialErrors` replies with partial data (a null repository) and exactly those GraphQL errors.
+ * `partialErrors` replies with partial data (a null repository) and exactly those GraphQL errors; with `private`, the repository is private.
  * Unspecified, the repository is not found: GraphQL partial data with a NOT_FOUND error.
  * @typedef {{
+ *   private?: boolean,
  *   text?: string,
  *   noFile?: boolean,
  *   error?: ErrorReply,
@@ -112,7 +113,7 @@ function accountReply(scenario, owner) {
 	if (spec.partialErrors) {
 		return [200, { data: { repository: null }, errors: spec.partialErrors }];
 	}
-	return [200, { data: { repository: { defaults: spec.noFile ? null : { text: spec.text } } } }];
+	return [200, { data: { repository: { isPrivate: Boolean(spec.private), defaults: spec.noFile ? null : { text: spec.text } } } }];
 }
 
 /** @type {(scenario: Scenario, variables: Record<string, string>) => [number, unknown]} */

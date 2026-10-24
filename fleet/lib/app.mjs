@@ -29,7 +29,8 @@ import { isIgnored } from './ignored.mjs';
  */
 /** @typedef {{ scope: string, message: string }} Failure */
 /** @typedef {{ name: string, full_name: string, private: boolean, fork?: boolean, owner: { login: string } }} InstalledRepo */
-/** @typedef {{ installationId: number, account: ReturnType<typeof parseConfig>, external: boolean }} Context */
+/** @typedef {ReturnType<typeof parseConfig> & { private?: boolean }} AccountDefaults */
+/** @typedef {{ installationId: number, account: AccountDefaults, external: boolean }} Context */
 /** @typedef {{ sourceAccounts?: Set<string>, committer?: string }} Options */
 
 const batchSize = 20;
@@ -54,6 +55,24 @@ fragment state on Repository {
 		... on Tree { entries { name type object { ... on Blob { text } } } }
 	}
 }`;
+
+/**
+ * A failure's message for public output: an API error's text can quote what it couldn't read (eg, an organization's restrictions, or a private repository's name), so only its HTTP status and GraphQL error types are kept.
+ * @type {(error: unknown) => string}
+ */
+export function failureMessage(error) {
+	/** @type {string[]} */
+	const details = [];
+	if (error && typeof error === 'object') {
+		if ('status' in error && typeof error.status === 'number') {
+			details.push(`HTTP ${error.status}`);
+		}
+		if ('errors' in error && Array.isArray(error.errors)) {
+			details.push(...new Set(error.errors.map((e) => e?.type).filter((type) => typeof type === 'string' && (/^[A-Z_]+$/).test(type))));
+		}
+	}
+	return `could not be read${details.length > 0 ? ` (${details.join(', ')})` : ''}`;
+}
 
 /** @type {(appId: string, privateKey: string) => ReturnType<typeof createAppAuth>} */
 export function appAuth(appId, privateKey) {
@@ -106,7 +125,10 @@ function toState({
 	installationId, account, external,
 }, r, repo) {
 	const own = parseConfig(repo?.config?.text, '`.github/ljharb-actions.json`');
-	const config = mergeConfig(account.config, own.config);
+	const isPrivate = Boolean(r.private || repo?.isPrivate);
+	// a private `.github` repository's defaults (and their errors) apply only to private repositories: any effect on a public one's public report would show what's in a private file
+	const inherited = account.private && !isPrivate ? parseConfig(null, '') : account;
+	const config = mergeConfig(inherited.config, own.config);
 	// an account's `.github` repository holds its defaults, and usually has no workflows of its own, so it's only checked when its own file asks for that
 	if (r.name.toLowerCase() === '.github' && !('workflows' in own.config)) {
 		config.workflows = false;
@@ -116,11 +138,11 @@ function toState({
 		name: r.name,
 		repository: r.full_name,
 		installationId,
-		private: Boolean(r.private || repo?.isPrivate),
+		private: isPrivate,
 		archived: Boolean(repo?.isArchived),
 		defaultBranch: repo?.defaultBranchRef?.name ?? null,
 		config,
-		configError: [account.error, own.error].filter(Boolean).join('; ') || null,
+		configError: [inherited.error, own.error].filter(Boolean).join('; ') || null,
 		stateError: repo ? null : 'could not read the repository’s state',
 		packageJson: repo?.packageJson?.text ?? null,
 		workflows: workflowFiles(repo?.workflows?.entries),
@@ -168,10 +190,11 @@ function onlyNotFound(error) {
 }
 
 // an account without a readable `.github` repository just has no defaults
-/** @type {(octokit: Octokit, owner: string) => Promise<ReturnType<typeof parseConfig>>} */
+/** @type {(octokit: Octokit, owner: string) => Promise<AccountDefaults>} */
 async function accountDefaults(octokit, owner) {
 	const data = await octokit.graphql(`query($owner: String!) {
 		repository(owner: $owner, name: ".github") {
+			isPrivate
 			defaults: object(expression: "HEAD:ljharb-actions.json") { ... on Blob { text } }
 		}
 	}`, { owner }).catch((error) => {
@@ -181,7 +204,14 @@ async function accountDefaults(octokit, owner) {
 		}
 		throw error;
 	});
-	return parseConfig(data?.repository?.defaults?.text, `\`${owner}/.github\`’s \`ljharb-actions.json\``);
+	const parsed = parseConfig(data?.repository?.defaults?.text, `\`${owner}/.github\`’s \`ljharb-actions.json\``);
+	if (!data?.repository?.isPrivate) {
+		return parsed;
+	}
+	// only the account's private repositories use these defaults, and none of their errors are shown, but a private file's is still never more specific than this
+	return {
+		config: parsed.config, error: parsed.error && 'the account’s defaults are invalid', private: true,
+	};
 }
 
 /** @type {(installation: { account?: unknown }) => string} */
@@ -238,10 +268,13 @@ async function hasCommitted(octokit, repository, committer) {
 function sourceCandidates(installed, sourceAccounts, installedAccounts) {
 	/** @type {Map<string, Candidate>} */
 	const candidates = new Map();
-	for (const { source, installationId } of installed) {
+	// a private fork's source isn't checked either: that it's checked at all would show the fork exists
+	for (const {
+		source, installationId, private: isPrivate,
+	} of installed) {
 		const key = source?.repository.toLowerCase() ?? '';
 		const owner = key.split('/')[0];
-		if (source && !source.archived && !source.private && !isIgnored(key) && sourceAccounts.has(owner) && !installedAccounts.has(owner) && !candidates.has(key)) {
+		if (source && !isPrivate && !source.archived && !source.private && !isIgnored(key) && sourceAccounts.has(owner) && !installedAccounts.has(owner) && !candidates.has(key)) {
 			candidates.set(key, { repository: source.repository, installationId });
 		}
 	}
@@ -300,14 +333,15 @@ export async function discover(auth, accounts, { sourceAccounts = new Set(), com
 	const allowed = installations.filter((i) => {
 		const login = accountLogin(i);
 		if (!accounts.has(login.toLowerCase())) {
-			failures.push({ scope: `installation ${i.id}`, message: `account \`${login || '(unknown)'}\` is not in the allowed accounts; skipped` });
+			// this is logged, and listed in the public drift issue, but an account that isn't allowed may have installed the App only on its private repositories, so its login isn't named
+			failures.push({ scope: `installation ${i.id}`, message: 'its account is not in the allowed accounts; skipped' });
 			return false;
 		}
 		return !i.suspended_at;
 	});
 
 	const states = await Promise.all(allowed.map((installation) => installationStates(auth, installation).catch((error) => {
-		failures.push({ scope: `installation ${installation.id}`, message: error instanceof Error ? error.message : String(error) });
+		failures.push({ scope: `installation ${installation.id}`, message: failureMessage(error) });
 		return [];
 	})));
 

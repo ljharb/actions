@@ -39,8 +39,18 @@ and when both set an object, the two are merged,
 with the repository’s entries winning.
 The account’s defaults are only read if the App can read its `.github` repository:
 install it there too, or keep that repository public.
+When that repository is private, its defaults apply only to the account’s private repositories (see [Private repositories](#private-repositories)).
 
-Forks are never checked. A fork’s source is checked instead (by the workflow drift report only, since the App isn’t installed on it) when it’s public, unarchived, not ignored, its owner is in the `FLEET_SOURCE_ACCOUNTS` Actions variable (space-separated accounts; unset means none) and has no installation of the App, and its default branch has a commit whose committer is this repo’s owner. The App can’t see anyone’s permissions on a repository it isn’t installed on, so that commit stands in for write access; it also counts commits from a PR merged with a merge commit, so `FLEET_SOURCE_ACCOUNTS` is the real gate. A source’s account defaults aren’t read.
+Forks are never checked. A fork’s source is checked instead (by the workflow drift report only, since the App isn’t installed on it) when it’s public, unarchived, not ignored, its owner is in the `FLEET_SOURCE_ACCOUNTS` Actions variable (space-separated accounts; unset means none) and has no installation of the App, and its default branch has a commit whose committer is this repo’s owner. The App can’t see anyone’s permissions on a repository it isn’t installed on, so that commit stands in for write access; it also counts commits from a PR merged with a merge commit, so `FLEET_SOURCE_ACCOUNTS` is the real gate. A source’s account defaults aren’t read. A private fork’s source isn’t checked, since that it’s checked at all would show the fork exists.
+
+### Private repositories
+
+This repo is public, and so is everything its fleet workflows output: run logs (including the inputs GitHub shows for each step, and job names), annotations, summaries, step outputs, and the drift report. So private repositories the App is installed on are processed like any other, but nothing about any one of them is ever output; at most, how many there are, and how many had each kind of outcome:
+
+- None is ever named, nor are its files, contents, branches, PRs, errors, or tool output shown.
+- An error is only shown for a public repository; a private one’s is only counted, and never fails anything else. An error not about any one repository (eg, an installation that couldn’t be read) shows only its HTTP status or GraphQL error types, never its message, which could quote what it couldn’t read.
+- A private `.github` repository’s defaults apply only to its account’s private repositories: any effect on a public one (a file it requires, ignores, or forbids; or its being invalid) would show in that one’s public report, and so would show what’s in the private file. Its account’s public repositories are treated as if it had no defaults; to share defaults with them, make the `.github` repository public. When those defaults are invalid, a private repository’s error only says so, not what’s wrong.
+- An installation on an account that isn’t allowed is skipped without naming the account, which may have installed the App only on its private repositories.
 
 An account’s `.github` repository is skipped by the workflow drift report unless its own `.github/ljharb-actions.json`
 (that is, `.github/ljharb-actions.json` inside the `.github` repository, eg `{ "workflows": true }`)
@@ -60,4 +70,4 @@ It only reads; it never changes another repository.
 - node tests go in `node.yml`, split into one workflow file per decade of node majors (`node-aught.yml` for `< 10`, including io.js, then `node-tens.yml`, `node-twenties.yml`, and so on) only when one file’s job matrix would exceed GitHub’s limit of 256 jobs. Which of them a repository should have comes from its `package.json`’s `engines.node`, the matrix `type` its node workflow files use (`minors` unless they all use `majors`), and the released versions that the `node/matrix` action uses: `node.yml` when all of the versions that satisfy `engines.node` fit in one file; otherwise, one file per decade from the first with such a version, until the last, open-ended one fits. Any other such file is unexpected. Without `engines.node`, they’re only compared when present.
 - Template placeholders (`{{range}}`, `{{type}}`, `{{command}}`, `{{label}}`) match any one-line value, so legitimately per-repository values aren’t drift; a placeholder that appears twice must have the same value both times.
 - Other workflow files are not reported.
-- Private repositories are only counted, never named, since the issue is public. A run that couldn’t check every repository says so, and never closes the issue.
+- [Private repositories](#private-repositories) are only counted, never named, since the issue is public. A run that couldn’t check every repository says so, and never closes the issue.

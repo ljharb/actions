@@ -122,7 +122,7 @@ test('fleet/drift: creates the report issue', (t) => {
 
 	t.equal(status, 0, 'exits successfully');
 	t.equal(stderr, '', 'nothing on stderr');
-	t.match(stdout, /^::warning::installation 2: account `stranger` is not in the allowed accounts; skipped$/m, 'warns about each failure');
+	t.match(stdout, /^::warning::installation 2: its account is not in the allowed accounts; skipped$/m, 'warns about each failure');
 	t.match(stdout, /^8 of 9 repositories have discrepancies; created https:\/\/github\.example\/ljharb\/actions\/issues\/77$/m, 'logs the outcome');
 
 	const list = matching(requests, 'GET', /^\/repos\/ljharb\/actions\/issues\?/);
@@ -142,7 +142,8 @@ test('fleet/drift: creates the report issue', (t) => {
 	t.notOk(body.includes('sources of forks'), 'and never mentions them');
 	t.ok(body.includes('[`fleet/drift/templates`](https://github.example/ljharb/actions/tree/HEAD/fleet/drift/templates)'), 'links the templates');
 	t.ok(body.includes('8 have discrepancies (1 of them private, so not listed).'), 'counts private repos');
-	t.ok(body.includes('⚠️ Some repositories could not be checked, so this report is incomplete:\n- installation 2: ``account `stranger` is not in the allowed accounts; skipped``'), 'lists failures, inertly');
+	t.ok(body.includes('⚠️ Some repositories could not be checked, so this report is incomplete:\n- installation 2: `its account is not in the allowed accounts; skipped`'), 'lists failures, inertly');
+	t.notOk(body.includes('stranger') || stdout.includes('stranger'), 'never naming an account that isn’t allowed: it may have installed the App only on private repositories');
 	t.notOk(body.includes('secret'), 'never names a private repository');
 	t.notOk(body.includes('ljharb/clean'), 'a clean repo is not listed');
 	t.notOk(body.includes('ljharb/archived') || body.includes('ljharb/optout'), 'skipped repos are not listed');
@@ -306,7 +307,7 @@ test('fleet/drift: dry run, and an incomplete check is never “no discrepancies
 	t.equal((stdout.match(/^::warning::/gm) ?? []).length, 450, 'warns about each failure');
 	t.ok(summary.startsWith(`${marker}\n`), 'the summary has a report, since the check is incomplete');
 	t.ok(summary.includes('0 have discrepancies'), 'with no discrepancies');
-	t.ok(summary.includes('- installation 1449: ``account `stranger-449` is not in the allowed accounts; skipped``'), 'listing every failure');
+	t.ok(summary.includes('- installation 1449: `its account is not in the allowed accounts; skipped`'), 'listing every failure');
 	t.ok(summary.includes('| Repository | Missing | Unexpected | Drifted | Other |'), 'and the (empty) table');
 
 	t.end();
@@ -426,5 +427,47 @@ test('fleet/drift: failures', (t) => {
 	t.match(issues.stdout, /^::error::Error: Input required and not supplied: issue-author$/m, 'with the error');
 	t.equal(issues.summary, '', 'and writes no summary');
 
+	t.end();
+});
+
+test('fleet/drift: nothing about a private repository reaches the log, the summary, or the issue', (t) => {
+	const { status, stdout, stderr, requests, summary } = run({
+		installations: [
+			{ id: 1, account: { login: 'ljharb' } },
+			{ id: 2, account: { login: 'es-shims' } },
+		],
+		installationRepos: {
+			1: [
+				installedRepo('ljharb', 'visible'),
+				installedRepo('ljharb', 'hidden', { private: true }),
+				installedRepo('ljharb', 'zero', { private: true }),
+			],
+			2: [installedRepo('es-shims', 'shown')],
+		},
+		accounts: {
+			ljharb: { private: true, text: JSON.stringify({ workflows: { 'secret-deploy.yml': true, 'internal-ci.yml': false } }) },
+			'es-shims': { private: true, text: JSON.stringify({ workflows: { 'secret-deploy.yml': 'yes' } }) },
+		},
+		repos: {
+			// a file the private defaults forbid would be unexpected, were they applied
+			'ljharb/visible': repo({ workflows: [...standardWorkflows(), { name: 'internal-ci.yml', text: 'name: ci\n' }] }),
+			'ljharb/hidden': repo({ isPrivate: true, workflows: null }),
+			// `0.x` once made checking it throw, failing the run with an error that quoted it
+			'ljharb/zero': repo({ isPrivate: true, packageJson: JSON.stringify({ engines: { node: '0.x' } }) }),
+			'es-shims/shown': repo(),
+		},
+	}, { INPUT_ACCOUNTS: 'ljharb es-shims' }, { versions: true });
+
+	t.equal(status, 0, 'exits successfully: no private repository’s error fails the run');
+	const [created] = matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues$/);
+	t.ok(created, 'and the issue is still written');
+	const body = String(created?.body.body);
+	t.ok(body.includes('2 have discrepancies (2 of them private, so not listed)'), 'counting only the private repositories: a private `.github` repository’s defaults give no public repository a discrepancy');
+	t.notOk(body.includes('ljharb/visible'), 'not one it requires, nor one it forbids');
+	t.notOk(body.includes('es-shims/shown'), 'nor its being invalid');
+	const secrets = ['secret', 'hidden', 'zero', '0.x', 'preset', 'defaults', 'internal-ci.yml'];
+	for (const [where, text] of [['the log', stdout], ['stderr', stderr], ['the summary', summary], ['the issue', body], ['the title', String(created?.body.title)]]) {
+		t.deepEqual(secrets.filter((secret) => text.includes(secret)), [], `${where} reveals nothing about a private repository`);
+	}
 	t.end();
 });

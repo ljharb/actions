@@ -192,3 +192,22 @@ export async function checkRepo(state) {
 		? result
 		: null;
 }
+
+/**
+ * `checkRepo`, but a failure is only that repository's error, rather than the whole run's: an error can quote what it was checking (eg, `package.json`'s contents), and a private repository's is never shown, so its message is withheld.
+ * @type {(state: RepoState) => Promise<Result | null>}
+ */
+export async function checkSafely(state) {
+	try {
+		return await checkRepo(state);
+	} catch (error) {
+		return {
+			repository: state.repository,
+			missing: [],
+			unexpected: [],
+			drifted: [],
+			unreadable: [],
+			error: state.private ? 'could not be checked' : `could not be checked: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}

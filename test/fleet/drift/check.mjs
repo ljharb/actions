@@ -8,7 +8,7 @@ import path from 'path';
 
 import test from 'tape';
 
-import { checkRepo, normalize } from '../../../fleet/drift/check.mjs';
+import { checkRepo, checkSafely, normalize } from '../../../fleet/drift/check.mjs';
 import { evalModule, moduleURL } from './helpers/child.mjs';
 import {
 	nodeWorkflow,
@@ -283,6 +283,28 @@ test('checkRepo: per-repository overrides', async (t) => {
 		'an ignored, absent standard file is not missing',
 	);
 
+	t.end();
+});
+
+test('checkSafely', async (t) => {
+	t.equal(await checkSafely(repoState()), null, 'a clean repository');
+
+	/** @type {(thrown: unknown) => RepoState['workflows']} */
+	const throwing = (thrown) => /** @type {RepoState['workflows']} */ (/** @type {unknown} */ ({ // eslint-disable-line no-extra-parens
+		map() {
+			throw thrown;
+		},
+	}));
+	const empty = {
+		repository: 'ljharb/repo', missing: [], unexpected: [], drifted: [], unreadable: [],
+	};
+	t.deepEqual(await checkSafely(repoState({ workflows: throwing(new Error('`engines.node` is `0.x`')) })), {
+		...empty, error: 'could not be checked: `engines.node` is `0.x`',
+	}, 'a public repository’s error is that repository’s, with its message');
+	t.deepEqual(await checkSafely(repoState({ workflows: throwing('a string') })), { ...empty, error: 'could not be checked: a string' }, 'a non-Error is stringified');
+	t.deepEqual(await checkSafely(repoState({ private: true, workflows: throwing(new Error('`engines.node` is `0.x`')) })), {
+		...empty, error: 'could not be checked',
+	}, 'a private repository’s error has no message');
 	t.end();
 });
 

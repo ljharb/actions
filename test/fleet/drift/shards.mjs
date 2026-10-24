@@ -79,3 +79,18 @@ test('expectedShards', (t) => {
 
 	t.end();
 });
+
+// `getPreset` reads `0.x` as the name of a preset that rejects `type`, which once failed the whole run, publishing a repository's `engines.node`
+test('expectedShards: `0.x` is a range, not a preset', (t) => {
+	const { status, stderr, output } = evalModule(`
+		import { writeFileSync } from 'fs';
+		import { expectedShards } from ${JSON.stringify(moduleURL('fleet/drift/shards.mjs'))};
+
+		writeFileSync(process.env.FLEET_TEST_OUT, JSON.stringify(await Promise.all([expectedShards('0.x', 'minors'), expectedShards('0.x', 'majors')])));
+	`, { versions: versionFixture() });
+
+	t.equal(status, 0, 'the child succeeds');
+	t.equal(stderr, '', 'with nothing on stderr');
+	t.deepEqual(output, [['node.yml'], ['node.yml']], 'one `node.yml`, of either type');
+	t.end();
+});

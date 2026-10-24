@@ -3,7 +3,7 @@ import { getOctokit } from '@actions/github';
 
 import { appAuth, discover, parseAccounts } from '../lib/app.mjs';
 import { code, html } from '../lib/markdown.mjs';
-import { checkRepo } from './check.mjs';
+import { checkSafely } from './check.mjs';
 
 /** @typedef {import('./check.mjs').Result} Result */
 /** @typedef {import('../lib/app.mjs').Failure} Failure */
@@ -175,7 +175,7 @@ async function main() {
 
 	const checked = states.filter((s) => s.stateError || (!s.archived && s.config.workflows !== false));
 	const all = (await Promise.all(checked.map(async (s) => {
-		const result = await checkRepo(s);
+		const result = await checkSafely(s);
 		return result ? [{ result, private: s.private }] : [];
 	}))).flat();
 	// the issue and the run summary are public, so private repositories are only counted

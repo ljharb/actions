@@ -141,9 +141,9 @@ test('discover: filters installations by account', async (t) => {
 	const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb', 'es-shims']));
 	t.deepEqual(states, [], 'no repos');
 	t.deepEqual(failures, [
-		{ scope: 'installation 2', message: 'account `stranger` is not in the allowed accounts; skipped' },
-		{ scope: 'installation 3', message: 'account `(unknown)` is not in the allowed accounts; skipped' },
-		{ scope: 'installation 4', message: 'account `(unknown)` is not in the allowed accounts; skipped' },
+		{ scope: 'installation 2', message: 'its account is not in the allowed accounts; skipped' },
+		{ scope: 'installation 3', message: 'its account is not in the allowed accounts; skipped' },
+		{ scope: 'installation 4', message: 'its account is not in the allowed accounts; skipped' },
 	], 'disallowed accounts are reported; a suspended allowed installation is silently skipped');
 
 	const tokenRequests = requests.filter((r) => r.path.endsWith('/access_tokens'));
@@ -340,8 +340,8 @@ test('discover: a failing installation does not fail the others', async (t) => {
 	t.deepEqual(states.map((s) => s.repository), ['ljharb/ok'], 'the working installation’s repos are found');
 	t.equal(failures.length, 2, 'two failures');
 	t.deepEqual(failures.map((f) => f.scope).sort(), ['installation 41', 'installation 42'], 'one per failing installation');
-	t.match(String(failures.find((f) => f.scope === 'installation 41')?.message), /token denied/, 'token failure message');
-	t.match(String(failures.find((f) => f.scope === 'installation 42')?.message), /listing failed/, 'listing failure message');
+	t.equal(failures.find((f) => f.scope === 'installation 41')?.message, 'could not be read (HTTP 403)', 'token failure message: only its status');
+	t.equal(failures.find((f) => f.scope === 'installation 42')?.message, 'could not be read (HTTP 500)', 'listing failure message: only its status');
 });
 
 test('discover: a non-Error failure', async (t) => {
@@ -358,7 +358,7 @@ test('discover: a non-Error failure', async (t) => {
 
 	const { states, failures } = await discover(auth, new Set(['ljharb']));
 	t.deepEqual(states, [], 'no states');
-	t.deepEqual(failures, [{ scope: 'installation 50', message: 'no token for you' }], 'the thrown value is stringified');
+	t.deepEqual(failures, [{ scope: 'installation 50', message: 'could not be read' }], 'the thrown value is never quoted');
 });
 
 /** @type {(workflows: RepoState['config']['workflows']) => false | Record<string, boolean>} */
@@ -530,8 +530,8 @@ test('discover: an account defaults query that fails without usable partial data
 	const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb', 'es-shims', 'inspect-js']));
 	t.deepEqual(states.map((s) => s.repository), ['inspect-js/c'], 'only the healthy installation’s repositories are found');
 	t.deepEqual(failures.map((f) => f.scope).sort(), ['installation 90', 'installation 91'], 'each failing installation is reported');
-	t.match(String(failures.find((f) => f.scope === 'installation 90')?.message), /Bad Gateway/, 'an HTTP error');
-	t.match(String(failures.find((f) => f.scope === 'installation 91')?.message), /something went wrong/, 'errors with null data');
+	t.equal(failures.find((f) => f.scope === 'installation 90')?.message, 'could not be read (HTTP 502)', 'an HTTP error: only its status');
+	t.equal(failures.find((f) => f.scope === 'installation 91')?.message, 'could not be read', 'errors with null data: none of their messages');
 	t.deepEqual(repoQueries(requests).map(queriedRepos), [['inspect-js/c']], 'a failed installation’s repositories are never queried');
 });
 
@@ -603,10 +603,10 @@ test('discover: account defaults partial data with any error other than NOT_FOUN
 		['installation 120', 'installation 121', 'installation 122', 'installation 123'],
 		'each failing installation is reported',
 	);
-	t.match(String(failures.find((f) => f.scope === 'installation 120')?.message), /SAML enforcement/, 'FORBIDDEN, with a null repository: the GraphQL error');
-	t.match(String(failures.find((f) => f.scope === 'installation 121')?.message), /SAML enforcement/, 'NOT_FOUND mixed with FORBIDDEN: the GraphQL error');
-	t.match(String(failures.find((f) => f.scope === 'installation 122')?.message), /^Request failed due to following response errors:/, 'partial data with an empty errors array');
-	t.match(String(failures.find((f) => f.scope === 'installation 123')?.message), /an error with no type/, 'NOT_FOUND mixed with untyped errors');
+	t.equal(failures.find((f) => f.scope === 'installation 120')?.message, 'could not be read (FORBIDDEN)', 'FORBIDDEN, with a null repository: only the GraphQL error’s type, since its message can describe the organization’s restrictions');
+	t.equal(failures.find((f) => f.scope === 'installation 121')?.message, 'could not be read (NOT_FOUND, FORBIDDEN)', 'NOT_FOUND mixed with FORBIDDEN: only the GraphQL errors’ types');
+	t.equal(failures.find((f) => f.scope === 'installation 122')?.message, 'could not be read', 'partial data with an empty errors array');
+	t.equal(failures.find((f) => f.scope === 'installation 123')?.message, 'could not be read (NOT_FOUND)', 'NOT_FOUND mixed with untyped errors: no message, and nothing that isn’t a type');
 	t.deepEqual(accountQueries(requests).length, 5, 'the defaults are queried for each account');
 	t.deepEqual(repoQueries(requests).map(queriedRepos), [['healthy/e']], 'a failed installation’s repositories are never queried');
 });
