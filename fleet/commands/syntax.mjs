@@ -13,16 +13,13 @@ const login = '[a-z\\d](?:[a-z\\d]|-(?=[a-z\\d])){0,38}';
 const accountPattern = new RegExp(`^${login}$`, 'i');
 const repositoryPattern = new RegExp(`^${login}/[\\w.-]+$`, 'i');
 const workflowPattern = /^[\w.-]+\.ya?ml$/i;
-// a reply quotes the comment's own text, and must still fit in a comment however long that text is
-const maxQuoted = 200;
-const maxUnknown = 10;
 
 /**
- * Some of the comment's own text, cut short when it's long, as inert Markdown.
+ * Some of the comment's own text, whole, as inert Markdown; a reply too long for one comment is split across several.
  * @type {(text: string) => string}
  */
 export function quote(text) {
-	return code(text.length > maxQuoted ? `${text.slice(0, maxQuoted)}…` : text);
+	return code(text);
 }
 
 /** @type {(token: string) => token is Category} */
@@ -96,8 +93,7 @@ export function parseCommand(body) {
 		}
 	}
 	if (unknown.length > 0) {
-		const more = unknown.length > maxUnknown ? [`and ${unknown.length - maxUnknown} more`] : [];
-		return { type: 'error', message: `Unknown ${unknown.length === 1 ? 'filter' : 'filters'}: ${[...unknown.slice(0, maxUnknown).map(quote), ...more].join(', ')}.` };
+		return { type: 'error', message: `Unknown ${unknown.length === 1 ? 'filter' : 'filters'}: ${unknown.map(quote).join(', ')}.` };
 	}
 	return {
 		type: 'fix', dryRun, line, filters,

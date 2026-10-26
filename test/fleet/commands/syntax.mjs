@@ -57,12 +57,12 @@ test('parseCommand: errors', (t) => {
 	}, 'every unknown filter, quoted inertly, as typed');
 	t.deepEqual(parseCommand(`/fix ${'a'.repeat(40)}`), { type: 'error', message: `Unknown filter: \`${'a'.repeat(40)}\`.` }, 'one unknown filter: an account name too long for a login');
 	t.deepEqual(parseCommand(`/fix ${'a'.repeat(39)}`).type, 'fix', 'the longest login is an account');
-	t.deepEqual(parseCommand(`/frob${'x'.repeat(300)}`), { type: 'error', message: `Unknown command: \`/frob${'x'.repeat(195)}…\`.` }, 'a long command is cut short, so the reply still fits in a comment');
-	t.deepEqual(parseCommand(`/fix ${'a'.repeat(250)}.json`), { type: 'error', message: `Unknown filter: \`${'a'.repeat(200)}…\`.` }, 'as is a long filter');
+	t.deepEqual(parseCommand(`/frob${'x'.repeat(300)}`), { type: 'error', message: `Unknown command: \`/frob${'x'.repeat(300)}\`.` }, 'a long command is quoted whole');
+	t.deepEqual(parseCommand(`/fix ${'a'.repeat(250)}.json`), { type: 'error', message: `Unknown filter: \`${'a'.repeat(250)}.json\`.` }, 'as is a long filter');
 	t.deepEqual(parseCommand(`/fix ${Array.from({ length: 12 }, (_, i) => `@u${i}`).join(' ')}`), {
 		type: 'error',
-		message: `Unknown filters: ${Array.from({ length: 10 }, (_, i) => `\`@u${i}\``).join(', ')}, and 2 more.`,
-	}, 'and only the first few of many unknown filters are listed');
+		message: `Unknown filters: ${Array.from({ length: 12 }, (_, i) => `\`@u${i}\``).join(', ')}.`,
+	}, 'and every one of many unknown filters is listed');
 	t.end();
 });
 

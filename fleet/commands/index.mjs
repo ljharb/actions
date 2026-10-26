@@ -11,7 +11,7 @@ import {
 	isSkippedAccount,
 	parseAccounts,
 } from '../lib/app.mjs';
-import { code } from '../lib/markdown.mjs';
+import { code, split } from '../lib/markdown.mjs';
 import { branch, fixRepo } from './apply.mjs';
 import { legend, parseCommand, quote } from './syntax.mjs';
 
@@ -22,7 +22,8 @@ import { legend, parseCommand, quote } from './syntax.mjs';
 /** @typedef {import('./apply.mjs').Candidate} Candidate */
 /** @typedef {import('./apply.mjs').Context} Context */
 
-const maxBodyLength = 60000; // GitHub's limit is 65536 characters
+const maxBodyLength = 60000; // GitHub's limit for a comment is 65536 characters
+const maxSummaryBytes = 1000000; // GitHub's limit for a run summary is 1 MiB
 
 const {
 	GITHUB_SERVER_URL = 'https://github.com',
@@ -95,33 +96,30 @@ function privateNote(dryRun) {
 }
 
 /**
+ * The reply, as the comments it takes: every row is in one of them, whole, unless it's too long for any comment on its own.
  * @type {(options: {
  *   line: string,
  *   dryRun: boolean,
  *   rows: string[],
  *   failures: number,
- * }) => (shown: number, where: string) => string}
+ * }) => string[]}
  */
-function replyBody({
+function replyBodies({
 	line, dryRun, rows, failures,
 }) {
-	const intro = `${quote(line)} (${dryRun ? 'a dry run, so nothing was changed' : `from each repository’s \`${branch}\` branch`}; see [the run](${runURL})):`;
-	return (shown, where) => [
-		intro,
+	const table = { open: '| Repository | Outcome |\n| --- | --- |', close: '' };
+	return split([
+		`${quote(line)} (${dryRun ? 'a dry run, so nothing was changed' : `from each repository’s \`${branch}\` branch`}; see [the run](${runURL})):`,
 		'',
-		...rows.length > 0 ? [
-			'| Repository | Outcome |',
-			'| --- | --- |',
-			...rows.slice(0, shown),
-		] : ['No repository matches those filters.'],
-		...shown < rows.length ? ['', `_…${rows.length - shown} more repositories ${where}._`] : [],
+		...rows.length > 0 ? [{ text: table.open, group: table }, ...rows.map((text) => ({ text, group: table }))] : ['No repository matches those filters.'],
 		...failures > 0 ? ['', `⚠️ Some repositories could not be read, so they were not considered; see [the run](${runURL}).`] : [],
+		// last, so it's at the very end of the last comment
 		'',
 		privateNote(dryRun),
-	].join('\n');
+	], maxBodyLength);
 }
 
-/** @type {(context: Context, filters: Filters, line: string) => Promise<{ body: string, full: string, failed: number }>} */
+/** @type {(context: Context, filters: Filters, line: string) => Promise<{ bodies: string[], failed: number }>} */
 async function run(context, filters, line) {
 	const accounts = parseAccounts(core.getInput('accounts'), process.env.GITHUB_REPOSITORY_OWNER || '');
 	// without source accounts, only repositories the App is installed on are discovered: it can't change any other
@@ -156,20 +154,45 @@ async function run(context, filters, line) {
 		}
 	}
 
-	const render = replyBody({
-		line, dryRun: context.dryRun, rows, failures: unread,
-	});
-	const where = `omitted for length; see [the run summary](${runURL})`;
-	// whole rows only, from the end
-	let shown = rows.length;
-	while (shown > 0 && render(shown, where).length > maxBodyLength) {
-		shown -= 1;
-	}
 	return {
-		body: render(shown, where),
-		full: render(rows.length, where),
+		bodies: replyBodies({
+			line, dryRun: context.dryRun, rows, failures: unread,
+		}),
 		failed,
 	};
+}
+
+/**
+ * Where the parts of the reply that a run summary has no room for are: each in its comment, if it was posted.
+ * The reply isn't in the log, which never mentions anything a command names (which could be a private repository).
+ * @type {(first: number, bodies: string[], posted: string[]) => string}
+ */
+function elsewhere(first, bodies, posted) {
+	const links = posted.slice(first).map((url, i) => `[${first + i + 1}](${url})`);
+	const unposted = bodies.length - first - links.length;
+	return [
+		`The rest of the reply (from part ${first + 1} of ${bodies.length}) doesn’t fit in this run summary (GitHub’s limit for one is 1 MiB)`,
+		links.length > 0 ? `; it’s in its comments on the issue: ${links.join(', ')}` : '',
+		unposted > 0 ? `${links.length > 0 ? ', but' : ', and'} ${unposted} of its parts could not be posted (this job’s log has the error): run the command again to see them` : '',
+		'.',
+	].join('');
+}
+
+/**
+ * The run summary: each comment of the reply in it, as it is in the reply, while there's room for it; then where the rest are.
+ * @type {(bodies: string[], posted: string[]) => string}
+ */
+function summaryOf(bodies, posted) {
+	const separator = '\n\n---\n\n';
+	// room for saying where the rest are, however many there are
+	let room = maxSummaryBytes - Buffer.byteLength(elsewhere(0, bodies, posted)) - Buffer.byteLength(separator);
+	// the first that doesn't fit, and every one after it, are left to their comments
+	const fits = bodies.findIndex((body) => {
+		room -= Buffer.byteLength(body) + Buffer.byteLength(separator);
+		return room < 0;
+	});
+	const shown = fits === -1 ? bodies : bodies.slice(0, fits);
+	return [...shown, ...fits === -1 ? [] : [elsewhere(fits, bodies, posted)]].join(separator);
 }
 
 async function main() {
@@ -187,17 +210,23 @@ async function main() {
 
 	const [owner, repo] = GITHUB_REPOSITORY.split('/');
 	const octokit = getOctokit(core.getInput('token', { required: true }));
-	/** @type {(body: string) => Promise<unknown>} */
-	const reply = (body) => octokit.rest.issues.createComment({
-		owner, repo, issue_number: issue.number, body, // eslint-disable-line camelcase
-	});
+	// a reply too long for one comment goes on in the next ones, in order; `posted` gets each one's link as it's posted
+	/** @type {(bodies: string[], posted?: string[]) => Promise<void>} */
+	const reply = async (bodies, posted = []) => {
+		for (const body of bodies) {
+			const { data } = await octokit.rest.issues.createComment({ // eslint-disable-line no-await-in-loop
+				owner, repo, issue_number: issue.number, body, // eslint-disable-line camelcase
+			});
+			posted.push(data.html_url);
+		}
+	};
 
 	// `author_association` says nothing about permissions on this repository, so ask
 	const { data: { permission } } = await octokit.rest.repos.getCollaboratorPermissionLevel({
 		owner, repo, username: comment.user.login,
 	});
 	if (permission !== 'admin' && permission !== 'write') {
-		await reply('Only people with write access to this repository can run fleet commands, so nothing was done.');
+		await reply(['Only people with write access to this repository can run fleet commands, so nothing was done.']);
 		core.info(`the commenter’s permission is \`${permission}\`; nothing done`);
 		return;
 	}
@@ -205,23 +234,28 @@ async function main() {
 		owner, repo, comment_id: comment.id, content: 'eyes', // eslint-disable-line camelcase
 	});
 	if (command.type === 'error') {
-		await reply(`${command.message} Nothing was done.\n\n${legend()}`);
+		await reply(split([
+			`${command.message} Nothing was done.`, '', legend(),
+		], maxBodyLength));
 		core.info('not a valid command; replied with how to use them');
 		return;
 	}
 
-	const {
-		body, full, failed,
-	} = await run({
+	const { bodies, failed } = await run({
 		auth: appAuth(core.getInput('app-id', { required: true }), core.getInput('private-key', { required: true })),
 		identities: new Map(),
 		dryRun: command.dryRun,
 		categories: command.filters.categories,
 		link: comment.html_url,
 	}, command.filters, command.line);
-	// written first, so a failure to reply still leaves the outcome in the run
-	await core.summary.addRaw(full).write();
-	await reply(body);
+	/** @type {string[]} */
+	const posted = [];
+	try {
+		await reply(bodies, posted);
+	} finally {
+		// even when replying fails, so the outcome is still in the run
+		await core.summary.addRaw(summaryOf(bodies, posted)).write();
+	}
 	if (failed > 0) {
 		core.setFailed(`${failed} ${plural(failed, 'repository', 'repositories')} could not be fixed`);
 	}

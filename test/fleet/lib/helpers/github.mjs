@@ -62,6 +62,7 @@ import nock from 'nock';
  *   issues?: unknown[],
  *   created?: Record<string, unknown>,
  *   createError?: ErrorReply,
+ *   commentErrorAfter?: number,
  * }} Scenario
  */
 /** @typedef {{ method: string, path: string, body: any, authorization: string }} Recorded */
@@ -223,7 +224,15 @@ export function mockGitHub(scenario, record) {
 		? [scenario.createError.status, scenario.createError.body ?? { message: 'error' }]
 		: [201, scenario.created ?? { number: 1, html_url: 'https://github.com/created/1' }]))); // eslint-disable-line camelcase
 	updateIssue.reply(handle(() => [200, {}]));
-	comment.reply(handle(() => [201, {}]));
+	// `commentErrorAfter`: that many comments are created, and the rest fail
+	let comments = 0;
+	comment.reply(handle(({ path }) => {
+		comments += 1;
+		if (typeof scenario.commentErrorAfter === 'number' && comments > scenario.commentErrorAfter) {
+			return [500, { message: 'comment failed' }];
+		}
+		return [201, { id: comments, html_url: `https://github.com${path.replace(/\/comments$/, '').replace('/repos/', '/')}#issuecomment-${comments}` }]; // eslint-disable-line camelcase
+	}));
 	// keyed by `owner/name` as requested; unspecified, a repository has no matching commits
 	const listCommits = handle(({ path }) => {
 		const reply = scenario.commits?.[path.split('/').slice(2, 4).join('/')] ?? 0;

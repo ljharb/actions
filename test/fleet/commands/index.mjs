@@ -234,11 +234,27 @@ test('fleet/commands: replies with the legend to anything it can’t run', (t) =
 	t.end();
 });
 
-test('fleet/commands: quotes only the start of a long command', (t) => {
+test('fleet/commands: quotes a long command whole', (t) => {
 	const line = `/dry-run fix ${Array(30).fill('ljharb/nope').join(' ')}`;
 	const { status, requests } = run(t, { event: { issue: report, comment: comment(`${line}\nmore`) } });
 	t.equal(status, 0, 'exits successfully');
-	t.deepEqual(replies(requests), [expectedReply(line, [], ['No repository matches those filters.'], true).replace(`\`${line}\``, `\`${line.slice(0, 200)}…\``)], 'cut short, in the reply');
+	t.deepEqual(replies(requests), [expectedReply(line, [], ['No repository matches those filters.'], true)], 'in the reply');
+
+	t.end();
+});
+
+test('fleet/commands: a reply too long for one comment goes on in more, with nothing left out', (t) => {
+	const line = `/frob${'<b>x</b> @someone '.repeat(5000)}end`;
+	const { status, requests } = run(t, { event: { issue: report, comment: comment(line) } });
+	t.equal(status, 0, 'exits successfully');
+	const bodies = replies(requests);
+	t.ok(bodies.length > 1, `in several comments (${bodies.length})`);
+	bodies.forEach((body, i) => t.ok(body.length <= 60000, `comment ${i + 1} (${body.length} characters) fits`));
+	t.ok(bodies.slice(0, -1).every((body) => body.includes('_✂️ This item is too long to fit in one part, so it’s shown as its source')), 'the error, too long for any one comment, is shown as its source, in pieces');
+	const sources = bodies.slice(0, -1).map((body) => body.match(/\n\n(?<ticks>`{3,})\n(?<source>[^]*)\n\k<ticks>(?:\n|$)/)?.groups?.source ?? '');
+	t.equal(sources.join(''), `Unknown command: \`${line}\`. Nothing was done.`, 'which, together, are the whole error, quoting the whole command, inertly');
+	t.ok(bodies.at(-1)?.endsWith(`\n\n${legend()}`), 'and the last comment ends with the legend');
+	t.ok(bodies.slice(1).every((body, i) => body.startsWith(`_continued (${i + 2}/${bodies.length})_\n\n`)), 'each later comment says it continues the reply');
 
 	t.end();
 });
@@ -684,7 +700,7 @@ test('fleet/commands: never writes through a symbolic link', (t) => {
 	t.end();
 });
 
-test('fleet/commands: a reply too long for a comment leaves out whole rows, from the end', (t) => {
+test('fleet/commands: a reply too long for a comment goes on in more, splitting only between rows', (t) => {
 	const names = Array.from({ length: 400 }, (_, i) => `${'a-rather-long-repository-name-'.repeat(5)}${String(i).padStart(3, '0')}`);
 	const { status, stdout, requests, summary } = run(t, {
 		event: { issue: report, comment: comment('/dry-run fix ljharb') },
@@ -697,16 +713,72 @@ test('fleet/commands: a reply too long for a comment leaves out whole rows, from
 
 	t.equal(status, 1, 'fails, since no repository could be checked');
 	t.match(stdout, /^::error::400 repositories could not be fixed$/m, 'saying how many');
-	const [body] = replies(requests);
-	t.ok(body.length <= 60000, `the reply (${body.length} characters) fits in a comment`);
-	const rows = body.split('\n').filter((line) => line.startsWith('| `ljharb/'));
-	t.ok(rows.length > 100 && rows.length < 400, `some rows (${rows.length}) are shown`);
-	t.equal(rows[0], `| \`ljharb/${names[0]}\` | failed: \`could not read the repository’s state\` |`, 'each saying why it failed');
-	t.ok(body.length + rows[0].length + 1 > 60000, 'with no room for another');
-	t.ok(body.includes(`\`ljharb/${names[rows.length - 1]}\``) && !body.includes(`\`ljharb/${names[rows.length]}\``), 'the leading rows are shown, and the rest are not');
-	t.ok(body.endsWith(`\n\n_…${400 - rows.length} more repositories omitted for length; see [the run summary](https://github.com/ljharb/actions/actions/runs/42)._\n\n${privateNote(true)}`), 'noting how many are left out, before saying that any private repositories matching were processed too');
-	t.equal(summary.split('\n').filter((line) => line.startsWith('| `ljharb/')).length, 400, 'the run summary has every row');
-	t.notOk(summary.includes('omitted'), 'with none left out');
+	const bodies = replies(requests);
+	t.ok(bodies.length > 1, `the reply is in several comments (${bodies.length})`);
+	bodies.forEach((body, i) => {
+		t.ok(body.length <= 60000, `comment ${i + 1} (${body.length} characters) fits`);
+		t.equal(body.startsWith(`_continued (${i + 1}/${bodies.length})_\n\n| Repository | Outcome |\n| --- | --- |\n| \`ljharb/`), i > 0, `comment ${i + 1} continues the table, with its header, only if it isn’t the first`);
+		t.equal(body.endsWith(`\n\n_continued below (${i + 2}/${bodies.length})_`), i < bodies.length - 1, `comment ${i + 1} says the reply continues, unless it’s the last`);
+	});
+	const rows = bodies.flatMap((body) => body.split('\n').filter((l) => l.startsWith('| `ljharb/')));
+	t.deepEqual(rows, names.map((n) => `| \`ljharb/${n}\` | failed: \`could not read the repository’s state\` |`), 'every row is in one of them, whole, in order, saying why it failed');
+	t.ok(bodies[0].startsWith('`/dry-run fix ljharb` (a dry run, so nothing was changed; see [the run](https://github.com/ljharb/actions/actions/runs/42)):\n\n| Repository | Outcome |'), 'the first starts the reply');
+	t.ok(bodies.at(-1)?.endsWith(`\n\n${privateNote(true)}`), 'and the last ends it, saying that any private repositories matching were processed too');
+	t.equal(summary, bodies.join('\n\n---\n\n'), 'the run summary has every comment');
+	for (const body of [...bodies, summary]) {
+		t.notOk((/omitted|more repositories|…/).test(body), 'nothing is left out');
+	}
+
+	t.end();
+});
+
+test('fleet/commands: a reply too long for a run summary has as much of it as fits, and says where the rest is', (t) => {
+	const line = `/dry-run fix ${'ljharb '.repeat(160000)}`.trim();
+	const { status, stdout, requests, summary } = run(t, { event: { issue: report, comment: comment(line) } });
+	t.equal(status, 0, 'exits successfully');
+	const bodies = replies(requests);
+	t.ok(bodies.length > 20, `the reply is in many comments (${bodies.length})`);
+	bodies.forEach((body, i) => t.ok(body.length <= 60000, `comment ${i + 1} fits`));
+	const sources = bodies.flatMap((body) => body.match(/\n\n(?<ticks>`{3,})\n(?<source>[^]*)\n\k<ticks>(?:\n|$)/)?.groups?.source ?? []);
+	t.equal(sources.join(''), `\`${line}\` (a dry run, so nothing was changed; see [the run](https://github.com/ljharb/actions/actions/runs/42)):`, 'quoting the whole command, in pieces');
+	t.ok(bodies.at(-1)?.endsWith(`No repository matches those filters.\n\n${privateNote(true)}`), 'and the last comment ends the reply');
+
+	t.ok(Buffer.byteLength(summary) <= 1000000, `the run summary (${Buffer.byteLength(summary)} bytes) fits in 1 MiB`);
+	const inSummary = summary.split('\n\n---\n\n');
+	const rest = inSummary.pop();
+	t.ok(inSummary.length > 1 && inSummary.length < bodies.length, `it has the first ${inSummary.length} comments`);
+	t.deepEqual(inSummary, bodies.slice(0, inSummary.length), 'each as it is in the reply');
+	const links = bodies.slice(inSummary.length).map((_, i) => `[${inSummary.length + i + 1}](https://github.com/ljharb/actions/issues/9#issuecomment-${inSummary.length + i + 1})`);
+	t.equal(rest, `The rest of the reply (from part ${inSummary.length + 1} of ${bodies.length}) doesn’t fit in this run summary (GitHub’s limit for one is 1 MiB); it’s in its comments on the issue: ${links.join(', ')}.`, 'then where the rest is');
+	t.notOk(stdout.includes('ljharb ljharb'), 'the log never repeats the command, which could name a private repository');
+
+	t.end();
+});
+
+test('fleet/commands: a reply that fails partway is still in the run summary, as far as it has room', (t) => {
+	const line = `/dry-run fix ${'ljharb '.repeat(160000)}`.trim();
+	const { status, stdout, requests, summary } = run(t, {
+		event: { issue: report, comment: comment(line) },
+		github: { commentErrorAfter: 2 },
+	});
+	t.equal(status, 1, 'fails');
+	t.match(stdout, /^::error::.*comment failed/m, 'with the error');
+	const attempted = requests.filter((r) => r.method === 'POST' && (/\/issues\/9\/comments$/).test(r.path)).map((r) => String(r.body.body));
+	t.equal(attempted.length, 3, 'having posted two comments, and failed on the third');
+	const inSummary = summary.split('\n\n---\n\n');
+	const rest = inSummary.pop();
+	t.deepEqual(inSummary.slice(0, 3), attempted, 'the run summary has the comments, posted or not, as far as it has room');
+	t.match(String(rest), /^The rest of the reply \(from part \d+ of \d+\) doesn’t fit in this run summary \(GitHub’s limit for one is 1 MiB\), and \d+ of its parts could not be posted \(this job’s log has the error\): run the command again to see them\.$/, 'and says the rest could not be posted');
+
+	// failing on the last comment, after the ones the run summary has no room for were posted
+	const total = replies(run(t, { event: { issue: report, comment: comment(line) } }).requests).length;
+	const late = run(t, {
+		event: { issue: report, comment: comment(line) },
+		github: { commentErrorAfter: total - 1 },
+	});
+	t.equal(late.status, 1, 'failing on the last comment fails too');
+	const lateRest = late.summary.split('\n\n---\n\n').pop();
+	t.match(String(lateRest), new RegExp(`^The rest of the reply \\(from part (\\d+) of ${total}\\) doesn’t fit in this run summary \\(GitHub’s limit for one is 1 MiB\\); it’s in its comments on the issue: (?:\\[\\d+\\]\\(https://github\\.com/ljharb/actions/issues/9#issuecomment-\\d+\\)(?:, )?)+, but 1 of its parts could not be posted \\(this job’s log has the error\\): run the command again to see them\\.$`), 'linking the ones that were posted, and saying the last could not be');
 
 	t.end();
 });
