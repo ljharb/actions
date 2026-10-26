@@ -2,6 +2,7 @@ import test from 'tape';
 
 import {
 	code,
+	fence,
 	html,
 	split,
 } from '../../../fleet/lib/markdown.mjs';
@@ -24,6 +25,13 @@ test('code', (t) => {
 test('html', (t) => {
 	t.equal(html('plain'), 'plain', 'nothing to escape');
 	t.equal(html('<a href="x" title=\'y\'>&</a>'), '&#60;a href=&#34;x&#34; title=&#39;y&#39;&#62;&#38;&#60;/a&#62;', 'all five special characters are escaped');
+
+	t.end();
+});
+
+test('fence', (t) => {
+	t.equal(fence('a\n'), '```\na\n```', 'three backticks, and one trailing newline dropped');
+	t.equal(fence('a ```` b', 'diff'), '`````diff\na ```` b\n`````', 'longer than any backtick run inside, with the info string');
 
 	t.end();
 });

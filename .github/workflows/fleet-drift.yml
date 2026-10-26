@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry-run:
-        description: 'check and summarize, but create, edit, or close no issue'
+        description: 'check, summarize, and write the full report to the dry runs’ own gist, but create, edit, or close no issue'
         required: false
         type: boolean
         default: false
@@ -45,4 +45,5 @@ jobs:
           private-key: ${{ secrets.FLEET_APP_PRIVATE_KEY }}
           accounts: ${{ vars.FLEET_ACCOUNTS }}
           source-accounts: ${{ vars.FLEET_SOURCE_ACCOUNTS }}
+          gist-token: ${{ secrets.FLEET_GIST_TOKEN }}
           dry-run: ${{ inputs.dry-run == true }}

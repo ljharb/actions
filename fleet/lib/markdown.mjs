@@ -18,6 +18,15 @@ export function html(s) {
 }
 
 /**
+ * `text` as a fenced code block: third-party text in it can't break out, since the fence is longer than any backtick run inside.
+ * @type {(text: string, info?: string) => string}
+ */
+export function fence(text, info = '') {
+	const ticks = '`'.repeat(Math.max(2, longestRun(text)) + 1);
+	return `${ticks}${info}\n${text.replace(/\n$/, '')}\n${ticks}`;
+}
+
+/**
  * Units in a group share text that each part they're split across needs to render on its own:
  * a part that starts partway through the group starts with `open` (eg, a table's header), and one that ends partway through it ends with `close` (eg, `</details>`).
  * @typedef {{ open: string, close: string }} Group

@@ -27,11 +27,10 @@ function isCategory(token) {
 	return categories.includes(/** @type {Category} */ (token)); // eslint-disable-line no-extra-parens
 }
 
-/** @type {() => string} */
-export function legend() {
+/** @type {(options?: { heading?: boolean }) => string} */
+export function legend({ heading = true } = {}) {
 	return [
-		'### Commands',
-		'',
+		...heading ? ['### Commands', ''] : [],
 		'Comment on the workflow drift report issue with one of these as the first line of the comment:',
 		'',
 		'- `/fix <filters>`: in each repository this report covers that matches, open (or update) a PR, from its `fleet/workflows` branch, that makes its workflow files match the templates.',

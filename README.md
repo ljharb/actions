@@ -19,6 +19,7 @@ A GitHub App, installed on the repositories to manage, lets scheduled jobs in th
 3. In this repo, set the `FLEET_APP_ID` Actions variable to the App’s ID or client ID, and the `FLEET_APP_PRIVATE_KEY` Actions secret to one of its private keys. Without `FLEET_APP_ID`, the fleet workflows (`fleet-drift.yml` and `fleet-commands.yml`) are skipped.
 4. Set the `FLEET_ACCOUNTS` Actions variable to the space-separated accounts (users and organizations) whose installations may be processed, eg `ljharb es-shims inspect-js`. Installations on any other account are ignored. When unset, only this repo’s owner is allowed.
 5. Optionally, set the `FLEET_SOURCE_ACCOUNTS` Actions variable to the space-separated accounts whose repositories may be checked as the source of a fork (see below).
+6. Set the `FLEET_GIST_TOKEN` Actions secret to a token that can read and write the gists of the user it belongs to: a fine-grained personal access token with the “Gists” account permission set to “Read and write” (it needs no repository access), or a classic one with the `gist` scope. The [workflow drift report](#workflow-drift-report) keeps its full report in a secret gist of that user’s; without this secret, it fails before checking anything, saying so.
 
 ### Configuration
 
@@ -45,7 +46,7 @@ Forks are never checked. A fork’s source is checked instead (by the workflow d
 
 ### Private repositories
 
-This repo is public, and so is everything its fleet workflows output: run logs (including the inputs GitHub shows for each step, and job names), annotations, summaries, step outputs, and the drift report and its replies. So private repositories the App is installed on are processed like any other, but nothing about any one of them is ever output; at most, how many there are, and how many had each kind of outcome (and for [commands](#commands), not even that):
+This repo is public, and so is everything its fleet workflows output: run logs (including the inputs GitHub shows for each step, and job names), annotations, summaries, step outputs, and the drift report (including its gist, which, though secret, anyone with its link can read) and its replies. So private repositories the App is installed on are processed like any other, but nothing about any one of them is ever output; at most, how many there are, and how many had each kind of outcome (and for [commands](#commands), not even that):
 
 - None is ever named, nor are its files, contents, branches, PRs, errors, or tool output shown. Each has no log line of its own: its outcome is at most counted, in a line after all the public repositories’, so that neither where one would fall among them by name, nor how long one took, is shown.
 - An error is only shown for a public repository; a private one’s is at most counted, and never fails anything else. An error not about any one repository (eg, an installation that couldn’t be read) shows only its HTTP status or GraphQL error types, never its message, which could quote what it couldn’t read.
@@ -63,7 +64,8 @@ Archived repositories are always skipped.
 `fleet-drift.yml`, in this repo, runs daily
 (and on `workflow_dispatch`, optionally as a dry run).
 It compares the workflow files of every repository the App is installed on against the templates in `fleet/drift/templates`,
-and keeps a single issue in this repo up to date with the discrepancies
+keeps the full report in a secret gist (see `FLEET_GIST_TOKEN`, in [Setup](#setup)),
+and keeps a single issue in this repo up to date with a summary of the discrepancies that links to it
 (reopening it as needed, and closing it when there are none).
 It only reads; it never changes another repository.
 
@@ -71,9 +73,13 @@ It only reads; it never changes another repository.
 - node tests go in `node.yml`, split into one workflow file per decade of node majors (`node-aught.yml` for `< 10`, including io.js, then `node-tens.yml`, `node-twenties.yml`, and so on) only when one file’s job matrix would exceed GitHub’s limit of 256 jobs. Which of them a repository should have comes from its `package.json`’s `engines.node`, the matrix `type` its node workflow files use (`minors` unless they all use `majors`), and the released versions that the `node/matrix` action uses: `node.yml` when all of the versions that satisfy `engines.node` fit in one file; otherwise, one file per decade from the first with such a version, until the last, open-ended one fits. Any other such file is unexpected. Without `engines.node`, they’re only compared when present.
 - Template placeholders (`{{range}}`, `{{type}}`, `{{command}}`, `{{label}}`) match any one-line value, so legitimately per-repository values aren’t drift; a placeholder that appears twice must have the same value both times.
 - Other workflow files are not reported.
-- The report groups repositories by account, each a collapsed table. Every file it lists links to that file (a missing one, to its template, when there is one), and each drifted file expands to show its full diff. Diffs are never cut short: when the issue would be too long for GitHub, whole diffs (then, if still needed, whole rows) are left out of it, and the run’s summary has as many of them as fit in its own, larger, limit.
-- [Private repositories](#private-repositories) are only counted, never named, since the issue is public. A run that couldn’t check every repository says so, and never closes the issue.
-- The report ends with a short legend of the [commands](#commands) that act on it.
+- Nothing is ever left out of the full report, whatever its length: every failure, every repository with discrepancies, and every diff, whole. It groups repositories by account, each a collapsed table. Every file it lists links to that file (a missing one, to its template, when there is one), and each drifted file expands to show its full diff.
+- The full report is in one secret gist of `FLEET_GIST_TOKEN`’s user: the one whose description is exactly `ljharb/actions fleet workflow drift report`, and that holds nothing but the report’s files. It’s found on every run, and updated in place (it’s created when there’s none; a public gist, or one with any other description or files, is never written to). When there are no discrepancies, it says so.
+- GitHub cuts a gist file short past 1 MB, so a report that’s longer is split, only between rows, into as many files as it takes, each under 1 MB (`workflow-drift-001.md`, `workflow-drift-002.md`, and so on; a table that continues into the next file is reopened there), each written in a request of its own; files a previous, longer report needed are deleted. The issue then says how many files there are, and links each.
+- Dry runs write the full report too, since it’s where a dry run’s results are, but to a gist of their own (described `ljharb/actions fleet workflow drift report (dry runs)`), so a dry run never changes what the issue’s link shows.
+- If the gist can’t be written, the issue and the run summary are still updated, saying so (without a link), and then the run fails.
+- The issue, and the run’s summary, are a short summary that always fits in GitHub’s limits: the counts, a link to the full report, the failures, and, for each account, how many of its repositories have discrepancies, and how many files are missing, unexpected, or drifted. When there are too many failures, or accounts, or files of the full report to link, for that, it counts them instead, and the full report has them all. The issue ends with a collapsed legend of the [commands](#commands) that act on it.
+- [Private repositories](#private-repositories) are only counted, never named, since the issue, the summary, and the gist are public. A run that couldn’t check every repository says so, and never closes the issue.
 
 ### Commands
 

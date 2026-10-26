@@ -63,7 +63,15 @@ import nock from 'nock';
  *   created?: Record<string, unknown>,
  *   createError?: ErrorReply,
  *   commentErrorAfter?: number,
+ *   gists?: Gist[],
+ *   gistNoRawURL?: boolean,
+ *   gistError?: ErrorReply,
  * }} Scenario
+ */
+/**
+ * The token user's gists, listed 100 to a page (as `per_page` asks), most recently updated first, with the names of their `files`;
+ * `gistError` fails creating or updating one, and with `gistNoRawURL`, a reply to that has no `raw_url` for its files.
+ * @typedef {{ id: string, description: string | null, public: boolean, files?: Record<string, unknown> }} Gist
  */
 /** @typedef {{ method: string, path: string, body: any, authorization: string }} Recorded */
 
@@ -163,7 +171,7 @@ const tokenPrefix = 'ghs_installation_';
  */
 export function mockGitHub(scenario, record) {
 	const scope = nock('https://api.github.com').persist();
-	/** @type {(handler: (request: { path: string, body: any, authorization: string }) => [number, unknown]) => (req: Request) => Promise<[number, unknown]>} */
+	/** @type {(handler: (request: { path: string, body: any, authorization: string }) => [number, unknown] | [number, unknown, Record<string, string>]) => (req: Request) => Promise<[number, unknown] | [number, unknown, Record<string, string>]>} */
 	const handle = (handler) => async (req) => {
 		const url = new URL(req.url);
 		const path = `${url.pathname}${url.search}`;
@@ -189,9 +197,12 @@ export function mockGitHub(scenario, record) {
 		scope.patch(/^\/repos\/[^/]+\/[^/]+\/issues\/\d+$/),
 		scope.post(/^\/repos\/[^/]+\/[^/]+\/issues\/\d+\/comments$/),
 		scope.get(/^\/repos\/[^/]+\/[^/]+\/commits(?:\?.*)?$/),
+		scope.get(/^\/gists(?:\?.*)?$/),
+		scope.post('/gists'),
+		scope.patch(/^\/gists\/[^/]+$/),
 	];
 
-	const [installations, tokens, installationRepos, graphql, listIssues, createIssue, updateIssue, comment, commits] = interceptors;
+	const [installations, tokens, installationRepos, graphql, listIssues, createIssue, updateIssue, comment, commits, listGists, createGist, updateGist] = interceptors;
 
 	installations.reply(handle(() => {
 		const reply = scenario.installations ?? [];
@@ -247,6 +258,38 @@ export function mockGitHub(scenario, record) {
 		await new Promise((resolve) => { setTimeout(resolve, scenario.commitsDelay ?? 0); });
 		return reply;
 	});
+
+	listGists.reply(handle(({ path }) => {
+		const query = new URLSearchParams(path.split('?')[1]);
+		const perPage = Number(query.get('per_page') ?? 30);
+		const page = Number(query.get('page') ?? 1);
+		const gists = scenario.gists ?? [];
+		const more = gists.length > page * perPage;
+		/** @type {Record<string, string>} */
+		const headers = more ? { link: `<https://api.github.com/gists?per_page=${perPage}&page=${page + 1}>; rel="next"` } : {};
+		return [
+			200,
+			gists.slice((page - 1) * perPage, page * perPage),
+			headers,
+		];
+	}));
+	/** @type {(id: string, body: any) => [number, unknown]} */
+	const gistReply = (id, body) => {
+		if (scenario.gistError) {
+			return [scenario.gistError.status, scenario.gistError.body ?? { message: 'error' }];
+		}
+		return [200, {
+			id,
+			html_url: `https://gist.github.com/${id}`, // eslint-disable-line camelcase
+			// a file set to `null` is deleted
+			files: Object.fromEntries(Object.keys(body.files).filter((name) => body.files[name] !== null).map((name) => [
+				name,
+				{ filename: name, ...scenario.gistNoRawURL ? {} : { raw_url: `https://gist.githubusercontent.com/fleet-user/${id}/raw/0123abc/${name}` } }, // eslint-disable-line camelcase
+			])),
+		}];
+	};
+	createGist.reply(handle(({ body }) => gistReply('new-gist', body)));
+	updateGist.reply(handle(({ path, body }) => gistReply(path.split('/')[2], body)));
 
 	return () => {
 		interceptors.forEach((i) => nock.removeInterceptor(i));
