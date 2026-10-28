@@ -24,16 +24,8 @@ inputs:
     description: 'token that can read and write the gists of the user it belongs to (a fine-grained token with the “Gists” account permission set to “Read and write”, or a classic token with the `gist` scope); the full report is kept in one secret gist of theirs (in as many files, each under 1 MB, as it takes), found by its description and updated in place on every run; dry runs keep theirs in another. Required: the run fails without it.'
     required: false
     default: ''
-  token:
-    description: 'token that can create and edit issues in `issue-repository`'
-    required: false
-    default: ${{ github.token }}
-  issue-author:
-    description: 'the login that `token` creates issues as, used to find the report issue'
-    required: false
-    default: 'github-actions[bot]'
   issue-repository:
-    description: '`owner/name` of the repository to keep the report issue in'
+    description: '`owner/name` of the repository to keep the report issue in; the App must be installed on it, with the “Issues: Read and write” permission, since its bot writes the issue (and adopts one opened by `github-actions[bot]`)'
     required: false
     default: ${{ github.repository }}
   dry-run:

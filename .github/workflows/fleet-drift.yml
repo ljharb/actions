@@ -25,9 +25,9 @@ jobs:
     if: vars.FLEET_APP_ID != ''
     runs-on: ubuntu-24.04
 
+    # the report issue is written by the fleet App's bot, with a token of its own
     permissions:
       contents: read
-      issues: write  # to keep the report issue up to date
 
     steps:
       - name: Harden Runner

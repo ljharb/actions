@@ -1,7 +1,13 @@
 import * as core from '@actions/core';
 import { getOctokit } from '@actions/github';
 
-import { appAuth, discover, parseAccounts } from '../lib/app.mjs';
+import {
+	appAuth,
+	botLogin,
+	discover,
+	parseAccounts,
+} from '../lib/app.mjs';
+import { isReportAuthor, issueOctokit, legacyAuthor } from '../lib/issues.mjs';
 import { checkSafely } from './check.mjs';
 import { marker } from './marker.mjs';
 import { upsertGist } from './gist.mjs';
@@ -20,22 +26,23 @@ const { GITHUB_REPOSITORY = '' } = process.env;
  *   octokit: ReturnType<typeof getOctokit>,
  *   owner: string,
  *   repo: string,
- *   author: string,
+ *   bot: string,
  *   found: { title: string, body: string } | null,
  * }) => Promise<string>}
  */
 async function upsertIssue({
-	octokit, owner, repo, author, found,
+	octokit, owner, repo, bot, found,
 }) {
-	const issues = await octokit.paginate(octokit.rest.issues.listForRepo, {
+	// the App's bot's own, or one opened as GitHub Actions' bot before the App wrote the report, which it adopts
+	const issues = (await Promise.all([bot, legacyAuthor].map((creator) => octokit.paginate(octokit.rest.issues.listForRepo, {
 		owner,
 		repo,
 		state: 'all',
-		creator: author,
+		creator,
 		per_page: 100, // eslint-disable-line camelcase
-	});
+	})))).flat();
 	const [issue] = issues
-		.filter((i) => !i.pull_request && i.body?.includes(marker))
+		.filter((i) => !i.pull_request && i.body?.includes(marker) && isReportAuthor(i.user?.login, bot))
 		.sort((a, b) => b.created_at.localeCompare(a.created_at));
 
 	if (!found) {
@@ -104,13 +111,14 @@ async function main() {
 	}
 	await core.summary.addRaw(found ? found.summary(written, false) : 'No discrepancies.').write();
 	const [owner, repo] = (core.getInput('issue-repository') || GITHUB_REPOSITORY).split('/');
+	// the issue is written by the App's bot, with a token for only its repository
 	const outcome = dryRun
 		? 'dry run: no issue changes'
 		: await upsertIssue({
-			octokit: getOctokit(core.getInput('token', { required: true })),
+			octokit: await issueOctokit(auth, owner, repo),
 			owner,
 			repo,
-			author: core.getInput('issue-author', { required: true }),
+			bot: await botLogin(auth),
 			found: found && { title: found.title, body: found.summary(written, true) },
 		});
 

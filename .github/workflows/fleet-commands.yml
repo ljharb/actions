@@ -11,7 +11,8 @@ cache-mode: none
 
 jobs:
   commands:
-    if: vars.FLEET_APP_ID != '' && !github.event.issue.pull_request && startsWith(github.event.comment.body, '/')
+    # a bot's comment never runs a command: the App's own replies would otherwise each start a run, since, unlike GITHUB_TOKEN's, an App's comments trigger workflows
+    if: vars.FLEET_APP_ID != '' && github.event.comment.user.type != 'Bot' && !github.event.issue.pull_request && startsWith(github.event.comment.body, '/')
     runs-on: ubuntu-24.04
 
     # on the job, not the workflow, so that only commands wait their turn: every other comment's run is skipped before it joins the group
@@ -19,9 +20,9 @@ jobs:
       group: fleet-commands
       cancel-in-progress: false
 
+    # the fleet App's bot reacts to the command, and replies with its outcome, with a token of its own
     permissions:
       contents: read
-      issues: write  # to react to the command, and reply with its outcome
 
     steps:
       - name: Harden Runner

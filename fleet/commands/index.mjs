@@ -1,20 +1,22 @@
 import { readFileSync } from 'fs';
 
 import * as core from '@actions/core';
-import { getOctokit } from '@actions/github';
 
 import { checkSafely } from '../drift/check.mjs';
 import { marker } from '../drift/marker.mjs';
 import {
 	appAuth,
+	botLogin,
 	discover,
 	isSkippedAccount,
 	parseAccounts,
 } from '../lib/app.mjs';
+import { isReportAuthor, issueOctokit, legacyAuthor } from '../lib/issues.mjs';
 import { code, split } from '../lib/markdown.mjs';
 import { branch, fixRepo } from './apply.mjs';
 import { legend, parseCommand, quote } from './syntax.mjs';
 
+/** @typedef {import('../lib/app.mjs').Octokit} Octokit */
 /** @typedef {import('../lib/app.mjs').RepoState} RepoState */
 /** @typedef {import('../drift/check.mjs').Result} Result */
 /** @typedef {import('../drift/fix.mjs').Category} Category */
@@ -195,10 +197,65 @@ function summaryOf(bodies, posted) {
 	return [...shown, ...fits === -1 ? [] : [elsewhere(fits, bodies, posted)]].join(separator);
 }
 
+/**
+ * Whether `issue` is the workflow drift report: marked as it, and opened by the App's bot, or by GitHub Actions' bot before the App wrote the report (which the App adopted).
+ * Only the App's bot needs looking up, so only an issue by anyone else costs a request.
+ * @type {(issue: Record<string, any> | undefined, auth: ReturnType<typeof appAuth>) => Promise<boolean>}
+ */
+async function isReport(issue, auth) {
+	const login = issue?.user?.login;
+	if (issue?.pull_request || !issue?.body?.includes(marker) || typeof login !== 'string') {
+		return false;
+	}
+	return login.toLowerCase() === legacyAuthor || isReportAuthor(login, await botLogin(auth));
+}
+
+/**
+ * Why a comment is ignored before the App's key is even needed, if it is.
+ * The workflow already skips bots' comments; checking here too keeps the App's own replies from ever being read as commands, however it's run.
+ * @type {(issue: Record<string, any> | undefined, comment: Record<string, any> | undefined) => string | null}
+ */
+function skipReason(issue, comment) {
+	if (comment?.user?.type === 'Bot') {
+		return 'a bot’s comment';
+	}
+	if (issue?.pull_request || !issue?.body?.includes(marker)) {
+		return 'not a comment on the workflow drift report';
+	}
+	return null;
+}
+
+/**
+ * Whether the commenter may run commands; if so, the command gets a 👀 reaction, and if not, a reply saying why.
+ * @type {(options: { octokit: Octokit, owner: string, repo: string, comment: Record<string, any>, reply: (bodies: string[]) => Promise<void> }) => Promise<boolean>}
+ */
+async function authorize({
+	octokit, owner, repo, comment, reply,
+}) {
+	// `author_association` says nothing about permissions on this repository, so ask
+	const { data: { permission } } = await octokit.rest.repos.getCollaboratorPermissionLevel({
+		owner, repo, username: comment.user.login,
+	});
+	if (permission !== 'admin' && permission !== 'write') {
+		await reply(['Only people with write access to this repository can run fleet commands, so nothing was done.']);
+		core.info(`the commenter’s permission is \`${permission}\`; nothing done`);
+		return false;
+	}
+	await octokit.rest.reactions.createForIssueComment({
+		owner, repo, comment_id: comment.id, content: 'eyes', // eslint-disable-line camelcase
+	});
+	return true;
+}
+
 async function main() {
 	const { issue, comment } = JSON.parse(readFileSync(GITHUB_EVENT_PATH, 'utf8'));
-	const author = core.getInput('issue-author', { required: true });
-	if (issue?.pull_request || !issue?.body?.includes(marker) || issue.user?.login !== author) {
+	const skip = skipReason(issue, comment);
+	if (skip) {
+		core.info(`${skip}; nothing to do`);
+		return;
+	}
+	const auth = appAuth(core.getInput('app-id', { required: true }), core.getInput('private-key', { required: true }));
+	if (!await isReport(issue, auth)) {
 		core.info('not a comment on the workflow drift report; nothing to do');
 		return;
 	}
@@ -209,7 +266,8 @@ async function main() {
 	}
 
 	const [owner, repo] = GITHUB_REPOSITORY.split('/');
-	const octokit = getOctokit(core.getInput('token', { required: true }));
+	// the App's bot reacts and replies, and reads the commenter's permission (which only needs the token's Metadata permission)
+	const octokit = await issueOctokit(auth, owner, repo);
 	// a reply too long for one comment goes on in the next ones, in order; `posted` gets each one's link as it's posted
 	/** @type {(bodies: string[], posted?: string[]) => Promise<void>} */
 	const reply = async (bodies, posted = []) => {
@@ -221,18 +279,11 @@ async function main() {
 		}
 	};
 
-	// `author_association` says nothing about permissions on this repository, so ask
-	const { data: { permission } } = await octokit.rest.repos.getCollaboratorPermissionLevel({
-		owner, repo, username: comment.user.login,
-	});
-	if (permission !== 'admin' && permission !== 'write') {
-		await reply(['Only people with write access to this repository can run fleet commands, so nothing was done.']);
-		core.info(`the commenter’s permission is \`${permission}\`; nothing done`);
+	if (!await authorize({
+		octokit, owner, repo, comment, reply,
+	})) {
 		return;
 	}
-	await octokit.rest.reactions.createForIssueComment({
-		owner, repo, comment_id: comment.id, content: 'eyes', // eslint-disable-line camelcase
-	});
 	if (command.type === 'error') {
 		await reply(split([
 			`${command.message} Nothing was done.`, '', legend(),
@@ -242,7 +293,7 @@ async function main() {
 	}
 
 	const { bodies, failed } = await run({
-		auth: appAuth(core.getInput('app-id', { required: true }), core.getInput('private-key', { required: true })),
+		auth,
 		identities: new Map(),
 		dryRun: command.dryRun,
 		categories: command.filters.categories,

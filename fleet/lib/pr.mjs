@@ -1,6 +1,6 @@
 import * as core from '@actions/core';
 
-import { appOctokit, installationToken, octokitFor } from './app.mjs';
+import { botLogin, installationToken, octokitFor } from './app.mjs';
 import { exec, gitAuthEnv } from './exec.mjs';
 
 /** @typedef {import('./app.mjs').Octokit} Octokit */
@@ -18,11 +18,7 @@ function paths(output) {
 /** @type {(auth: ReturnType<typeof import('./app.mjs').appAuth>, installationId: number) => Promise<Identity>} */
 export async function botIdentity(auth, installationId) {
 	// quiet, like a private repository's own requests: these only happen when there's a repository to fix, which may be a private one
-	const { data: app } = await (await appOctokit(auth, true)).rest.apps.getAuthenticated();
-	if (!app?.slug) {
-		throw new Error('could not determine the GitHub App’s slug');
-	}
-	const login = `${app.slug}[bot]`;
+	const login = await botLogin(auth, true);
 	const token = await installationToken(auth, installationId, { permissions: { metadata: 'read' } });
 	core.setSecret(token);
 	const { data: user } = await octokitFor(token, true).rest.users.getByUsername({ username: login });

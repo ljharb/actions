@@ -112,8 +112,6 @@ function run(t, {
 			'INPUT_APP-ID': '1234',
 			'INPUT_PRIVATE-KEY': privateKey(),
 			INPUT_ACCOUNTS: 'ljharb',
-			INPUT_TOKEN: 'ghp_commands',
-			'INPUT_ISSUE-AUTHOR': 'github-actions[bot]',
 			GITHUB_EVENT_PATH: eventPath,
 			GITHUB_REPOSITORY: 'ljharb/actions',
 			GITHUB_RUN_ID: '42',
@@ -125,6 +123,21 @@ function run(t, {
 /** @type {(requests: Recorded[], method: string, pattern: RegExp) => Recorded[]} */
 function matching(requests, method, pattern) {
 	return requests.filter((r) => r.method === method && pattern.test(r.path));
+}
+
+// the token the App's bot reacts and replies with, from its installation on the repository the comment is in
+const issueToken = 'token ghs_installation_99';
+
+/**
+ * The requests after getting the App's token for the report's repository, which must be the first: for only that repository, that can only write issues.
+ * @type {(t: import('tape').Test, requests: Recorded[], label: string) => Recorded[]}
+ */
+function asBot(t, requests, label) {
+	t.deepEqual(requests.slice(0, 2).map((r) => [`${r.method} ${r.path}`, r.body]), [
+		['GET /repos/ljharb/actions/installation', null],
+		['POST /app/installations/99/access_tokens', { repositories: ['actions'], permissions: { issues: 'write', metadata: 'read' } }],
+	], `${label}: first gets the App’s token for only this repository, that can only write issues`);
+	return requests.slice(2);
 }
 
 /** @type {(requests: Recorded[]) => string[]} */
@@ -167,7 +180,6 @@ test('fleet/commands: ignores anything but a command on the report issue', (t) =
 		['an issue without a body', { issue: { ...report, body: null }, comment: comment('/fix ljharb') }],
 		['an issue without the marker', { issue: { ...report, body: 'some other issue' }, comment: comment('/fix ljharb') }],
 		['an issue without a creator', { issue: { number: 9, body: marker }, comment: comment('/fix ljharb') }],
-		['an issue someone else created', { issue: { ...report, user: { login: 'mallory' } }, comment: comment('/fix ljharb') }],
 	];
 	for (const [label, event] of events) {
 		const { status, stdout, requests } = run(t, { event });
@@ -176,18 +188,28 @@ test('fleet/commands: ignores anything but a command on the report issue', (t) =
 		t.deepEqual(requests, [], `${label}: makes no request`);
 	}
 
+	for (const login of ['mallory', 'other-app[bot]']) {
+		const { status, stdout, requests } = run(t, { event: { issue: { ...report, user: { login } }, comment: comment('/fix ljharb') } });
+		t.equal(status, 0, `an issue ${login} created: exits successfully`);
+		t.match(stdout, notReport, `an issue ${login} created: says why it does nothing`);
+		t.deepEqual(requests.map((r) => `${r.method} ${r.path}`), ['GET /app'], `an issue ${login} created: only reads the App, to compare its bot’s login`);
+	}
+
 	const other = run(t, { event: { issue: report, comment: comment('thanks!\n/fix ljharb') } });
 	t.equal(other.status, 0, 'a comment that is not a command: exits successfully');
 	t.match(other.stdout, /^not a command; nothing to do$/m, 'says why it does nothing');
 	t.deepEqual(other.requests, [], 'makes no request');
 
 	const author = run(t, {
-		event: { issue: { ...report, user: { login: 'report-bot' } }, comment: comment('/frob') },
-		env: { 'INPUT_ISSUE-AUTHOR': 'report-bot' },
+		event: { issue: { ...report, user: { login: 'Fleet-Bot[bot]' } }, comment: comment('/frob') },
+		github: { appSlug: 'fleet-bot' },
 	});
 	t.equal(author.status, 0, 'exits successfully');
-	t.doesNotMatch(author.stdout, notReport, 'the report is the issue that `issue-author` created');
-	t.equal(replies(author.requests).length, 1, 'so a command on it gets a reply');
+	t.doesNotMatch(author.stdout, notReport, 'the report is also the issue the App’s bot created, whatever the case of its login');
+	t.deepEqual(author.requests[0] && `${author.requests[0].method} ${author.requests[0].path}`, 'GET /app', 'found by reading the App’s slug');
+	const rest = asBot(t, author.requests.slice(1), 'the App’s bot’s report');
+	t.equal(replies(rest).length, 1, 'so a command on it gets a reply');
+	t.ok(rest.filter((r) => r.method !== 'GET' || (/\/permission$/).test(r.path)).every((r) => r.authorization === issueToken), 'and the permission check, the reaction, and the reply are all the App’s bot’s');
 
 	t.end();
 });
@@ -198,11 +220,12 @@ test('fleet/commands: only people with write access can run commands', (t) => {
 	for (const [label, permissions] of cases) {
 		const { status, stdout, requests } = run(t, { event: { issue: report, comment: comment('/fix ljharb') }, commands: { permissions } });
 		t.equal(status, 0, `${label}: exits successfully`);
-		t.deepEqual(requests.map((r) => `${r.method} ${r.path}`), [
+		const rest = asBot(t, requests, label);
+		t.deepEqual(rest.map((r) => `${r.method} ${r.path}`), [
 			'GET /repos/ljharb/actions/collaborators/maintainer/permission',
 			'POST /repos/ljharb/actions/issues/9/comments',
 		], `${label}: asks for the commenter’s permission, then only replies: no reaction, and no discovery`);
-		t.equal(requests[0].authorization, 'token ghp_commands', `${label}: with the token`);
+		t.deepEqual(rest.map((r) => r.authorization), [issueToken, issueToken], `${label}: both as the App’s bot`);
 		t.deepEqual(replies(requests), ['Only people with write access to this repository can run fleet commands, so nothing was done.'], `${label}: says they’re not allowed`);
 		t.match(stdout, new RegExp(`^the commenter’s permission is \`${permissions.maintainer ?? 'none'}\`; nothing done$`, 'm'), `${label}: logs why`);
 	}
@@ -220,13 +243,14 @@ test('fleet/commands: replies with the legend to anything it can’t run', (t) =
 	for (const [body, expected] of cases) {
 		const { status, stdout, requests } = run(t, { event: { issue: report, comment: comment(body, 'admin-person') }, commands: { permissions: { 'admin-person': 'admin' } } });
 		t.equal(status, 0, `${body}: exits successfully`);
-		t.deepEqual(requests.map((r) => `${r.method} ${r.path}`), [
+		const rest = asBot(t, requests, body);
+		t.deepEqual(rest.map((r) => `${r.method} ${r.path}`), [
 			'GET /repos/ljharb/actions/collaborators/admin-person/permission',
 			'POST /repos/ljharb/actions/issues/comments/77/reactions',
 			'POST /repos/ljharb/actions/issues/9/comments',
 		], `${body}: reacts, then replies, and does nothing else`);
-		t.deepEqual(requests[1].body, { content: 'eyes' }, `${body}: reacts with 👀`);
-		t.equal(requests[1].authorization, 'token ghp_commands', `${body}: with the token`);
+		t.deepEqual(rest[1].body, { content: 'eyes' }, `${body}: reacts with 👀`);
+		t.deepEqual(rest.map((r) => r.authorization), [issueToken, issueToken, issueToken], `${body}: all as the App’s bot`);
 		t.deepEqual(replies(requests), [`${expected} Nothing was done.\n\n${legend()}`], `${body}: explains, then shows the legend`);
 		t.match(stdout, /^not a valid command; replied with how to use them$/m, `${body}: logs it`);
 	}
@@ -320,6 +344,8 @@ test('fleet/commands: dry run', (t) => {
 	t.deepEqual(replies(requests), [body], 'replies with what it would do, in each public repository with discrepancies, by name; a clean one isn’t listed, and a private one isn’t mentioned');
 	t.equal(summary, body, 'the run summary has the same');
 	t.notOk(summary.includes('secret'), 'never naming a private repository');
+	t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/(?:9\/comments|comments\/77\/reactions)$/).map((r) => r.authorization), [issueToken, issueToken], 'reacting and replying as the App’s bot');
+	t.match(stdout, /^::add-mask::ghs_installation_99$/m, 'whose token is masked');
 
 	const tokens = matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).filter((r) => r.body?.repositories);
 	t.deepEqual(tokens.map((r) => r.body), ['drifted', 'fresh', 'missing', 'secret'].map((name) => ({ repositories: [name], permissions: { pull_requests: 'read' } })), 'reads each repository’s PRs with a token for only that repository, that can only read PRs, a private one’s last'); // eslint-disable-line camelcase
@@ -836,10 +862,36 @@ test('fleet/commands: failures', (t) => {
 	t.equal(thrown.status, 1, 'a thrown non-Error fails');
 	t.match(thrown.stdout, /^::error::fleet-test-throw$/m, 'with the stringified value');
 
-	const noToken = run(t, { event: { issue: report, comment: comment('/fix ljharb') }, env: { INPUT_TOKEN: '' } });
-	t.equal(noToken.status, 1, 'a missing token fails');
-	t.match(noToken.stdout, /^::error::Error: Input required and not supplied: token$/m, 'with the error');
-	t.deepEqual(noToken.requests, [], 'before any request');
+	const noKey = run(t, { event: { issue: report, comment: comment('/fix ljharb') }, env: { 'INPUT_PRIVATE-KEY': '' } });
+	t.equal(noKey.status, 1, 'a missing private key fails');
+	t.match(noKey.stdout, /^::error::Error: Input required and not supplied: private-key$/m, 'with the error');
+	t.deepEqual(noKey.requests, [], 'before any request');
 
+	const denied = run(t, { event: { issue: report, comment: comment('/fix ljharb') }, github: { deniedPermissions: ['issues'] } });
+	t.equal(denied.status, 1, 'an App without the Issues permission fails');
+	t.ok(denied.stdout.split('\n').includes('::error::Error: the fleet GitHub App could not get a token to write issues in `ljharb/actions` (HTTP 422): the App needs the “Issues: Read and write” repository permission, and must be installed on `ljharb/actions`. After that permission is added to the App, its installation on `ljharb` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.'), 'saying which permission it needs, and that its installation must approve it');
+	t.deepEqual(denied.requests.map((r) => `${r.method} ${r.path}`), ['GET /repos/ljharb/actions/installation', 'POST /app/installations/99/access_tokens'], 'having done nothing else: no permission check, reaction, or reply');
+
+	t.end();
+});
+
+test('fleet/commands: a bot’s comment is never read as a command, even on the report', (t) => {
+	const { status, stdout, requests } = run(t, {
+		event: { issue: report, comment: { ...comment('/fix ljharb', 'ljharb-fleet[bot]'), user: { login: 'ljharb-fleet[bot]', type: 'Bot' } } },
+	});
+	t.equal(status, 0, 'succeeds');
+	t.match(stdout, /^a bot’s comment; nothing to do$/m, 'says why it did nothing');
+	t.deepEqual(requests, [], 'makes no request at all');
+	t.end();
+});
+
+test('fleet/commands: a comment anywhere but the report never needs the App’s key', (t) => {
+	const { status, stdout, requests } = run(t, {
+		event: { issue: { number: 3, body: 'something else', user: { login: 'someone' } }, comment: comment('/fix ljharb') },
+		env: { 'INPUT_PRIVATE-KEY': '' },
+	});
+	t.equal(status, 0, 'succeeds without a private key');
+	t.match(stdout, notReport, 'says it isn’t the report');
+	t.deepEqual(requests, [], 'makes no request at all');
 	t.end();
 });

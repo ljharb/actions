@@ -14,6 +14,11 @@ import { versionFixture } from './helpers/versions.mjs';
 /** @typedef {import('./helpers/child.mjs').ChildResult} ChildResult */
 
 const marker = '<!-- ljharb/actions: fleet workflow drift -->';
+// the report issue's authors: the App's bot, and GitHub Actions' bot, which opened the report before the App wrote it
+const bot = { login: 'fleet-bot[bot]' };
+const legacy = { login: 'github-actions[bot]' };
+// the token for the report issue's repository, from its installation
+const issueToken = 'token ghs_installation_99';
 const script = path.join('fleet', 'drift', 'index.mjs');
 
 /**
@@ -59,8 +64,6 @@ function run(github, env = {}, extra = {}) {
 			'INPUT_APP-ID': '1234',
 			'INPUT_PRIVATE-KEY': privateKey(),
 			INPUT_ACCOUNTS: 'ljharb',
-			INPUT_TOKEN: 'ghp_issues',
-			'INPUT_ISSUE-AUTHOR': 'github-actions[bot]',
 			'INPUT_DRY-RUN': 'false',
 			'INPUT_GIST-TOKEN': 'ghp_gist',
 			GITHUB_REPOSITORY: 'ljharb/actions',
@@ -262,12 +265,14 @@ test('fleet/drift: keeps the full report in a new secret gist, and summarizes it
 	t.equal(gistWrite.body.description, gistMarker, 'described so it’s found again next time');
 
 	const list = matching(requests, 'GET', /^\/repos\/ljharb\/actions\/issues\?/);
-	t.equal(list.length, 1, 'lists the report repo’s issues');
-	const query = new URLSearchParams(list[0].path.split('?')[1]);
-	t.equal(query.get('creator'), 'github-actions[bot]', 'by the issue author');
-	t.equal(query.get('state'), 'all', 'open or closed');
-	t.equal(list[0].authorization, 'token ghp_issues', 'with the issues token');
+	t.equal(list.length, 2, 'lists the report repo’s issues, twice');
+	const queries = list.map((r) => new URLSearchParams(r.path.split('?')[1]));
+	t.deepEqual(queries.map((q) => q.get('creator')), [bot.login, legacy.login], 'by the App’s bot, and by GitHub Actions’ bot, whose report the App adopts');
+	t.deepEqual(queries.map((q) => q.get('state')), ['all', 'all'], 'open or closed');
+	t.deepEqual(list.map((r) => r.authorization), [issueToken, issueToken], 'with the App’s token for the report repo');
 	t.ok(requests.indexOf(gistWrite) < requests.indexOf(list[0]), 'the gist is written before the issue, which links to it');
+	t.equal(issueWrites(requests)[0]?.authorization, issueToken, 'and the issue is created by the App’s bot, with the same token');
+	t.match(stdout, /^::add-mask::ghs_installation_99$/m, 'which is masked');
 
 	const writes = issueWrites(requests);
 	t.deepEqual(writes.map((r) => `${r.method} ${r.path}`), ['POST /repos/ljharb/actions/issues'], 'creates one issue, and nothing else');
@@ -429,12 +434,12 @@ test('fleet/drift: updates the gist found by its description, through every page
 		repos: { 'LJHarb/drifted': repo({ workflows: replacing('rebase.yml', 'nope') }) },
 		gists,
 		issues: [
-			{ number: 1, state: 'open', body: marker, created_at: '2026-09-01T00:00:00Z', pull_request: {}, html_url: 'https://github.com/x/1' }, // eslint-disable-line camelcase
-			{ number: 2, state: 'open', body: 'unrelated', created_at: '2026-09-02T00:00:00Z', html_url: 'https://github.com/x/2' }, // eslint-disable-line camelcase
-			{ number: 3, state: 'open', body: null, created_at: '2026-09-03T00:00:00Z', html_url: 'https://github.com/x/3' }, // eslint-disable-line camelcase
-			{ number: 4, state: 'closed', body: `${marker}\nold`, created_at: '2026-08-01T00:00:00Z', html_url: 'https://github.com/x/4' }, // eslint-disable-line camelcase
-			{ number: 5, state: 'closed', body: `${marker}\nnewer`, created_at: '2026-08-15T00:00:00Z', html_url: 'https://github.com/x/5' }, // eslint-disable-line camelcase
-			{ number: 6, state: 'closed', body: `${marker}\noldest`, created_at: '2026-07-01T00:00:00Z', html_url: 'https://github.com/x/6' }, // eslint-disable-line camelcase
+			{ number: 1, user: bot, state: 'open', body: marker, created_at: '2026-09-01T00:00:00Z', pull_request: {}, html_url: 'https://github.com/x/1' }, // eslint-disable-line camelcase
+			{ number: 2, user: bot, state: 'open', body: 'unrelated', created_at: '2026-09-02T00:00:00Z', html_url: 'https://github.com/x/2' }, // eslint-disable-line camelcase
+			{ number: 3, user: legacy, state: 'open', body: null, created_at: '2026-09-03T00:00:00Z', html_url: 'https://github.com/x/3' }, // eslint-disable-line camelcase
+			{ number: 4, user: legacy, state: 'closed', body: `${marker}\nold`, created_at: '2026-08-01T00:00:00Z', html_url: 'https://github.com/x/4' }, // eslint-disable-line camelcase
+			{ number: 5, user: bot, state: 'closed', body: `${marker}\nnewer`, created_at: '2026-08-15T00:00:00Z', html_url: 'https://github.com/x/5' }, // eslint-disable-line camelcase
+			{ number: 6, user: legacy, state: 'closed', body: `${marker}\noldest`, created_at: '2026-07-01T00:00:00Z', html_url: 'https://github.com/x/6' }, // eslint-disable-line camelcase
 		],
 	}, {
 		INPUT_ACCOUNTS: '',
@@ -453,10 +458,11 @@ test('fleet/drift: updates the gist found by its description, through every page
 	t.deepEqual(cleanup && [`${cleanup.method} ${cleanup.path}`, cleanup.body], ['PATCH /gists/the-gist', { files: { 'workflow-drift-001.md': null, 'workflow-drift-002.md': null } }], 'then deleting the files it no longer needs');
 	t.equal(gistWrites(requests).length, 2, 'and writing nothing else');
 	t.ok(String(gistWrite.body.files['workflow-drift.md'].content).includes('<tr><td><a href="https://github.com/LJHarb/drifted/tree/HEAD/.github/workflows"><code>LJHarb/drifted</code></a></td>'), 'with the new full report, linking to github.com by default');
-	t.equal(matching(requests, 'GET', /^\/repos\/ljharb\/reports\/issues\?/).length, 1, 'lists issues in `issue-repository`');
+	t.equal(matching(requests, 'GET', /^\/repos\/ljharb\/reports\/issues\?/).length, 2, 'lists issues in `issue-repository`, by each of the report’s authors');
+	t.deepEqual(matching(requests, 'GET', /\/installation$/).map((r) => r.path), ['/repos/ljharb/reports/installation'], 'with a token from the App’s installation on it');
 
 	const writes = issueWrites(requests);
-	t.deepEqual(writes.map((r) => `${r.method} ${r.path}`), ['PATCH /repos/ljharb/reports/issues/5'], 'updates the newest marked issue, ignoring PRs and unmarked issues');
+	t.deepEqual(writes.map((r) => `${r.method} ${r.path}`), ['PATCH /repos/ljharb/reports/issues/5'], 'updates the newest marked issue, whichever of the report’s authors opened it, ignoring PRs and unmarked issues');
 	t.equal(writes[0].body.state, 'open', 'reopening it');
 	t.equal(writes[0].body.title, 'Workflow drift: 1 of 1 repositories', 'with the new title');
 	const body = String(writes[0].body.body);
@@ -476,7 +482,7 @@ test('fleet/drift: closes an open report issue when there are no discrepancies',
 		repos: { 'ljharb/clean': repo() },
 		gists: [{ id: 'the-gist', description: gistMarker, public: false, files: reportFiles }],
 		issues: [
-			{ number: 8, state: 'open', body: `${marker}\nstuff`, created_at: '2026-09-01T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/8' }, // eslint-disable-line camelcase
+			{ number: 8, user: legacy, state: 'open', body: `${marker}\nstuff`, created_at: '2026-09-01T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/8' }, // eslint-disable-line camelcase
 		],
 	});
 
@@ -495,13 +501,57 @@ test('fleet/drift: closes an open report issue when there are no discrepancies',
 	t.end();
 });
 
+test('fleet/drift: the App’s bot adopts a report opened by GitHub Actions’ bot, and ignores any other author’s', (t) => {
+	const scenario = {
+		installations: [{ id: 1, account: { login: 'ljharb' } }],
+		installationRepos: { 1: [installedRepo('ljharb', 'missing')] },
+		repos: { 'ljharb/missing': repo({ workflows: null }) },
+	};
+	const mallory = { login: 'mallory' };
+	const adopted = run({
+		...scenario,
+		issues: [
+			// newer, and marked, but someone else's, so never written to
+			{ number: 20, user: mallory, state: 'open', body: marker, created_at: '2026-10-01T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/20' }, // eslint-disable-line camelcase
+			{ number: 9, user: legacy, state: 'open', body: `${marker}\nold`, created_at: '2026-09-01T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/9' }, // eslint-disable-line camelcase
+		],
+	});
+	t.equal(adopted.status, 0, 'exits successfully');
+	t.match(adopted.stdout, /; updated https:\/\/github\.com\/ljharb\/actions\/issues\/9$/m, 'updates the report GitHub Actions’ bot opened');
+	const writes = issueWrites(adopted.requests);
+	t.deepEqual(writes.map((r) => `${r.method} ${r.path}`), ['PATCH /repos/ljharb/actions/issues/9'], 'and nothing else');
+	t.equal(writes[0].authorization, issueToken, 'as the App’s bot');
+
+	const token = matching(adopted.requests, 'POST', /^\/app\/installations\/99\/access_tokens$/);
+	t.deepEqual(token.map((r) => r.body), [{ repositories: ['actions'], permissions: { issues: 'write', metadata: 'read' } }], 'with a token for only the report repo, that can only write issues');
+	t.deepEqual(matching(adopted.requests, 'GET', /^\/repos\/[^/]+\/[^/]+\/installation$/).map((r) => [r.path, (/^bearer /i).test(r.authorization)]), [['/repos/ljharb/actions/installation', true]], 'from the App’s installation on it, found as the App');
+	t.deepEqual(matching(adopted.requests, 'GET', /^\/app$/).length, 1, 'and the App’s bot’s login is read once');
+
+	const others = run({
+		...scenario,
+		appSlug: 'ljharb-fleet',
+		issues: [
+			{ number: 20, user: mallory, state: 'open', body: marker, created_at: '2026-10-01T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/20' }, // eslint-disable-line camelcase
+			{ number: 21, user: legacy, state: 'open', body: 'unmarked', created_at: '2026-10-02T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/21' }, // eslint-disable-line camelcase
+		],
+		created: { number: 22, html_url: 'https://github.com/ljharb/actions/issues/22' }, // eslint-disable-line camelcase
+	});
+	t.equal(others.status, 0, 'exits successfully');
+	t.match(others.stdout, /; created https:\/\/github\.com\/ljharb\/actions\/issues\/22$/m, 'creates a report when only someone else’s is marked');
+	t.deepEqual(matching(others.requests, 'GET', /\/issues\?/).map((r) => new URLSearchParams(r.path.split('?')[1]).get('creator')), ['ljharb-fleet[bot]', 'github-actions[bot]'], 'looking for the App’s bot’s by its slug');
+	const [created] = issueWrites(others.requests);
+	t.equal(created && `${created.method} ${created.path} ${created.authorization}`, `POST /repos/ljharb/actions/issues ${issueToken}`, 'as the App’s bot');
+
+	t.end();
+});
+
 test('fleet/drift: nothing to do when there are no discrepancies and no open report', (t) => {
 	const closed = run({
 		installations: [{ id: 1, account: { login: 'ljharb' } }],
 		installationRepos: { 1: [installedRepo('ljharb', 'clean'), installedRepo('ljharb', 'archived')] },
 		repos: { 'ljharb/clean': repo(), 'ljharb/archived': repo({ workflows: null, archived: true }) },
 		issues: [
-			{ number: 8, state: 'closed', body: marker, created_at: '2026-09-01T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/8' }, // eslint-disable-line camelcase
+			{ number: 8, user: legacy, state: 'closed', body: marker, created_at: '2026-09-01T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/8' }, // eslint-disable-line camelcase
 		],
 	});
 	t.equal(closed.status, 0, 'exits successfully');
@@ -732,11 +782,24 @@ test('fleet/drift: failures', (t) => {
 		installationRepos: { 1: [installedRepo('ljharb', 'missing')] },
 		repos: { 'ljharb/missing': repo({ workflows: null }) },
 	};
-	const issues = run(scenario, { 'INPUT_ISSUE-AUTHOR': '' });
-	t.equal(issues.status, 1, 'a missing issue author fails, when not a dry run');
-	t.match(issues.stdout, /^::error::Error: Input required and not supplied: issue-author$/m, 'with the error');
-	t.ok(issues.summary.includes(gistLink('new-gist')), 'but still writes the gist and the summary first');
-	t.ok(gistContent(t, issues.requests).includes('<code>ljharb/missing</code>'), 'with the full report');
+	const permission = 'the App needs the “Issues: Read and write” repository permission, and must be installed on `ljharb/actions`. After that permission is added to the App, its installation on `ljharb` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.';
+	const denied = run({ ...scenario, issues: [], deniedPermissions: ['issues'] });
+	t.equal(denied.status, 1, 'an App without the Issues permission fails, when not a dry run');
+	t.ok(denied.stdout.split('\n').includes(`::error::Error: the fleet GitHub App could not get a token to write issues in \`ljharb/actions\` (HTTP 422): ${permission}`), 'saying which permission it needs, and that its installation must approve it');
+	t.ok(denied.summary.includes(gistLink('new-gist')), 'but still writes the gist and the summary first');
+	t.ok(gistContent(t, denied.requests).includes('<code>ljharb/missing</code>'), 'with the full report');
+	t.deepEqual(issueWrites(denied.requests), [], 'and touches no issue');
+
+	const uninstalled = run({ ...scenario, issues: [], repoInstallations: { 'ljharb/actions': { status: 404 } } });
+	t.equal(uninstalled.status, 1, 'an App not installed on the report repo fails');
+	t.ok(uninstalled.stdout.split('\n').includes(`::error::Error: the fleet GitHub App could not get a token to write issues in \`ljharb/actions\` (HTTP 404): ${permission}`), 'saying the same');
+	t.ok(uninstalled.summary.includes(gistLink('new-gist')), 'after writing the summary');
+	t.deepEqual(matching(uninstalled.requests, 'POST', /\/access_tokens$/).filter((r) => r.body?.permissions?.issues), [], 'without asking for a token');
+
+	const noSlug = run({ ...scenario, issues: [], appSlug: null });
+	t.equal(noSlug.status, 1, 'an App whose slug can’t be read fails');
+	t.match(noSlug.stdout, /^::error::Error: could not determine the GitHub App’s slug$/m, 'saying so');
+	t.deepEqual(issueWrites(noSlug.requests), [], 'touching no issue');
 
 	const gist = run({ ...scenario, issues: [], gistError: { status: 403, body: { message: 'Resource not accessible by personal access token' } } });
 	t.equal(gist.status, 1, 'failing to write the gist fails');

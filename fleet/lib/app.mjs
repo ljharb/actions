@@ -101,6 +101,16 @@ export async function appOctokit(auth, quiet = false) {
 	return octokitFor(token, quiet);
 }
 
+// the login of the App's bot user, which is what an installation token acts as
+/** @type {(auth: ReturnType<typeof createAppAuth>, quiet?: boolean) => Promise<string>} */
+export async function botLogin(auth, quiet = false) {
+	const { data: app } = await (await appOctokit(auth, quiet)).rest.apps.getAuthenticated();
+	if (!app?.slug) {
+		throw new Error('could not determine the GitHub App’s slug');
+	}
+	return `${app.slug}[bot]`;
+}
+
 /** @type {(auth: ReturnType<typeof createAppAuth>, installationId: number, options?: { repositoryNames?: string[], permissions?: Record<string, string> }) => Promise<string>} */
 export async function installationToken(auth, installationId, options = {}) {
 	const { token } = await auth({

@@ -51,6 +51,9 @@ import nock from 'nock';
 /**
  * @typedef {{
  *   installations?: unknown[] | ErrorReply,
+ *   appSlug?: string | null,
+ *   repoInstallations?: Record<string, number | ErrorReply>,
+ *   deniedPermissions?: string[],
  *   tokens?: Record<string, ErrorReply>,
  *   installationRepos?: Record<string, InstalledRepo[] | ErrorReply>,
  *   repos?: Record<string, RepoSpec>,
@@ -72,6 +75,12 @@ import nock from 'nock';
  * The token user's gists, listed 100 to a page (as `per_page` asks), most recently updated first, with the names of their `files`;
  * `gistError` fails creating or updating one, and with `gistNoRawURL`, a reply to that has no `raw_url` for its files.
  * @typedef {{ id: string, description: string | null, public: boolean, files?: Record<string, unknown> }} Gist
+ */
+/*
+ * The App (`GET /app`) has the slug `appSlug` (unspecified, `fleet-bot`; `null`, none);
+ * `repoInstallations`, keyed by `owner/name`, is the id of the installation on a repository (unspecified, 99), or an error;
+ * a token asking for any of the `deniedPermissions` is refused, as one the installation hasn't been granted is.
+ * Listing issues with a `creator` lists only theirs: the ones whose `user.login` it is.
  */
 /** @typedef {{ method: string, path: string, body: any, authorization: string }} Recorded */
 
@@ -189,6 +198,8 @@ export function mockGitHub(scenario, record) {
 
 	const interceptors = [
 		scope.get(/^\/app\/installations(?:\?.*)?$/),
+		scope.get('/app'),
+		scope.get(/^\/repos\/[^/]+\/[^/]+\/installation$/),
 		scope.post(/^\/app\/installations\/\d+\/access_tokens$/),
 		scope.get(/^\/installation\/repositories(?:\?.*)?$/),
 		scope.post('/graphql'),
@@ -202,17 +213,25 @@ export function mockGitHub(scenario, record) {
 		scope.patch(/^\/gists\/[^/]+$/),
 	];
 
-	const [installations, tokens, installationRepos, graphql, listIssues, createIssue, updateIssue, comment, commits, listGists, createGist, updateGist] = interceptors;
+	const [installations, app, repoInstallation, tokens, installationRepos, graphql, listIssues, createIssue, updateIssue, comment, commits, listGists, createGist, updateGist] = interceptors;
 
 	installations.reply(handle(() => {
 		const reply = scenario.installations ?? [];
 		return isErrorReply(reply) ? [reply.status, reply.body ?? { message: 'error' }] : [200, reply];
+	}));
+	app.reply(handle(() => [200, { id: 1, ...scenario.appSlug === null ? {} : { slug: scenario.appSlug ?? 'fleet-bot' } }]));
+	repoInstallation.reply(handle(({ path }) => {
+		const reply = scenario.repoInstallations?.[path.split('/').slice(2, 4).join('/')] ?? 99;
+		return isErrorReply(reply) ? [reply.status, reply.body ?? { message: 'Not Found' }] : [200, { id: reply }];
 	}));
 	tokens.reply(handle(({ path, body }) => {
 		const id = path.split('/')[3];
 		const error = scenario.tokens?.[id];
 		if (error) {
 			return [error.status, error.body ?? { message: 'token error' }];
+		}
+		if (Object.keys(body?.permissions ?? {}).some((name) => scenario.deniedPermissions?.includes(name))) {
+			return [422, { message: 'The permissions requested are not granted to this installation.' }];
 		}
 		return [201, {
 			token: `${tokenPrefix}${id}`,
@@ -230,7 +249,10 @@ export function mockGitHub(scenario, record) {
 		return [200, { total_count: reply.length, repositories: reply }]; // eslint-disable-line camelcase
 	}));
 	graphql.reply(handle(({ body }) => graphqlReply(scenario, body.variables)));
-	listIssues.reply(handle(() => [200, scenario.issues ?? []]));
+	listIssues.reply(handle(({ path }) => {
+		const creator = new URLSearchParams(path.split('?')[1]).get('creator');
+		return [200, (scenario.issues ?? []).filter((i) => !creator || (/** @type {{ user?: { login?: string } }} */ (i)).user?.login === creator)]; // eslint-disable-line no-extra-parens
+	}));
 	createIssue.reply(handle(() => (scenario.createError
 		? [scenario.createError.status, scenario.createError.body ?? { message: 'error' }]
 		: [201, scenario.created ?? { number: 1, html_url: 'https://github.com/created/1' }]))); // eslint-disable-line camelcase
