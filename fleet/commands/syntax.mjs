@@ -1,8 +1,11 @@
+import { fixBranch, relockBranch } from '../lib/branches.mjs';
 import { code } from '../lib/markdown.mjs';
 
 /** @typedef {import('../drift/fix.mjs').Category} Category */
 /** @typedef {{ repositories: Set<string>, accounts: Set<string>, files: Set<string>, categories: Set<Category> }} Filters */
-/** @typedef {{ type: 'none' } | { type: 'error', message: string } | { type: 'fix', dryRun: boolean, line: string, filters: Filters }} Command */
+/** @typedef {'fix' | 'merge'} Verb */
+/** @typedef {{ dryRun: boolean, line: string, filters: Filters }} Invocation */
+/** @typedef {{ type: 'none' } | { type: 'error', message: string } | Invocation & { type: 'fix' } | Invocation & { type: 'merge' }} Command */
 
 /** @type {Category[]} */
 const categories = [
@@ -27,6 +30,11 @@ function isCategory(token) {
 	return categories.includes(/** @type {Category} */ (token)); // eslint-disable-line no-extra-parens
 }
 
+/** @type {(word: string | undefined) => word is Verb} */
+function isVerb(word) {
+	return word === 'fix' || word === 'merge';
+}
+
 /** @type {(options?: { heading?: boolean }) => string} */
 export function legend({ heading = true } = {}) {
 	return [
@@ -35,12 +43,15 @@ export function legend({ heading = true } = {}) {
 		'',
 		'- `/fix <filters>`: in each repository this report covers that matches, open (or update) a PR, from its `fleet/workflows` branch, that makes its workflow files match the templates.',
 		'- `/dry-run fix <filters>`: reply with what `/fix` would do, without changing anything.',
+		`- \`/merge <filters>\`: in each repository this report covers that matches, fast-forward the default branch to each open PR the App’s bot opened from its \`${fixBranch}\` or \`${relockBranch}\` branch, once every check on it has passed (or been skipped); one whose checks haven’t finished yet is queued, and merged once they pass.`,
+		'- `/dry-run merge <filters>`: reply with what `/merge` would do, without changing or queueing anything.',
 		'',
-		'At least one filter is required. Each is, case-insensitively, a repository (`owner/name`), an account (`owner`), a workflow file name (`*.yml` or `*.yaml`), or a kind of discrepancy (`missing`, `drifted`, or `unexpected`). Only files that match every kind of filter given (any one filter of each kind) are fixed. For example:',
+		'At least one filter is required. Each is, case-insensitively, a repository (`owner/name`), an account (`owner`), a workflow file name (`*.yml` or `*.yaml`), or a kind of discrepancy (`missing`, `drifted`, or `unexpected`); `/merge` takes only repositories and accounts. Only files that match every kind of filter given (any one filter of each kind) are fixed. For example:',
 		'',
 		'- `/dry-run fix owner`: what fixing everything in `owner`’s repositories would do',
 		'- `/fix owner/name rebase.yml`: fix only `rebase.yml`, in only `owner/name`',
 		'- `/fix owner other-owner missing`: add the missing files to `owner`’s and `other-owner`’s repositories',
+		'- `/merge owner/name other-owner`: merge the bot’s PRs in `owner/name` and in `other-owner`’s repositories',
 		'',
 		'Only people with write access to this repository can run them.',
 	].join('\n');
@@ -57,14 +68,16 @@ export function parseCommand(body) {
 		return { type: 'none' };
 	}
 	const words = line.split(/[\s,]+/);
-	const fix = words[0].toLowerCase() === '/fix';
-	const dryRun = words[0].toLowerCase() === '/dry-run' && words[1]?.toLowerCase() === 'fix';
-	if (!fix && !dryRun) {
+	const first = words[0].toLowerCase();
+	const dryRun = first === '/dry-run';
+	const verb = dryRun ? words[1]?.toLowerCase() : first.slice(1);
+	if (!isVerb(verb)) {
 		return { type: 'error', message: `Unknown command: ${quote(line)}.` };
 	}
+	const name = dryRun ? `/dry-run ${verb}` : `/${verb}`;
 	const tokens = words.slice(dryRun ? 2 : 1).filter(Boolean);
 	if (tokens.length === 0) {
-		return { type: 'error', message: `${code(dryRun ? '/dry-run fix' : '/fix')} needs at least one filter: every repository at once is too broad.` };
+		return { type: 'error', message: `${code(name)} needs at least one filter: every repository at once is too broad.` };
 	}
 
 	/** @type {Filters} */
@@ -94,7 +107,12 @@ export function parseCommand(body) {
 	if (unknown.length > 0) {
 		return { type: 'error', message: `Unknown ${unknown.length === 1 ? 'filter' : 'filters'}: ${unknown.map(quote).join(', ')}.` };
 	}
+	// a PR is merged whole, so there's nothing for a file or a kind of discrepancy to narrow
+	const unsupported = verb === 'merge' ? [...filters.files, ...filters.categories] : [];
+	if (unsupported.length > 0) {
+		return { type: 'error', message: `${code(name)} takes only repository (\`owner/name\`) and account (\`owner\`) filters, not ${unsupported.map(quote).join(', ')}.` };
+	}
 	return {
-		type: 'fix', dryRun, line, filters,
+		type: verb, dryRun, line, filters,
 	};
 }

@@ -12,9 +12,12 @@ import {
 	isSkippedAccount,
 	parseAccounts,
 } from '../lib/app.mjs';
+import { fixBranch, relockBranch } from '../lib/branches.mjs';
 import { isReportAuthor, issueOctokit, legacyAuthor } from '../lib/issues.mjs';
 import { code, split } from '../lib/markdown.mjs';
-import { branch, fixRepo } from './apply.mjs';
+import { finishQueued, messageOf } from '../lib/merge.mjs';
+import { fixRepo } from './apply.mjs';
+import { runMerge } from './merge.mjs';
 import { legend, parseCommand, quote } from './syntax.mjs';
 
 /** @typedef {import('../lib/app.mjs').Octokit} Octokit */
@@ -79,7 +82,7 @@ async function attempt(context, candidate) {
 		if (candidate.state.private) {
 			return { outcome: '', failed: false };
 		}
-		const text = error instanceof Error ? error.message : String(error);
+		const text = messageOf(error);
 		core.warning(`${candidate.state.repository}: ${text}`);
 		return { outcome: `failed: ${code(text)}`, failed: true };
 	}
@@ -103,16 +106,17 @@ function privateNote(dryRun) {
  * @type {(options: {
  *   line: string,
  *   dryRun: boolean,
+ *   what: string,
  *   rows: string[],
  *   failures: number,
  * }) => string[]}
  */
 function replyBodies({
-	line, dryRun, rows, failures,
+	line, dryRun, what, rows, failures,
 }) {
 	const table = { open: '| Repository | Outcome |\n| --- | --- |', close: '' };
 	return split([
-		`${quote(line)} (${dryRun ? 'a dry run, so nothing was changed' : `from each repository’s \`${branch}\` branch`}; see [the run](${runURL})):`,
+		`${quote(line)} (${dryRun ? what : `from each repository’s ${what}`}; see [the run](${runURL})):`,
 		'',
 		...rows.length > 0 ? [{ text: table.open, group: table }, ...rows.map((text) => ({ text, group: table }))] : ['No repository matches those filters.'],
 		...failures > 0 ? ['', `⚠️ Some repositories could not be read, so they were not considered; see [the run](${runURL}).`] : [],
@@ -122,16 +126,24 @@ function replyBodies({
 	], maxBodyLength);
 }
 
-/** @type {(context: Context, filters: Filters, line: string) => Promise<{ bodies: string[], failed: number }>} */
-async function run(context, filters, line) {
+/**
+ * Every repository the App is installed on, in an allowed account, and how many installations couldn't be read.
+ * @type {(auth: Context['auth']) => Promise<{ states: RepoState[], unread: number }>}
+ */
+async function installed(auth) {
 	const accounts = parseAccounts(core.getInput('accounts'), process.env.GITHUB_REPOSITORY_OWNER || '');
 	// without source accounts, only repositories the App is installed on are discovered: it can't change any other
-	const { states, failures } = await discover(context.auth, accounts);
+	const { states, failures } = await discover(auth, accounts);
 	for (const { scope, message } of failures) {
 		core.warning(`${scope}: ${message}`);
 	}
 	// an installation on an account that isn't allowed is left out on purpose, so it's only in the log
-	const unread = failures.filter((f) => !isSkippedAccount(f)).length;
+	return { states, unread: failures.filter((f) => !isSkippedAccount(f)).length };
+}
+
+/** @type {(context: Context, filters: Filters, line: string) => Promise<{ bodies: string[], failed: number }>} */
+async function run(context, filters, line) {
+	const { states, unread } = await installed(context.auth);
 
 	const checked = states.filter((s) => s.stateError || (!s.archived && s.config.workflows !== false));
 	/** @type {Candidate[]} */
@@ -159,7 +171,7 @@ async function run(context, filters, line) {
 
 	return {
 		bodies: replyBodies({
-			line, dryRun: context.dryRun, rows, failures: unread,
+			line, dryRun: context.dryRun, what: context.dryRun ? 'a dry run, so nothing was changed' : `\`${fixBranch}\` branch`, rows, failures: unread,
 		}),
 		failed,
 	};
@@ -272,13 +284,37 @@ async function finish({
 	}
 }
 
+/** @typedef {{ auth: ReturnType<typeof appAuth>, comment: Record<string, any>, issueNumber: number, reply: (bodies: string[], posted?: string[]) => Promise<void>, finishOther: (commentId: number, ok: boolean) => Promise<void>, progress: { queued: boolean } }} PerformOptions */
+
 /**
- * Runs an allowed command, replying with what happened; whether it succeeded: it's valid, and no public repository failed.
- * @type {(options: { auth: ReturnType<typeof appAuth>, command: Exclude<ReturnType<typeof parseCommand>, { type: 'none' }>, comment: Record<string, any>, reply: (bodies: string[], posted?: string[]) => Promise<void> }) => Promise<boolean>}
+ * Runs `/merge` (or `/dry-run merge`), and the parts of its reply.
+ * @type {(options: PerformOptions, command: Extract<ReturnType<typeof parseCommand>, { type: 'merge' }>) => Promise<{ bodies: string[], ok: boolean }>}
  */
-async function perform({
-	auth, command, comment, reply,
+async function merge({
+	auth, comment, issueNumber, finishOther, progress,
+}, {
+	dryRun, filters, line,
 }) {
+	const { states, unread } = await installed(auth);
+	const { rows, ok } = await runMerge({
+		auth, dryRun, commentId: comment.id, issueNumber, finishOther, progress,
+	}, states, filters);
+	return {
+		bodies: replyBodies({
+			line, dryRun, what: dryRun ? 'a dry run, so nothing was changed or queued' : `\`${fixBranch}\` and \`${relockBranch}\` PRs by the App’s bot`, rows, failures: unread,
+		}),
+		ok,
+	};
+}
+
+/**
+ * Runs an allowed command, replying with what happened; whether it succeeded (it's valid, and nothing public failed). Whether it's still waiting on queued PRs is in `options.progress`.
+ * @type {(options: PerformOptions & { command: Exclude<ReturnType<typeof parseCommand>, { type: 'none' }> }) => Promise<boolean>}
+ */
+async function perform(options) {
+	const {
+		command, comment, reply,
+	} = options;
 	if (command.type === 'error') {
 		await reply(split([
 			`${command.message} Nothing was done.`, '', legend(),
@@ -287,25 +323,32 @@ async function perform({
 		return false;
 	}
 
-	const { bodies, failed } = await run({
-		auth,
-		identities: new Map(),
-		dryRun: command.dryRun,
-		categories: command.filters.categories,
-		link: comment.html_url,
-	}, command.filters, command.line);
+	/** @type {{ bodies: string[], ok: boolean }} */
+	let result;
+	if (command.type === 'merge') {
+		result = await merge(options, command);
+	} else {
+		const { bodies, failed } = await run({
+			auth: options.auth,
+			identities: new Map(),
+			dryRun: command.dryRun,
+			categories: command.filters.categories,
+			link: comment.html_url,
+		}, command.filters, command.line);
+		if (failed > 0) {
+			core.setFailed(`${failed} ${plural(failed, 'repository', 'repositories')} could not be fixed`);
+		}
+		result = { bodies, ok: failed === 0 };
+	}
 	/** @type {string[]} */
 	const posted = [];
 	try {
-		await reply(bodies, posted);
+		await reply(result.bodies, posted);
 	} finally {
 		// even when replying fails, so the outcome is still in the run
-		await core.summary.addRaw(summaryOf(bodies, posted)).write();
+		await core.summary.addRaw(summaryOf(result.bodies, posted)).write();
 	}
-	if (failed > 0) {
-		core.setFailed(`${failed} ${plural(failed, 'repository', 'repositories')} could not be fixed`);
-	}
-	return failed === 0;
+	return result.ok;
 }
 
 async function main() {
@@ -346,16 +389,23 @@ async function main() {
 	if (eyes === null) {
 		return;
 	}
+	/** @type {(commentId: number, ok: boolean) => Promise<void>} */
+	const finishOther = async (commentId, ok) => finishQueued({
+		octokit, owner, repo, commentId, bot: await botLogin(auth), ok,
+	});
+	const progress = { queued: false };
 	let ok = false;
 	try {
 		ok = await perform({
-			auth, command, comment, reply,
+			auth, command, comment, issueNumber: issue.number, reply, finishOther, progress,
 		});
 	} finally {
-		// also when it throws, so a command never stays 👀 forever
-		await finish({
-			octokit, owner, repo, comment, eyes, ok,
-		});
+		// also when it throws, so a command never stays 👀 forever; but a public PR it queued keeps it 👀 until the merge queue resolves it
+		if (!progress.queued) {
+			await finish({
+				octokit, owner, repo, comment, eyes, ok,
+			});
+		}
 	}
 }
 

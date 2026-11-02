@@ -1,0 +1,363 @@
+import path from 'path';
+
+import test from 'tape';
+
+import { fixBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
+import { botEmail, prCommit } from '../commands/helpers/merge.mjs';
+import {
+	bot,
+	entry,
+	failing,
+	issueToken,
+	matching,
+	passing,
+	pending,
+	pr,
+	reactions,
+	replies,
+	runScript,
+	runURL,
+	writtenQueue,
+} from '../commands/helpers/merge-run.mjs';
+
+/** @typedef {import('../commands/helpers/merge-run.mjs').GitHubScenario} GitHubScenario */
+/** @typedef {import('../commands/helpers/merge-run.mjs').MergeScenario} MergeScenario */
+
+const script = path.join('fleet', 'merge', 'index.mjs');
+// recently enough that nothing queued has been waiting too long
+const queuedAt = new Date(Date.now() - (60 * 60 * 1000)).toISOString();
+const privateNote = 'Queued PRs in private repositories, if any, were also checked; nothing about them is shown here.';
+
+/** @type {(...entries: Record<string, unknown>[]) => string} */
+function queue(...entries) {
+	return JSON.stringify(entries.map((e) => ({ ...e, queuedAt })));
+}
+
+/** @type {(t: import('tape').Test, merge: MergeScenario, github?: GitHubScenario) => ReturnType<typeof runScript>} */
+function run(t, merge, github = {}) {
+	return runScript(t, script, { merge, github });
+}
+
+/** @type {(commentId: number) => string} */
+function row(commentId) {
+	return `(queued by [this comment](https://github.com/ljharb/actions/issues/9#issuecomment-${commentId}))`;
+}
+
+/** @type {(rows: string[]) => string} */
+function expectedReply(rows) {
+	return [
+		`The merge queue, as of [this run](${runURL}):`,
+		'',
+		'| Repository | Outcome |',
+		'| --- | --- |',
+		...rows,
+		'',
+		privateNote,
+	].join('\n');
+}
+
+test('fleet/merge: an empty queue exits before anything else', (t) => {
+	for (const [label, value] of [['no variable', undefined], ['an empty list', '[]'], ['nothing that’s an entry', '[1]']]) {
+		const { status, stdout, requests } = run(t, typeof value === 'string' ? { queue: value } : {});
+		t.equal(status, 0, `${label}: exits successfully`);
+		t.match(stdout, /^the merge queue is empty; nothing to do$/m, `${label}: says so`);
+		t.deepEqual(requests.map((r) => `${r.method} ${r.path}`), [
+			'GET /repos/ljharb/actions/installation',
+			'POST /app/installations/99/access_tokens',
+			'GET /repos/ljharb/actions/actions/variables/FLEET_MERGE_QUEUE',
+		], `${label}: having only read the queue`);
+		t.deepEqual(requests[1].body, { repositories: ['actions'], permissions: { actions_variables: 'write' } }, `${label}: with a token that can only read and write this repository’s variables`); // eslint-disable-line camelcase
+	}
+	t.end();
+});
+
+test('fleet/merge: without the Variables permission, fails naming it', (t) => {
+	const { status, stdout, requests } = run(t, { queue: queue(entry('ljharb/a', 1)) }, { deniedPermissions: ['actions_variables'] });
+	t.equal(status, 1, 'fails');
+	t.ok(stdout.split('\n').includes('::error::Error: the fleet GitHub App could not get a token to read and write Actions variables in `ljharb/actions` (HTTP 422): the App needs the “Variables: Read and write” repository permission, for the merge queue (the `FLEET_MERGE_QUEUE` variable), and must be installed on `ljharb/actions`. After that permission is added to the App, its installation on `ljharb` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.'), 'naming the permission');
+	t.equal(requests.length, 2, 'having done nothing else');
+	t.end();
+});
+
+test('fleet/merge: re-checks each queued PR, merging, keeping, or dropping it', (t) => {
+	const closed = { state: 'closed' };
+	const {
+		status, stdout, requests, summary,
+	} = run(t, {
+		queue: queue(
+			entry('ljharb/a', 1),
+			entry('ljharb/a', 2),
+			entry('ljharb/b', 1, { commentId: 66 }),
+			entry('ljharb/c', 1, { commentId: 66 }),
+			entry('ljharb/d', 1, { commentId: 55 }),
+			entry('ljharb/e', 1, { commentId: 44 }),
+			entry('ljharb/f', 1, { commentId: 33 }),
+			entry('ljharb/secret', 1, { commentId: 22, isPrivate: true }),
+			entry('stranger/x', 1, { commentId: 11 }),
+			entry('ljharb/gone', 1, { commentId: 10 }),
+			entry('ljharb/flaky', 1, { commentId: 10 }),
+			entry('ljharb/refused', 1, { commentId: 10 }),
+			entry('ljharb/secret-gone', 1, { commentId: 22, isPrivate: true }),
+		),
+		prs: {
+			'ljharb/a#1': { ...pr('ljharb/a', 1, fixBranch), ...closed, merged_at: queuedAt }, // eslint-disable-line camelcase
+			'ljharb/a#2': pr('ljharb/a', 2, relockBranch, { sha: 'pushed-since' }),
+			'ljharb/b#1': pr('ljharb/b', 1, fixBranch),
+			'ljharb/c#1': pr('ljharb/c', 1, fixBranch),
+			'ljharb/d#1': pr('ljharb/d', 1, fixBranch),
+			'ljharb/e#1': pr('ljharb/e', 1, fixBranch),
+			'ljharb/f#1': { ...pr('ljharb/f', 1, fixBranch), ...closed },
+			'ljharb/secret#1': { ...pr('ljharb/secret', 1, fixBranch), base: { ref: 'main', repo: { private: true } } },
+			'ljharb/flaky#1': pr('ljharb/flaky', 1, fixBranch),
+			'ljharb/refused#1': pr('ljharb/refused', 1, fixBranch),
+		},
+		ci: {
+			'b-1': failing, 'c-1': pending, 'd-1': passing, 'secret-1': passing, 'refused-1': passing,
+		},
+		compare: { 'ljharb/e': { status: 'diverged', behind_by: 2 }, 'ljharb/flaky': { status: 502, body: { message: 'Bad Gateway' } } }, // eslint-disable-line camelcase
+		refUpdates: { 'ljharb/refused': { status: 422, body: { message: 'Protected branch update failed: shh' } } },
+		eyes: {
+			77: [{ id: 701, user: { login: bot } }],
+			55: [{ id: 702, user: { login: bot } }],
+			44: [{ id: 703, user: { login: bot } }],
+			33: [{ id: 704, user: { login: bot } }],
+			10: [{ id: 705, user: { login: bot } }],
+		},
+	});
+
+	t.equal(status, 1, 'fails, since a public PR could not be checked, and another could not be merged');
+	const annotations = stdout.split('\n').filter((l) => (/^::(?:warning|error)/).test(l));
+	t.equal(annotations.length, 2, 'two annotations');
+	t.match(annotations[0], /^::warning::ljharb\/flaky#1: Bad Gateway/, 'warning about the one that could not be checked');
+	t.equal(annotations[1], '::error::2 queued PRs could not be checked or merged', 'and failing, counting it and the refused one');
+	t.notOk(stdout.includes('secret') || stdout.includes('stranger') || stdout.includes('shh'), 'never naming a private repository, an account that isn’t allowed, or a refusal’s message');
+
+	t.deepEqual(matching(requests, 'PATCH', /\/git\/refs\//).map((r) => `${r.path} ${r.body.sha} ${r.body.force}`), [
+		'/repos/ljharb/d/git/refs/heads%2Fmain d-1 false',
+		'/repos/ljharb/refused/git/refs/heads%2Fmain refused-1 false',
+		'/repos/ljharb/secret/git/refs/heads%2Fmain secret-1 false',
+	], 'fast-forwards the ones whose CI passed to the commit that was queued, never forced, a private one’s last');
+	t.deepEqual(matching(requests, 'GET', /^\/repos\/stranger\//), [], 'never touching an account that’s no longer allowed');
+
+	t.deepEqual(writtenQueue(requests), [
+		entry('ljharb/c', 1, { commentId: 66, commandFailed: true }),
+		entry('ljharb/flaky', 1, { commentId: 10, commandFailed: true }),
+	], 'keeps the pending one, and the one that could not be checked (each of whose commands has now failed); drops the rest');
+
+	const body = expectedReply([
+		`| \`ljharb/a\` | already merged https://github.com/ljharb/a/pull/1 ${row(77)} |`,
+		`| \`ljharb/a\` | not merged https://github.com/ljharb/a/pull/2: the PR changed after \`/merge\`; run \`/merge\` again ${row(77)} |`,
+		`| \`ljharb/b\` | not merged https://github.com/ljharb/b/pull/1: its checks failed: \`tests\`: failure ${row(66)} |`,
+		`| \`ljharb/d\` | merged https://github.com/ljharb/d/pull/1 ${row(55)} |`,
+		`| \`ljharb/e\` | not merged https://github.com/ljharb/e/pull/1: it needs updating, since \`main\` has moved on since its branch was made (so it can’t be fast-forwarded); have the App update it (eg, with \`/fix\`, for a \`fleet/workflows\` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so \`/merge\` would never take it), then run \`/merge\` again ${row(44)} |`,
+		`| \`ljharb/f\` | not merged https://github.com/ljharb/f/pull/1: it was closed ${row(33)} |`,
+		`| \`ljharb/gone\` | not merged https://github.com/ljharb/gone/pull/1: it could not be read (HTTP 404) ${row(10)} |`,
+		`| \`ljharb/refused\` | not merged https://github.com/ljharb/refused/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422), eg because of a branch protection rule ${row(10)} |`,
+	]);
+	t.deepEqual(replies(requests), [body], 'one reply, on the issue they were queued from, listing what happened to each public PR it resolved');
+	t.equal(summary, body, 'which is also the run summary');
+	t.ok(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/9\/comments$/).every((r) => r.authorization === issueToken), 'as the App’s bot');
+
+	t.deepEqual(reactions(requests, 77), ['+confused', '-701'], 'a command whose PRs are all resolved, one of them unmerged, is 😕');
+	t.deepEqual(reactions(requests, 55), ['+rocket', '-702'], 'one whose PRs were all merged is 🚀');
+	t.deepEqual(reactions(requests, 44), ['+confused', '-703'], 'one that needs updating is 😕');
+	t.deepEqual(reactions(requests, 33), ['+confused', '-704'], 'as is one that was closed');
+	t.deepEqual(reactions(requests, 66), [], 'one with a PR still queued keeps its 👀');
+	t.deepEqual(reactions(requests, 10), [], 'as does one with a PR that could not be checked');
+	t.deepEqual(reactions(requests, 22), [], 'and one with only a private PR is never touched');
+	t.deepEqual(reactions(requests, 11), ['+confused'], 'one for an account that’s no longer allowed is 😕, though nothing is said about its PR');
+
+	const tokens = matching(requests, 'POST', /^\/app\/installations\/99\/access_tokens$/).map((r) => r.body);
+	t.deepEqual(tokens.filter((b) => b.repositories[0] === 'd'), [
+		{ repositories: ['d'], permissions: { contents: 'read', pull_requests: 'read', checks: 'read', actions: 'read', statuses: 'read' } }, // eslint-disable-line camelcase
+		{ repositories: ['d'], permissions: { contents: 'write', workflows: 'write' } },
+	], 'each repository is read, and merged, with tokens for only it');
+	t.end();
+});
+
+test('fleet/merge: a run that resolves nothing changes nothing, and says nothing', (t) => {
+	const { status, requests } = run(t, {
+		queue: queue(entry('ljharb/c', 1), entry('ljharb/secret', 1, { isPrivate: true })),
+		prs: { 'ljharb/c#1': pr('ljharb/c', 1, fixBranch), 'ljharb/secret#1': pr('ljharb/secret', 1, fixBranch) },
+		ci: { 'c-1': pending, 'secret-1': {} },
+	});
+	t.equal(status, 0, 'exits successfully');
+	t.equal(writtenQueue(requests), undefined, 'the queue isn’t written');
+	t.deepEqual(replies(requests), [], 'nothing is posted');
+	t.deepEqual(reactions(requests), [], 'nor reacted to');
+	t.end();
+});
+
+test('fleet/merge: a run that resolves only private PRs says nothing', (t) => {
+	const { status, stdout, requests } = run(t, {
+		queue: queue(entry('ljharb/c', 1), entry('ljharb/secret', 1, { isPrivate: true, commentId: 22 })),
+		prs: { 'ljharb/c#1': pr('ljharb/c', 1, fixBranch), 'ljharb/secret#1': pr('ljharb/secret', 1, fixBranch) },
+		ci: { 'c-1': pending, 'secret-1': passing },
+	});
+	t.equal(status, 0, 'exits successfully');
+	t.deepEqual(writtenQueue(requests), [entry('ljharb/c', 1)], 'the merged private PR is dropped');
+	t.deepEqual(replies(requests), [], 'with no reply');
+	t.deepEqual([...reactions(requests), ...reactions(requests, 22)], [], 'and no reaction');
+	t.equal(matching(requests, 'GET', /^\/repos\/ljharb\/actions\/installation$/).length, 1, 'never even getting a token to write issues');
+	t.notOk(stdout.includes('secret'), 'nor any mention of it');
+	t.end();
+});
+
+test('fleet/merge: a public PR whose repository became private is no longer shown', (t) => {
+	const { requests } = run(t, {
+		queue: queue(entry('ljharb/now-secret', 1, { commentId: 66 })),
+		prs: { 'ljharb/now-secret#1': { ...pr('ljharb/now-secret', 1, fixBranch), base: { ref: 'main', repo: { private: true } } } },
+		ci: { 'now-secret-1': passing },
+		eyes: { 66: [{ id: 801, user: { login: bot } }] },
+	});
+	t.equal(matching(requests, 'PATCH', /\/git\/refs\//).length, 1, 'it is merged');
+	t.deepEqual(replies(requests), [], 'but not mentioned');
+	t.deepEqual(reactions(requests, 66), ['+rocket', '-801'], 'though its command, which named it when it was public, is finished');
+	t.end();
+});
+
+test('fleet/merge: a resolved PR whose command has another still queued', (t) => {
+	const { status, stdout, requests } = run(t, {
+		queue: queue(entry('ljharb/refused', 1), entry('ljharb/c', 1)),
+		prs: { 'ljharb/refused#1': pr('ljharb/refused', 1, fixBranch), 'ljharb/c#1': pr('ljharb/c', 1, fixBranch) },
+		ci: { 'refused-1': passing, 'c-1': pending },
+		refUpdates: { 'ljharb/refused': { status: 403 } },
+	});
+	t.equal(status, 1, 'fails, since it could not be merged');
+	t.match(stdout, /^::error::1 queued PR could not be checked or merged$/m, 'saying so, in the singular');
+	t.equal(replies(requests).length, 1, 'replies');
+	t.deepEqual(reactions(requests), [], 'but leaves the command’s 👀, since it has a PR still queued');
+	t.equal(matching(requests, 'GET', /^\/app$/).length, 1, 'looking up the bot only once, to check the PRs’ commits, though its reaction isn’t swapped');
+	t.deepEqual(writtenQueue(requests), [entry('ljharb/c', 1, { commandFailed: true })], 'and notes in the queue that the command has failed');
+	t.end();
+});
+
+test('fleet/merge: a command that had already failed is 😕 once its last PR is merged', (t) => {
+	const { requests } = run(t, {
+		queue: queue(entry('ljharb/d', 1, { commentId: 66, commandFailed: true })),
+		prs: { 'ljharb/d#1': pr('ljharb/d', 1, fixBranch) },
+		ci: { 'd-1': passing },
+		eyes: { 66: [{ id: 801, user: { login: bot } }, { id: 802, user: { login: 'someone-else' } }] },
+	});
+	t.deepEqual(reactions(requests, 66), ['+confused', '-801'], 'removing only the bot’s 👀');
+	t.end();
+});
+
+test('fleet/merge: swapping a queued command’s reaction is only a best effort', (t) => {
+	/** @type {[import('../commands/helpers/merge.mjs').CI, string][]} */
+	const cases = [[passing, 'done'], [failing, 'failed']];
+	for (const [ci, outcome] of cases) {
+		const { status, stdout, requests } = run(t, {
+			queue: queue(entry('ljharb/d', 1, { commentId: 66 })),
+			prs: { 'ljharb/d#1': pr('ljharb/d', 1, fixBranch) },
+			ci: { 'd-1': ci },
+			eyesError: { status: 500 },
+		});
+		t.equal(status, 0, `${outcome}: exits successfully`);
+		t.match(stdout, new RegExp(`^::warning::could not mark a queued \`/merge\` as ${outcome}: could not be read \\(HTTP 500\\)$`, 'm'), `${outcome}: warning that it could not`);
+		t.equal(replies(requests).length, 1, `${outcome}: after replying`);
+	}
+	t.end();
+});
+
+test('fleet/merge: a queue that can’t be written fails the run', (t) => {
+	const { status, stdout } = run(t, {
+		queue: queue(entry('ljharb/d', 1)),
+		prs: { 'ljharb/d#1': { ...pr('ljharb/d', 1, fixBranch), state: 'closed' } },
+		queueWriteError: { status: 500, body: { message: 'nope' } },
+	});
+	t.equal(status, 1, 'fails');
+	t.match(stdout, /^::error::HttpError: nope/m, 'with the error');
+	t.end();
+});
+
+test('fleet/merge: a thrown non-Error', (t) => {
+	const { status, stdout } = runScript(t, script, { env: { GITHUB_REPOSITORY: 'fleet-test-throw' }, throwStringOnSplit: 'fleet-test-throw' });
+	t.equal(status, 1, 'fails');
+	t.match(stdout, /^::error::fleet-test-throw$/m, 'with the stringified value');
+	t.end();
+});
+
+test('fleet/merge: a PR whose base branch changed after `/merge` is dropped, unmerged', (t) => {
+	const { status, requests } = run(t, {
+		queue: queue(entry('ljharb/d', 1, { commentId: 66, base: 'main' })),
+		prs: { 'ljharb/d#1': { ...pr('ljharb/d', 1, fixBranch), base: { ref: 'other', repo: { full_name: 'ljharb/d', private: false } } } }, // eslint-disable-line camelcase
+		ci: { 'd-1': passing },
+		eyes: { 66: [{ id: 801, user: { login: bot } }] },
+	});
+	t.equal(status, 0, 'exits successfully');
+	t.deepEqual(matching(requests, 'PATCH', /\/git\/refs\//), [], 'never updating the branch it was retargeted to');
+	t.deepEqual(writtenQueue(requests), [], 'dropping it');
+	t.deepEqual(replies(requests), [expectedReply([`| \`ljharb/d\` | not merged https://github.com/ljharb/d/pull/1: the PR changed after \`/merge\`; run \`/merge\` again ${row(66)} |`])], 'saying why');
+	t.deepEqual(reactions(requests, 66), ['+confused', '-801'], 'and its command is 😕');
+	t.end();
+});
+
+test('fleet/merge: a PR whose checks never finish is dropped after 24 hours', (t) => {
+	const hour = 60 * 60 * 1000;
+	const { status, requests } = run(t, {
+		queue: JSON.stringify([
+			{ ...entry('ljharb/c', 1, { commentId: 66 }), queuedAt: new Date(Date.now() - (25 * hour)).toISOString() },
+			{ ...entry('ljharb/e', 1, { commentId: 55 }), queuedAt: new Date(Date.now() - (23 * hour)).toISOString() },
+			{ ...entry('ljharb/secret', 1, { commentId: 44, isPrivate: true }), queuedAt: new Date(Date.now() - (25 * hour)).toISOString() },
+		]),
+		prs: { 'ljharb/c#1': pr('ljharb/c', 1, fixBranch), 'ljharb/e#1': pr('ljharb/e', 1, fixBranch), 'ljharb/secret#1': pr('ljharb/secret', 1, fixBranch) },
+		ci: { 'c-1': pending, 'e-1': pending, 'secret-1': pending },
+		eyes: { 66: [{ id: 801, user: { login: bot } }], 44: [{ id: 802, user: { login: bot } }] },
+	});
+	t.equal(status, 0, 'exits successfully');
+	t.deepEqual(matching(requests, 'PATCH', /\/git\/refs\//), [], 'merging nothing');
+	t.deepEqual(writtenQueue(requests), [entry('ljharb/e', 1, { commentId: 55 })], 'dropping the ones queued more than 24 hours ago, a private one’s too, and keeping the rest');
+	t.deepEqual(replies(requests), [expectedReply([`| \`ljharb/c\` | not merged https://github.com/ljharb/c/pull/1: its checks still hadn’t all finished 24 hours after \`/merge\`; run \`/merge\` again once they have ${row(66)} |`])], 'saying why, of only the public one');
+	t.deepEqual(reactions(requests, 66), ['+confused', '-801'], 'its command is 😕');
+	t.deepEqual(reactions(requests, 44), [], 'and the private one’s is never touched');
+	t.end();
+});
+
+test('fleet/merge: only the App’s bot’s own commits are merged, once every check suite has finished', (t) => {
+	const someoneElse = 'it has commits by someone else; review and merge it yourself';
+	const names = ['author', 'committer', 'email', 'many', 'suite-pending', 'suite-failed', 'suite-empty', 'suite-stuck', 'secret'];
+	const { status, stdout, requests } = run(t, {
+		queue: queue(...names.map((n) => entry(`ljharb/${n}`, 1, { commentId: 66, isPrivate: n === 'secret' }))),
+		prs: Object.fromEntries(names.map((n) => [`ljharb/${n}#1`, pr(`ljharb/${n}`, 1, fixBranch)])),
+		commits: {
+			'ljharb/author#1': [prCommit('x', { author: 'mallory' }), prCommit('author-1')],
+			'ljharb/committer#1': [prCommit('committer-1', { committer: 'mallory' })],
+			'ljharb/email#1': [prCommit('email-1', { author: null, committer: null, authorEmail: botEmail, committerEmail: botEmail })],
+			'ljharb/many#1': Array.from({ length: 251 }, (_, i) => prCommit(i === 250 ? 'many-1' : `c${i}`)),
+			'ljharb/secret#1': [prCommit('secret-1', { author: 'mallory' })],
+		},
+		ci: {
+			'author-1': passing,
+			'committer-1': passing,
+			'email-1': passing,
+			'many-1': passing,
+			'suite-pending-1': { ...passing, checkSuites: [{ id: 1, status: 'queued', conclusion: null, latest_check_runs_count: 0 }] }, // eslint-disable-line camelcase
+			'suite-failed-1': { ...passing, checkSuites: [{ id: 2, status: 'completed', conclusion: 'failure', latest_check_runs_count: 1, app: { name: 'Other CI' } }] }, // eslint-disable-line camelcase
+			'suite-empty-1': { ...passing, checkSuites: [{ id: 3, status: 'completed', conclusion: 'neutral', latest_check_runs_count: 0 }] }, // eslint-disable-line camelcase
+			'suite-stuck-1': { ...passing, checkSuites: [{ id: 4, status: 'queued', conclusion: null, latest_check_runs_count: 0, created_at: '2026-01-01T00:00:00Z', app: { name: 'Codecov' } }, { id: 5, status: 'queued', conclusion: null, latest_check_runs_count: 0, created_at: '2026-01-01T00:00:00Z', app: { name: 'Renovate' } }] }, // eslint-disable-line camelcase
+			'secret-1': passing,
+		},
+		eyes: { 66: [{ id: 801, user: { login: bot } }] },
+	});
+	t.equal(status, 0, 'exits successfully');
+	t.deepEqual(matching(requests, 'PATCH', /\/git\/refs\//).map((r) => `${r.path} ${r.body.sha}`), [
+		'/repos/ljharb/email/git/refs/heads%2Fmain email-1',
+		'/repos/ljharb/suite-empty/git/refs/heads%2Fmain suite-empty-1',
+		'/repos/ljharb/suite-stuck/git/refs/heads%2Fmain suite-stuck-1',
+	], 'merges only the PR whose commits are the bot’s by its noreply email, the one whose only other suite is empty and neutral, and the one whose other suites have no check runs and were left queued long ago, to the pinned head');
+	t.deepEqual(writtenQueue(requests), [entry('ljharb/suite-pending', 1, { commentId: 66, commandFailed: true })], 'keeps the one with an unfinished check suite (noting that its command has now failed); drops the rest, the private one too');
+	t.deepEqual(replies(requests), [expectedReply([
+		`| \`ljharb/author\` | not merged https://github.com/ljharb/author/pull/1: ${someoneElse} ${row(66)} |`,
+		`| \`ljharb/committer\` | not merged https://github.com/ljharb/committer/pull/1: ${someoneElse} ${row(66)} |`,
+		`| \`ljharb/email\` | merged https://github.com/ljharb/email/pull/1 ${row(66)} |`,
+		`| \`ljharb/many\` | not merged https://github.com/ljharb/many/pull/1: it has at least 250 commits, more than GitHub lists, so they can’t all be checked to be the App’s own; review and merge it yourself ${row(66)} |`,
+		`| \`ljharb/suite-failed\` | not merged https://github.com/ljharb/suite-failed/pull/1: its checks failed: check suite 2 (\`Other CI\`): failure ${row(66)} |`,
+		`| \`ljharb/suite-empty\` | merged https://github.com/ljharb/suite-empty/pull/1 ${row(66)} |`,
+		`| \`ljharb/suite-stuck\` | merged https://github.com/ljharb/suite-stuck/pull/1 ${row(66)} |`,
+	])], 'saying why each public one wasn’t merged');
+	t.notOk(stdout.includes('secret'), 'never mentioning the private one');
+	t.deepEqual(reactions(requests, 66), [], 'its command keeps its 👀, with a PR still queued');
+	t.equal(matching(requests, 'GET', /^\/app$/).length, 1, 'looking up the bot once');
+	t.end();
+});

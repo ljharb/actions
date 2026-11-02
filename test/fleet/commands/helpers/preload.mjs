@@ -5,6 +5,7 @@ import nock from 'nock';
 
 // the drift report's scenario: the App's installations, repositories, and issues, and the released node versions
 import '../../drift/helpers/preload.mjs';
+import { mockMerge } from './merge.mjs';
 
 /** @typedef {import('../../lib/helpers/github.mjs').ErrorReply} ErrorReply */
 /**
@@ -20,7 +21,7 @@ import '../../drift/helpers/preload.mjs';
  *   reactions?: { remove?: number, finish?: number },
  * }} CommandsScenario
  */
-/** @typedef {import('../../drift/helpers/preload.mjs').ChildScenario & { commands?: CommandsScenario }} Scenario */
+/** @typedef {import('../../drift/helpers/preload.mjs').ChildScenario & { commands?: CommandsScenario, merge?: import('./merge.mjs').MergeScenario }} Scenario */
 
 const { FLEET_TEST_SCENARIO } = process.env;
 
@@ -30,6 +31,11 @@ if (FLEET_TEST_SCENARIO) {
 	const { log } = scenario;
 	const commands = scenario.commands ?? {};
 	const serverURL = commands.serverURL ?? 'https://github.com';
+
+	// before the commands' own PR listing, so that its open PRs are `/merge`'s
+	if (log) {
+		mockMerge(scenario.merge ?? {}, (r) => appendFileSync(log, `${JSON.stringify(r)}\n`));
+	}
 
 	/** @type {(handler: (request: { path: string, body: any }) => [number, unknown]) => (req: Request) => Promise<[number, unknown]>} */
 	const handle = (handler) => async (req) => {

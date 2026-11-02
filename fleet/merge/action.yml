@@ -1,0 +1,17 @@
+name: 'fleet: merge queue'
+description: 'Merge the PRs `/merge` queued while their checks were running, once the checks pass; drop the ones that failed, changed, or were closed'
+author: ljharb
+inputs:
+  app-id:
+    description: 'the GitHub App’s ID or client ID'
+    required: true
+  private-key:
+    description: 'the GitHub App’s private key'
+    required: true
+  accounts:
+    description: 'space- or comma-separated accounts (users or orgs) whose repositories’ queued PRs may be merged; any other’s are dropped (default: the owner of the repository running this)'
+    required: false
+    default: ''
+runs:
+  using: node24
+  main: ./index.mjs

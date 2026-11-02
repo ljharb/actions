@@ -79,3 +79,39 @@ test('legend', (t) => {
 	}
 	t.end();
 });
+
+test('parseCommand: `/merge`', (t) => {
+	t.deepEqual(parseCommand('/merge ljharb/qs es-shims'), {
+		type: 'merge', dryRun: false, line: '/merge ljharb/qs es-shims', filters: filters({ repositories: ['ljharb/qs'], accounts: ['es-shims'] }),
+	}, '`/merge`, with a repository and an account');
+	t.deepEqual(parseCommand('/Dry-Run MERGE LJHarb'), {
+		type: 'merge', dryRun: true, line: '/Dry-Run MERGE LJHarb', filters: filters({ accounts: ['ljharb'] }),
+	}, '`/dry-run merge`, case-insensitively');
+	t.deepEqual(parseCommand('/merge'), { type: 'error', message: '`/merge` needs at least one filter: every repository at once is too broad.' }, '`/merge` without filters');
+	t.deepEqual(parseCommand('/dry-run merge'), { type: 'error', message: '`/dry-run merge` needs at least one filter: every repository at once is too broad.' }, '`/dry-run merge` without filters');
+	t.deepEqual(parseCommand('/merge ljharb Rebase.yml missing'), {
+		type: 'error',
+		message: '`/merge` takes only repository (`owner/name`) and account (`owner`) filters, not `rebase.yml`, `missing`.',
+	}, 'a workflow file or a kind of discrepancy is rejected');
+	t.deepEqual(parseCommand('/dry-run merge drifted'), {
+		type: 'error',
+		message: '`/dry-run merge` takes only repository (`owner/name`) and account (`owner`) filters, not `drifted`.',
+	}, 'by a dry run too');
+	t.deepEqual(parseCommand('/merge ljharb @someone rebase.yml'), { type: 'error', message: 'Unknown filter: `@someone`.' }, 'an unknown filter is rejected as for `/fix`');
+	t.deepEqual(parseCommand('/merged ljharb'), { type: 'error', message: 'Unknown command: `/merged ljharb`.' }, 'anything else is still an unknown command');
+	t.deepEqual(parseCommand('/dry-run'), { type: 'error', message: 'Unknown command: `/dry-run`.' }, 'as is a dry run of nothing');
+	t.end();
+});
+
+test('legend: `/merge`', (t) => {
+	const text = legend();
+	for (const example of ['`/merge <filters>`', '`/dry-run merge <filters>`', '`actions-lock/relock`', 'queued']) {
+		t.ok(text.includes(example), `mentions ${example}`);
+	}
+	const examples = text.match(/^- `\/(?:dry-run )?merge [^`<]+`/gm) ?? [];
+	t.equal(examples.length, 1, 'with an example');
+	for (const example of examples) {
+		t.equal(parseCommand(example.slice(3, -1)).type, 'merge', `${example.slice(2)} is a valid command`);
+	}
+	t.end();
+});

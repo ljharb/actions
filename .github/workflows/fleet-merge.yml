@@ -1,0 +1,79 @@
+name: 'fleet: merge queue'
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+cache-mode: none
+
+jobs:
+  idle:
+    # only while something is queued: a skipped run never joins the concurrency group
+    if: vars.FLEET_APP_ID != '' && vars.FLEET_MERGE_QUEUE != '' && vars.FLEET_MERGE_QUEUE != '[]'
+    runs-on: ubuntu-24.04
+
+    # GitHub keeps only one run waiting in a concurrency group, cancelling any other that was: so the queue only joins the commands' group when no command is running or waiting there, rather than ever displacing a waiting one; a skipped turn is retried 10 minutes later
+    permissions:
+      actions: read
+
+    outputs:
+      idle: ${{ steps.commands.outputs.idle }}
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+
+      - name: 'are no commands running or waiting?'
+        id: commands
+        run: |
+          busy=0
+          for status in requested queued pending waiting in_progress; do
+            count="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/fleet-commands.yml/runs?status=${status}&per_page=1" --jq '.total_count')"
+            busy=$((busy + count))
+          done
+          if [ "${busy}" -eq 0 ]; then
+            echo 'idle=true' >> "${GITHUB_OUTPUT}"
+          else
+            echo "::notice::${busy} command run(s) running or waiting; the merge queue waits for its next turn"
+            echo 'idle=false' >> "${GITHUB_OUTPUT}"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  merge:
+    needs: [idle]
+    if: needs.idle.outputs.idle == 'true'
+    runs-on: ubuntu-24.04
+
+    # the commands' group, on the job as theirs is, so that this never reads or writes the queue while a `/merge` does
+    concurrency:
+      group: fleet-commands
+      cancel-in-progress: false
+
+    # the fleet App merges, and reads and writes the queue, with tokens of its own
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+
+      - uses: ljharb/actions/fleet/merge@main
+        with:
+          app-id: ${{ vars.FLEET_APP_ID }}
+          private-key: ${{ secrets.FLEET_APP_PRIVATE_KEY }}
+          accounts: ${{ vars.FLEET_ACCOUNTS }}

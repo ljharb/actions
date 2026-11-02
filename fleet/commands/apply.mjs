@@ -12,6 +12,7 @@ import * as core from '@actions/core';
 
 import { planFixes } from '../drift/fix.mjs';
 import { installationToken, octokitFor } from '../lib/app.mjs';
+import { fixBranch } from '../lib/branches.mjs';
 import { code } from '../lib/markdown.mjs';
 import {
 	botIdentity,
@@ -39,7 +40,7 @@ import {
  */
 /** @typedef {{ context: Context, state: RepoState, plan: Plan, base: string }} Job */
 
-export const branch = 'fleet/workflows';
+export const branch = fixBranch;
 const title = '[actions] update workflow files to match the shared templates';
 const message = '[actions] update workflow files to match ljharb/actions’ templates';
 
