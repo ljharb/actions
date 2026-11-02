@@ -248,9 +248,12 @@ test('fleet/commands: replies with the legend to anything it can’t run', (t) =
 			'GET /repos/ljharb/actions/collaborators/admin-person/permission',
 			'POST /repos/ljharb/actions/issues/comments/77/reactions',
 			'POST /repos/ljharb/actions/issues/9/comments',
-		], `${body}: reacts, then replies, and does nothing else`);
+			'DELETE /repos/ljharb/actions/issues/comments/77/reactions/501',
+			'POST /repos/ljharb/actions/issues/comments/77/reactions',
+		], `${body}: reacts, replies, then swaps its reaction, and does nothing else`);
 		t.deepEqual(rest[1].body, { content: 'eyes' }, `${body}: reacts with 👀`);
-		t.deepEqual(rest.map((r) => r.authorization), [issueToken, issueToken, issueToken], `${body}: all as the App’s bot`);
+		t.deepEqual(rest[4].body, { content: 'confused' }, `${body}: then, since it isn’t a valid command, swaps the 👀 for 😕`);
+		t.deepEqual(rest.map((r) => r.authorization), [issueToken, issueToken, issueToken, issueToken, issueToken], `${body}: all as the App’s bot`);
 		t.deepEqual(replies(requests), [`${expected} Nothing was done.\n\n${legend()}`], `${body}: explains, then shows the legend`);
 		t.match(stdout, /^not a valid command; replied with how to use them$/m, `${body}: logs it`);
 	}
@@ -344,7 +347,9 @@ test('fleet/commands: dry run', (t) => {
 	t.deepEqual(replies(requests), [body], 'replies with what it would do, in each public repository with discrepancies, by name; a clean one isn’t listed, and a private one isn’t mentioned');
 	t.equal(summary, body, 'the run summary has the same');
 	t.notOk(summary.includes('secret'), 'never naming a private repository');
-	t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/(?:9\/comments|comments\/77\/reactions)$/).map((r) => r.authorization), [issueToken, issueToken], 'reacting and replying as the App’s bot');
+	t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/(?:9\/comments|comments\/77\/reactions)$/).map((r) => r.authorization), [issueToken, issueToken, issueToken], 'reacting, replying, and reacting again, as the App’s bot');
+	t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), ['eyes', 'rocket'], 'a dry run that succeeds swaps its 👀 for 🚀');
+	t.deepEqual(matching(requests, 'DELETE', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions\/501$/).length, 1, 'removing the 👀 it added');
 	t.match(stdout, /^::add-mask::ghs_installation_99$/m, 'whose token is masked');
 
 	const tokens = matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).filter((r) => r.body?.repositories);
@@ -672,6 +677,7 @@ test('fleet/commands: a private repository’s outcome is never output, and is a
 		'::warning::ljharb/empty: the repository has no default branch',
 		'::error::1 repository could not be fixed',
 	], 'warns about each public failure, and nothing about the private ones');
+	t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), ['eyes', 'confused'], 'a public failure swaps the 👀 for 😕');
 
 	const tokens = matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).filter((r) => r.body?.repositories);
 	t.deepEqual(tokens.map((r) => r.body.repositories[0]), ['alpha', 'zulu', 'beta-secret', 'gamma-secret', 'mid-secret'], 'every public repository is fixed before any private one');
@@ -893,5 +899,40 @@ test('fleet/commands: a comment anywhere but the report never needs the App’s 
 	t.equal(status, 0, 'succeeds without a private key');
 	t.match(stdout, notReport, 'says it isn’t the report');
 	t.deepEqual(requests, [], 'makes no request at all');
+	t.end();
+});
+
+test('fleet/commands: swapping the 👀 is only a best effort', (t) => {
+	/** @type {[string, { remove?: number, finish?: number }, string[], string | null][]} */
+	const cases = [
+		['someone already removed the 👀', { remove: 404 }, ['eyes', 'confused'], null],
+		['removing the 👀 fails', { remove: 500 }, ['eyes'], 'could not mark the command as failed: could not be read (HTTP 500)'],
+		['adding the 😕 fails', { finish: 500 }, ['eyes', 'confused'], 'could not mark the command as failed: could not be read (HTTP 500)'],
+	];
+	for (const [label, reactions, contents, warning] of cases) {
+		const { status, stdout, requests } = run(t, {
+			event: { issue: report, comment: comment('/frobnicate') },
+			commands: { permissions: { maintainer: 'write' }, reactions },
+		});
+		t.equal(status, 0, `${label}: still exits as the command itself went`);
+		t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), contents, `${label}: reacts with ${contents.join(', then ')}`);
+		t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/9\/comments$/).length, 1, `${label}: and still replies`);
+		const warnings = stdout.split('\n').filter((l) => l.startsWith('::warning::'));
+		t.deepEqual(warnings, warning ? [`::warning::${warning}`] : [], `${label}: ${warning ? 'warns' : 'without a warning'}`);
+	}
+	t.end();
+});
+
+test('fleet/commands: a command that worked gets 🚀, and saying so failing only warns', (t) => {
+	for (const finish of [undefined, 500]) {
+		const { status, stdout, requests } = run(t, {
+			event: { issue: report, comment: comment('/dry-run fix ljharb') },
+			commands: { permissions: { maintainer: 'write' }, reactions: finish ? { finish } : {} },
+		});
+		const label = finish ? 'adding the 🚀 fails' : 'adding the 🚀 works';
+		t.equal(status, 0, `${label}: exits successfully`);
+		t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), ['eyes', 'rocket'], `${label}: swaps the 👀 for 🚀`);
+		t.deepEqual(stdout.split('\n').filter((l) => l.startsWith('::warning::could not mark')), finish ? ['::warning::could not mark the command as done: could not be read (HTTP 500)'] : [], `${label}: ${finish ? 'warns' : 'without a warning'}`);
+	}
 	t.end();
 });

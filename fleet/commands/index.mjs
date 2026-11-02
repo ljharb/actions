@@ -8,6 +8,7 @@ import {
 	appAuth,
 	botLogin,
 	discover,
+	failureMessage,
 	isSkippedAccount,
 	parseAccounts,
 } from '../lib/app.mjs';
@@ -226,8 +227,8 @@ function skipReason(issue, comment) {
 }
 
 /**
- * Whether the commenter may run commands; if so, the command gets a 👀 reaction, and if not, a reply saying why.
- * @type {(options: { octokit: Octokit, owner: string, repo: string, comment: Record<string, any>, reply: (bodies: string[]) => Promise<void> }) => Promise<boolean>}
+ * Whether the commenter may run commands: if so, the command gets a 👀 reaction, whose id this returns; if not, a reply saying why, and `null`.
+ * @type {(options: { octokit: Octokit, owner: string, repo: string, comment: Record<string, any>, reply: (bodies: string[]) => Promise<void> }) => Promise<number | null>}
  */
 async function authorize({
 	octokit, owner, repo, comment, reply,
@@ -239,12 +240,72 @@ async function authorize({
 	if (permission !== 'admin' && permission !== 'write') {
 		await reply(['Only people with write access to this repository can run fleet commands, so nothing was done.']);
 		core.info(`the commenter’s permission is \`${permission}\`; nothing done`);
-		return false;
+		return null;
 	}
-	await octokit.rest.reactions.createForIssueComment({
+	const { data: { id } } = await octokit.rest.reactions.createForIssueComment({
 		owner, repo, comment_id: comment.id, content: 'eyes', // eslint-disable-line camelcase
 	});
-	return true;
+	return id;
+}
+
+/**
+ * Swaps the command's 👀 for how it went. GitHub has no ✅ or ❌ reaction, so it's 🚀 or 😕.
+ * Only ever a best effort: a 👀 someone already removed is fine, and a failure to react never hides how the command itself went.
+ * @type {(options: { octokit: Octokit, owner: string, repo: string, comment: Record<string, any>, eyes: number, ok: boolean }) => Promise<void>}
+ */
+async function finish({
+	octokit, owner, repo, comment, eyes, ok,
+}) {
+	try {
+		await octokit.rest.reactions.deleteForIssueComment({
+			owner, repo, comment_id: comment.id, reaction_id: eyes, // eslint-disable-line camelcase
+		}).catch((error) => {
+			if (!error || typeof error !== 'object' || !('status' in error) || error.status !== 404) {
+				throw error;
+			}
+		});
+		await octokit.rest.reactions.createForIssueComment({
+			owner, repo, comment_id: comment.id, content: ok ? 'rocket' : 'confused', // eslint-disable-line camelcase
+		});
+	} catch (error) {
+		core.warning(`could not mark the command as ${ok ? 'done' : 'failed'}: ${failureMessage(error)}`);
+	}
+}
+
+/**
+ * Runs an allowed command, replying with what happened; whether it succeeded: it's valid, and no public repository failed.
+ * @type {(options: { auth: ReturnType<typeof appAuth>, command: Exclude<ReturnType<typeof parseCommand>, { type: 'none' }>, comment: Record<string, any>, reply: (bodies: string[], posted?: string[]) => Promise<void> }) => Promise<boolean>}
+ */
+async function perform({
+	auth, command, comment, reply,
+}) {
+	if (command.type === 'error') {
+		await reply(split([
+			`${command.message} Nothing was done.`, '', legend(),
+		], maxBodyLength));
+		core.info('not a valid command; replied with how to use them');
+		return false;
+	}
+
+	const { bodies, failed } = await run({
+		auth,
+		identities: new Map(),
+		dryRun: command.dryRun,
+		categories: command.filters.categories,
+		link: comment.html_url,
+	}, command.filters, command.line);
+	/** @type {string[]} */
+	const posted = [];
+	try {
+		await reply(bodies, posted);
+	} finally {
+		// even when replying fails, so the outcome is still in the run
+		await core.summary.addRaw(summaryOf(bodies, posted)).write();
+	}
+	if (failed > 0) {
+		core.setFailed(`${failed} ${plural(failed, 'repository', 'repositories')} could not be fixed`);
+	}
+	return failed === 0;
 }
 
 async function main() {
@@ -279,36 +340,22 @@ async function main() {
 		}
 	};
 
-	if (!await authorize({
+	const eyes = await authorize({
 		octokit, owner, repo, comment, reply,
-	})) {
+	});
+	if (eyes === null) {
 		return;
 	}
-	if (command.type === 'error') {
-		await reply(split([
-			`${command.message} Nothing was done.`, '', legend(),
-		], maxBodyLength));
-		core.info('not a valid command; replied with how to use them');
-		return;
-	}
-
-	const { bodies, failed } = await run({
-		auth,
-		identities: new Map(),
-		dryRun: command.dryRun,
-		categories: command.filters.categories,
-		link: comment.html_url,
-	}, command.filters, command.line);
-	/** @type {string[]} */
-	const posted = [];
+	let ok = false;
 	try {
-		await reply(bodies, posted);
+		ok = await perform({
+			auth, command, comment, reply,
+		});
 	} finally {
-		// even when replying fails, so the outcome is still in the run
-		await core.summary.addRaw(summaryOf(bodies, posted)).write();
-	}
-	if (failed > 0) {
-		core.setFailed(`${failed} ${plural(failed, 'repository', 'repositories')} could not be fixed`);
+		// also when it throws, so a command never stays 👀 forever
+		await finish({
+			octokit, owner, repo, comment, eyes, ok,
+		});
 	}
 }
 

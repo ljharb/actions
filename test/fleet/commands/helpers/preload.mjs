@@ -12,10 +12,12 @@ import '../../drift/helpers/preload.mjs';
  * - `permissions`: a commenter's permission on the repository running the commands (unspecified, `none`)
  * - `pulls`: the PRs listing a repository's `fleet/workflows` PRs returns (unspecified, none), or an error
  * - `serverURL`: where the `html_url` of a created or updated PR points
+ * - `reactions`: the status removing the 👀 reaction replies with (unspecified, 204), and the one adding the final reaction does (unspecified, 201)
  * @typedef {{
  *   permissions?: Record<string, string>,
  *   pulls?: Record<string, unknown[] | ErrorReply>,
  *   serverURL?: string,
+ *   reactions?: { remove?: number, finish?: number },
  * }} CommandsScenario
  */
 /** @typedef {import('../../drift/helpers/preload.mjs').ChildScenario & { commands?: CommandsScenario }} Scenario */
@@ -50,7 +52,10 @@ if (FLEET_TEST_SCENARIO) {
 		200,
 		{ permission: commands.permissions?.[decodeURIComponent(path.split('/')[5])] ?? 'none' },
 	])));
-	scope.post(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions$/).reply(/** @type {any} */ (handle(() => [201, { content: 'eyes' }]))); // eslint-disable-line no-extra-parens
+	scope.post(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions$/).reply(/** @type {any} */ (handle(({ body }) => ( // eslint-disable-line no-extra-parens
+		body.content === 'eyes' ? [201, { id: 501, content: 'eyes' }] : [commands.reactions?.finish ?? 201, { id: 502, content: body.content }]
+	))));
+	scope.delete(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions\/\d+$/).reply(/** @type {any} */ (handle(() => [commands.reactions?.remove ?? 204, '']))); // eslint-disable-line no-extra-parens
 	scope.get(/^\/users\/[^/]+$/).reply(/** @type {any} */ (handle(() => [200, { id: 42, login: 'fleet-bot[bot]' }]))); // eslint-disable-line no-extra-parens
 	scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\?/).reply(/** @type {any} */ (handle(({ path }) => { // eslint-disable-line no-extra-parens
 		const reply = commands.pulls?.[repoOf(path)] ?? [];
