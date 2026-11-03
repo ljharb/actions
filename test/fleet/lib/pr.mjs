@@ -15,7 +15,9 @@ import {
 	botIdentity,
 	checkout,
 	closePR,
+	commentOnce,
 	commitChanges,
+	findMarked,
 	findPR,
 	foreignCommits,
 	isSingleOnBase,
@@ -252,6 +254,35 @@ test('checkout', (t) => {
 		/`git clone --quiet --no-tags --branch nope /,
 		'throws when the clone fails',
 	);
+	t.end();
+});
+
+test('checkout: partial', (t) => {
+	const server = setup(t);
+	server.commit('main', { 'README.md': 'second\n' });
+	server.commit('other', { 'other.txt': 'other\n' }, { from: 'main' });
+	const dir = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
+	// a `file://` URL, since a local clone ignores `--depth` and `--filter`
+	const { git } = captureMasks(() => checkout({
+		serverURL: `file://${server.serverURL}`, repository, base, token: 'ghs_test', identity: bot, dir, partial: { depth: 1 },
+	})).result;
+
+	t.equal(git(['rev-parse', '--is-shallow-repository']).stdout.trim(), 'true', 'only as many commits as asked for');
+	t.equal(git(['rev-list', '--count', 'HEAD']).stdout.trim(), '1', 'which is one');
+	t.equal(git(['config', '--get', 'remote.origin.partialclonefilter']).stdout.trim(), 'blob:none', 'without any file’s contents, which are fetched as they’re read');
+	t.equal(git(['config', '--get-all', 'remote.origin.fetch']).stdout.trim(), `+refs/heads/${base}:refs/remotes/origin/${base}`, 'and only the base');
+	t.equal(readFileSync(path.join(dir, 'README.md'), 'utf8'), 'second\n', 'at its tip');
+
+	const head = server.commit(branch, { 'x.txt': 'x\n' }, { from: 'main' });
+	t.equal(remoteTip(git, branch, { depth: 2 }), head, 'fetching another branch, as deep as asked');
+	t.equal(git(['rev-parse', `${head}^`]).stdout.trim(), server.tip('main'), 'with its parent');
+
+	const whole = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
+	const { git: deep } = captureMasks(() => checkout({
+		serverURL: `file://${server.serverURL}`, repository, base, token: 'ghs_test', identity: bot, dir: whole, partial: {},
+	})).result;
+	t.equal(deep(['rev-parse', '--is-shallow-repository']).stdout.trim(), 'false', 'without a depth, every commit');
+	t.equal(deep(['config', '--get', 'remote.origin.partialclonefilter']).stdout.trim(), 'blob:none', 'still without any file’s contents');
 	t.end();
 });
 
@@ -768,6 +799,53 @@ test('publish', (t) => {
 		st.end();
 	});
 
+	t.end();
+});
+
+test('commentOnce', async (t) => {
+	const marker = '<!-- fleet:x:abc -->';
+	/** @type {[string, Record<string, unknown>[], boolean][]} */
+	const cases = [
+		['no comments', [], true],
+		['the marker, by someone else', [{ id: 1, user: { login: 'mallory' }, body: `${marker}\nhi` }], true],
+		['another marker, by the bot', [{ id: 1, user: { login: bot.name }, body: '<!-- fleet:x:def -->' }], true],
+		['a comment without a body, or a user', [{ id: 1, user: null }], true],
+		['the marker, by the bot, but not on its first line', [{ id: 1, user: { login: bot.name }, body: `quoting\n${marker}\nsaid` }], true],
+		['the marker, by the bot', [{ id: 1, user: { login: bot.name }, body: `${marker}\nsaid` }], false],
+	];
+	for (const [label, comments, expected] of cases) {
+		const requests = mockAPI(t, [
+			['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [200, comments]],
+			['POST', /^\/repos\/o\/r\/issues\/3\/comments$/, () => [201, {}]],
+		]);
+		const commented = await commentOnce({ // eslint-disable-line no-await-in-loop
+			octokit: getOctokit('ghs_test'), owner, name, number: 3, author: bot.name, marker, body: 'the body',
+		});
+		t.equal(commented, expected, `${label}: ${expected ? 'comments' : 'says nothing'}`);
+		t.deepEqual(requests.filter((r) => r.method === 'POST').map((r) => r.body), expected ? [{ body: `${marker}\nthe body` }] : [], `${label}: with the marker`);
+		nock.cleanAll();
+	}
+	t.end();
+});
+
+test('findMarked', async (t) => {
+	mockAPI(t, [['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [
+		200,
+		[
+			{ id: 1, user: { login: 'mallory' }, body: '<!-- a -->\nhi' },
+			{ id: 2, user: { login: bot.name }, body: '<!-- c -->\nsaid' },
+			{ id: 3, user: { login: bot.name }, body: '<!-- b -->\nsaid' },
+		],
+	]]]);
+	t.equal(await findMarked({
+		octokit: getOctokit('ghs_test'), owner, name, number: 3, author: bot.name, markers: ['<!-- a -->', '<!-- b -->', '<!-- c -->'],
+	}), '<!-- b -->', 'the first of the markers that a comment of the author’s starts with');
+	nock.cleanAll();
+	mockAPI(t, [['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [200, [{ id: 1, user: { login: 'mallory' }, body: '<!-- a -->\nhi' }]]]]);
+	t.equal(await findMarked({
+		octokit: getOctokit('ghs_test'), owner, name, number: 3, author: bot.name, markers: ['<!-- a -->'],
+	}), null, 'or none');
+	nock.cleanAll();
 	t.end();
 });
 

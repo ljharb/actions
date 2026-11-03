@@ -125,9 +125,47 @@ export async function isSingleOnBase(octokit, {
 }
 
 /**
- * Why a PR that isn't one commit on its base branch's tip isn't merged: it must be updated the way the App does, since GitHub's “Update branch” would add a commit that isn't the App's, which `/merge` then never takes.
+ * Why a PR that isn't one commit on its base branch's tip isn't merged: the App keeps its PRs that way, rebasing them every 10 minutes, so it soon will be. GitHub's “Update branch” would add a commit that isn't the App's, which `/merge` then never takes.
  * @type {(base: string) => string}
  */
 export function behindReason(base) {
-	return `it needs updating: the App’s PRs must be one commit, on ${code(base)}’s tip; have the App update it (eg, with \`/fix\`, for a \`fleet/workflows\` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so \`/merge\` would never take it), then run \`/merge\` again`;
+	return `it needs updating: the App’s PRs must be one commit, on ${code(base)}’s tip, and the App rebases them onto it every 10 minutes, so run \`/merge\` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so \`/merge\` would never take it)`;
+}
+
+/**
+ * The workflow file a run is of (eg, `.github/workflows/tests.yml`), if it's one; a run's `path` can name the ref it was read from too, after an `@`.
+ * @type {(run: { path?: string | null } | undefined) => string[]}
+ */
+export function workflowFile(run) {
+	const file = run?.path?.replace(/@.*$/, '');
+	return file?.startsWith('.github/workflows/') ? [file] : [];
+}
+
+// a message's first line, cut short
+/** @type {(text: string) => string} */
+export function excerpt(text) {
+	const [line] = text.trim().split('\n');
+	return line.length > 100 ? `${line.slice(0, 99)}…` : line;
+}
+
+/** @typedef {{ state: string, context: string, updated_at?: string | null }} CommitStatus */
+
+/** @type {(octokit: Octokit, commit: { owner: string, name: string, head: string }) => Promise<CommitStatus[]>} */
+export async function commitStatuses(octokit, {
+	owner, name, head: sha,
+}) {
+	/** @type {CommitStatus[]} */
+	const statuses = [];
+	// the combined status pages its `statuses`, but isn't a list that `paginate` knows how to page
+	let page = 0;
+	let count = 0;
+	do {
+		page += 1;
+		const { data } = await octokit.rest.repos.getCombinedStatusForRef({ // eslint-disable-line no-await-in-loop
+			owner, repo: name, ref: sha, per_page: 100, page, // eslint-disable-line camelcase
+		});
+		statuses.push(...data.statuses);
+		count = data.statuses.length;
+	} while (count === 100);
+	return statuses;
 }

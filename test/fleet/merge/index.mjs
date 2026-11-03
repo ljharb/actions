@@ -56,16 +56,18 @@ function expectedReply(rows) {
 	].join('\n');
 }
 
-test('fleet/merge: an empty queue exits before anything else', (t) => {
+test('fleet/merge: an empty queue is only read, and then there are no PRs to keep up to date', (t) => {
 	for (const [label, value] of [['no variable', undefined], ['an empty list', '[]'], ['nothing that’s an entry', '[1]']]) {
 		const { status, stdout, requests } = run(t, typeof value === 'string' ? { queue: value } : {});
 		t.equal(status, 0, `${label}: exits successfully`);
-		t.match(stdout, /^the merge queue is empty; nothing to do$/m, `${label}: says so`);
+		t.match(stdout, /^the merge queue is empty$/m, `${label}: says so`);
+		t.match(stdout, /^no open PRs from the App’s branches to keep up to date$/m, `${label}: and that there are no PRs to keep up to date`);
 		t.deepEqual(requests.map((r) => `${r.method} ${r.path}`), [
 			'GET /repos/ljharb/actions/installation',
 			'POST /app/installations/99/access_tokens',
 			'GET /repos/ljharb/actions/actions/variables/FLEET_MERGE_QUEUE',
-		], `${label}: having only read the queue`);
+			'GET /app/installations?per_page=100',
+		], `${label}: having only read the queue, and listed the App’s installations`);
 		t.deepEqual(requests[1].body, { repositories: ['actions'], permissions: { actions_variables: 'write' } }, `${label}: with a token that can only read and write this repository’s variables`); // eslint-disable-line camelcase
 	}
 	t.end();
@@ -75,7 +77,7 @@ test('fleet/merge: without the Variables permission, fails naming it', (t) => {
 	const { status, stdout, requests } = run(t, { queue: queue(entry('ljharb/a', 1)) }, { deniedPermissions: ['actions_variables'] });
 	t.equal(status, 1, 'fails');
 	t.ok(stdout.split('\n').includes('::error::Error: the fleet GitHub App could not get a token to read and write Actions variables in `ljharb/actions` (HTTP 422): the App needs the “Variables: Read and write” repository permission, for the merge queue (the `FLEET_MERGE_QUEUE` variable), and must be installed on `ljharb/actions`. After that permission is added to the App, its installation on `ljharb` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.'), 'naming the permission');
-	t.equal(requests.length, 2, 'having done nothing else');
+	t.deepEqual(requests.slice(2).map((r) => `${r.method} ${r.path}`), ['GET /app/installations?per_page=100'], 'having done nothing else with the queue, but still keeping the App’s PRs up to date');
 	t.end();
 });
 
@@ -149,7 +151,7 @@ test('fleet/merge: re-checks each queued PR, merging, keeping, or dropping it', 
 		`| \`ljharb/a\` | not merged https://github.com/ljharb/a/pull/2: the PR changed after \`/merge\`; run \`/merge\` again ${row(77)} |`,
 		`| \`ljharb/b\` | not merged https://github.com/ljharb/b/pull/1: its checks failed: \`tests\`: failure ${row(66)} |`,
 		`| \`ljharb/d\` | merged https://github.com/ljharb/d/pull/1 ${row(55)} |`,
-		`| \`ljharb/e\` | not merged https://github.com/ljharb/e/pull/1: it needs updating: the App’s PRs must be one commit, on \`main\`’s tip; have the App update it (eg, with \`/fix\`, for a \`fleet/workflows\` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so \`/merge\` would never take it), then run \`/merge\` again ${row(44)} |`,
+		`| \`ljharb/e\` | not merged https://github.com/ljharb/e/pull/1: it needs updating: the App’s PRs must be one commit, on \`main\`’s tip, and the App rebases them onto it every 10 minutes, so run \`/merge\` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so \`/merge\` would never take it) ${row(44)} |`,
 		`| \`ljharb/f\` | not merged https://github.com/ljharb/f/pull/1: it was closed ${row(33)} |`,
 		`| \`ljharb/gone\` | not merged https://github.com/ljharb/gone/pull/1: it could not be read (HTTP 404) ${row(10)} |`,
 		`| \`ljharb/refused\` | not merged https://github.com/ljharb/refused/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422), eg because of a branch protection rule ${row(10)} |`,
@@ -275,6 +277,21 @@ test('fleet/merge: a thrown non-Error', (t) => {
 	const { status, stdout } = runScript(t, script, { env: { GITHUB_REPOSITORY: 'fleet-test-throw' }, throwStringOnSplit: 'fleet-test-throw' });
 	t.equal(status, 1, 'fails');
 	t.match(stdout, /^::error::fleet-test-throw$/m, 'with the stringified value');
+	t.end();
+});
+
+test('fleet/merge: the App’s open PRs are kept up to date in every run, and that failing fails the run', (t) => {
+	const unreadable = runScript(t, script, {
+		merge: {},
+		github: { installations: [{ id: 1, account: { login: 'ljharb' } }], installationRepos: { 1: { status: 500, body: { message: 'nope' } } } },
+	});
+	t.equal(unreadable.status, 1, 'an installation that can’t be read fails the run');
+	t.ok(unreadable.stdout.split('\n').includes('::warning::installation 1 could not be read (HTTP 500)'), 'warning about it');
+	t.ok(unreadable.stdout.split('\n').includes('::error::the App’s open PRs could not all be kept up to date (failures: 1)'), 'and saying how many failed');
+
+	const unlisted = runScript(t, script, { merge: {}, github: { installations: { status: 500, body: { message: 'no installations' } } } });
+	t.equal(unlisted.status, 1, 'not being able to list the installations fails the run');
+	t.match(unlisted.stdout, /^::error::HttpError: no installations/m, 'with the error');
 	t.end();
 });
 

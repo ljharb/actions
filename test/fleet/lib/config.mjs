@@ -274,3 +274,64 @@ test('mergeConfig: fresh, null-prototype results, with no shared mutation', (t) 
 
 	t.end();
 });
+
+/** @type {(keep: Config['keep'] | undefined) => Record<string, string[]> | undefined} */
+function plainKeep(keep) {
+	return keep && { ...keep };
+}
+
+test('parseConfig: `keep`', (t) => {
+	const { config, error } = parseConfig('{ "keep": { "node-pretest.yml": ["skip-engines"], "node-aught.yml": ["skip-ls-check", "after_install"] } }', file);
+	t.equal(error, null, 'no error');
+	t.deepEqual(plainKeep(config.keep), { 'node-pretest.yml': ['skip-engines'], 'node-aught.yml': ['skip-ls-check', 'after_install'] }, 'the inputs to keep, by workflow file');
+	t.equal(Object.getPrototypeOf(config.keep), null, 'with a null prototype');
+	t.deepEqual(plainKeep(parseConfig('{ "keep": {} }', file).config.keep), {}, 'an empty object keeps nothing');
+
+	for (const [label, keep] of [
+		['not an object', '["skip-engines"]'],
+		['`null`', 'null'],
+		['a file name that isn’t a workflow’s', '{ "pretest": ["skip-engines"] }'],
+		['inputs that aren’t an array', '{ "node-pretest.yml": "skip-engines" }'],
+		['an input that isn’t a string', '{ "node-pretest.yml": [true] }'],
+		['an input that isn’t a name', '{ "node-pretest.yml": ["skip engines"] }'],
+	]) {
+		const parsed = parseConfig(`{ "keep": ${keep} }`, file);
+		t.equal(parsed.error, '`some/file.json`: `keep` must be an object mapping workflow file names (`*.yml` or `*.yaml`) to arrays of input names', `${label}: an error`);
+		t.notOk('keep' in parsed.config, `${label}: sets nothing`);
+	}
+
+	const account = parseConfig('{ "keep": { "node-pretest.yml": ["skip-engines"] }, "workflows": false }', file, { account: true });
+	t.equal(account.error, '`some/file.json`: `keep` only applies to one repository, so it can only be set in its own `.github/ljharb-actions.json`', 'an account’s defaults can’t set it');
+	t.deepEqual(account.config, { workflows: false }, 'but its other keys still apply');
+
+	const raw = { keep: { 'node-pretest.yml': ['skip-engines'] } };
+	const parsed = parseConfig(JSON.stringify(raw), file).config;
+	parsed.keep?.['node-pretest.yml'].push('y');
+	t.deepEqual(parseConfig(JSON.stringify(raw), file).config.keep?.['node-pretest.yml'], ['skip-engines'], 'each parse has its own arrays');
+	t.end();
+});
+
+test('parseConfig: `keep` can only name inputs that the reusable workflow the file’s template calls declares', (t) => {
+	const one = parseConfig('{ "keep": { "node-pretest.yml": ["skip-engines", "nope"], "node.yml": ["range"] } }', file);
+	t.equal(one.error, '`some/file.json`: `keep`’s `node-pretest.yml` names `nope`, which `pretest.yml` doesn’t declare as an input', 'an undeclared input is an error, naming it');
+	t.deepEqual(plainKeep(one.config.keep), { 'node-pretest.yml': ['skip-engines'], 'node.yml': ['range'] }, 'which is never kept, but everything else still is');
+
+	const several = parseConfig('{ "keep": { "node-pretest.yml": ["range", "nope"] } }', file);
+	t.equal(several.error, '`some/file.json`: `keep`’s `node-pretest.yml` names `range`, `nope`, which `pretest.yml` doesn’t declare as inputs', 'as are several, naming each');
+	t.deepEqual(plainKeep(several.config.keep), { 'node-pretest.yml': [] }, 'keeping none of them');
+
+	const untemplated = parseConfig('{ "keep": { "custom.yml": ["skip-engines"], "rebase.yml": ["x"], "node-pretest.yml": ["skip-pack"] } }', file);
+	t.equal(untemplated.error, '`some/file.json`: `keep` names `custom.yml`, but `/fix` never writes a file of that name that calls one of this repo’s reusable workflows, so it has no inputs to keep; `keep`’s `rebase.yml` names `x`, which `rebase.yml` doesn’t declare as an input', 'a file with no template is an error too, as is one whose template’s workflow declares no inputs');
+	t.deepEqual(plainKeep(untemplated.config.keep), { 'rebase.yml': [], 'node-pretest.yml': ['skip-pack'] }, 'neither kept');
+	t.end();
+});
+
+test('mergeConfig: `keep` is only ever a repository’s own', (t) => {
+	t.deepEqual(plainKeep(mergeConfig({}, {}).keep), {}, 'neither set: nothing kept');
+	const own = parseConfig('{ "keep": { "node-pretest.yml": ["skip-engines"] } }', 'own').config;
+	const merged = mergeConfig({ keep: { 'node.yml': ['os'] } }, own);
+	t.deepEqual(plainKeep(merged.keep), { 'node-pretest.yml': ['skip-engines'] }, 'the repository’s own, never an account’s');
+	t.equal(Object.getPrototypeOf(merged.keep), null, 'a null-prototype object');
+	t.notEqual(merged.keep, own.keep, 'not the repository’s object');
+	t.end();
+});

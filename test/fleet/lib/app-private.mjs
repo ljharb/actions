@@ -118,12 +118,12 @@ test('discover: a private `.github` repository’s defaults apply only to privat
 
 	const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb', 'es-shims', 'inspect-js']));
 	t.deepEqual(failures, [], 'no failures');
-	t.deepEqual(configOf(find(states, 'ljharb/plain')), { workflows: {} }, 'a public repository gets none of a private `.github` repository’s defaults: not its required files, nor its forbidden ones');
-	t.deepEqual(configOf(find(states, 'ljharb/own')), { workflows: { 'own.yml': true } }, 'a public repository’s own config still applies');
-	t.deepEqual(configOf(find(states, 'ljharb/secret')), { workflows: { 'secret-deploy.yml': true, 'own.yml': true, 'forbidden.yml': false } }, 'a private repository gets them all');
+	t.deepEqual(configOf(find(states, 'ljharb/plain')), { workflows: {}, keep: {} }, 'a public repository gets none of a private `.github` repository’s defaults: not its required files, nor its forbidden ones');
+	t.deepEqual(configOf(find(states, 'ljharb/own')), { workflows: { 'own.yml': true }, keep: {} }, 'a public repository’s own config still applies');
+	t.deepEqual(configOf(find(states, 'ljharb/secret')), { workflows: { 'secret-deploy.yml': true, 'own.yml': true, 'forbidden.yml': false }, keep: {} }, 'a private repository gets them all');
 	t.equal(find(states, 'es-shims/invalid').configError, null, 'a private `.github` repository’s invalid defaults aren’t a public repository’s error');
 	t.equal(find(states, 'es-shims/invalid-secret').configError, 'the account’s defaults are invalid', 'but are a private repository’s, without saying what’s wrong');
-	t.deepEqual(configOf(find(states, 'inspect-js/public-defaults')), { workflows: { 'public-required.yml': true } }, 'a public `.github` repository’s defaults apply to its public repositories');
+	t.deepEqual(configOf(find(states, 'inspect-js/public-defaults')), { workflows: { 'public-required.yml': true }, keep: {} }, 'a public `.github` repository’s defaults apply to its public repositories');
 	t.notOk('withheld' in find(states, 'ljharb/plain'), 'nothing is withheld, since nothing private is applied');
 });
 

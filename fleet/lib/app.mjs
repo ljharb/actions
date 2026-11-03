@@ -230,7 +230,7 @@ async function accountDefaults(octokit, owner) {
 		}
 		throw error;
 	});
-	const parsed = parseConfig(data?.repository?.defaults?.text, `\`${owner}/.github\`’s \`ljharb-actions.json\``);
+	const parsed = parseConfig(data?.repository?.defaults?.text, `\`${owner}/.github\`’s \`ljharb-actions.json\``, { account: true });
 	if (!data?.repository?.isPrivate) {
 		return parsed;
 	}

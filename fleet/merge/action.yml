@@ -1,5 +1,5 @@
 name: 'fleet: merge queue'
-description: 'Merge the PRs `/merge` queued while their checks were running, once the checks pass; drop the ones that failed, changed, or were closed'
+description: 'Merge the PRs `/merge` queued while their checks were running, once the checks pass, dropping the ones that failed, changed, or were closed; and keep every open PR of the App’s one commit on its base’s tip, restoring the inputs a failing `fleet/workflows` PR removed'
 author: ljharb
 inputs:
   app-id:
@@ -9,7 +9,7 @@ inputs:
     description: 'the GitHub App’s private key'
     required: true
   accounts:
-    description: 'space- or comma-separated accounts (users or orgs) whose repositories’ queued PRs may be merged; any other’s are dropped (default: the owner of the repository running this)'
+    description: 'space- or comma-separated accounts (users or orgs) whose repositories’ queued PRs may be merged, and whose App PRs are kept up to date; any other’s queued PRs are dropped (default: the owner of the repository running this)'
     required: false
     default: ''
 runs:

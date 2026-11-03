@@ -29,7 +29,8 @@ export async function botIdentity(auth, installationId) {
 /**
  * Clones `base` into `dir`, authenticated with `token`, with `identity` as the author and committer of anything committed there.
  * `serverURL` defaults to the workflow's server (`GITHUB_SERVER_URL`), else github.com.
- * @type {(options: { serverURL?: string, repository: string, base: string, token: string, identity: Identity, dir: string }) => { git: Git, env: Record<string, string> }}
+ * With `partial`, only `base` is cloned, without any file's contents (each is fetched when it's read, as is anything later fetched), and with `partial.depth`, only that many of its commits.
+ * @type {(options: { serverURL?: string, repository: string, base: string, token: string, identity: Identity, dir: string, partial?: { depth?: number } }) => { git: Git, env: Record<string, string> }}
  */
 export function checkout({
 	serverURL = process.env.GITHUB_SERVER_URL || 'https://github.com',
@@ -38,6 +39,7 @@ export function checkout({
 	token,
 	identity,
 	dir,
+	partial,
 }) {
 	const server = serverURL.replace(/\/+$/, '');
 	const auth = gitAuthEnv(token, server);
@@ -52,7 +54,7 @@ export function checkout({
 		GIT_COMMITTER_EMAIL: identity.email,
 	};
 	exec('git', [
-		'clone', '--quiet', '--no-tags', '--branch', base, `${server}/${repository}.git`, dir,
+		'clone', '--quiet', '--no-tags', ...partial ? ['--single-branch', '--filter=blob:none'] : [], ...partial?.depth ? [`--depth=${partial.depth}`] : [], '--branch', base, `${server}/${repository}.git`, dir,
 	], { env });
 	/** @type {Git} */
 	const git = (args, options) => exec('git', args, {
@@ -101,15 +103,15 @@ function lsRemote(git, branch) {
 }
 
 /**
- * The commit `branch` is at on the remote, fetched, or `null` if there's no such branch.
- * @type {(git: Git, branch: string) => string | null}
+ * The commit `branch` is at on the remote, fetched (with `depth`, only that many of its commits), or `null` if there's no such branch.
+ * @type {(git: Git, branch: string, options?: { depth?: number }) => string | null}
  */
-export function remoteTip(git, branch) {
+export function remoteTip(git, branch, { depth } = {}) {
 	if (lsRemote(git, branch) === null) {
 		return null;
 	}
 	git([
-		'fetch', '--no-tags', '--quiet', 'origin', `refs/heads/${branch}`,
+		'fetch', '--no-tags', '--quiet', ...depth ? [`--depth=${depth}`] : [], 'origin', `refs/heads/${branch}`,
 	]);
 	return git(['rev-parse', 'FETCH_HEAD']).stdout.trim();
 }
@@ -197,9 +199,11 @@ export function commitChanges(git, {
 	return true;
 }
 
-/** @type {(git: Git, options: { base: string, branch: string }) => void} */
-function assertOnBase(git, { base, branch }) {
-	if (git(['rev-parse', 'HEAD^@']).stdout.trim() !== revParse(git, `origin/${base}`)) {
+/** @type {(git: Git, options: { base: string, branch: string, commit: string }) => void} */
+function assertOnBase(git, {
+	base, branch, commit,
+}) {
+	if (git(['rev-parse', `${commit}^@`]).stdout.trim() !== revParse(git, `origin/${base}`)) {
 		throw new Error(`refusing to push \`${branch}\`: it must be one commit on top of \`${base}\`’s tip`);
 	}
 }
@@ -210,26 +214,28 @@ function leaseError(branch) {
 }
 
 /**
- * Makes the App's own `branch` exactly HEAD: one commit, whose only parent is `base`'s tip.
+ * Makes the App's own `branch` exactly `commit`: one commit, whose only parent is `base`'s tip.
  * A branch that already has that tree on that parent is left alone. Otherwise, with no branch, it's a plain push; with one, observed at `tip`, it's only overwritten when every commit it adds is the bot's own, and only with a lease on `tip`, so anything pushed since makes the push fail instead of being lost.
  * Returns whether it pushed.
- * @type {(git: Git, options: { base: string, branch: string, tip: string | null, identity: Identity }) => 'pushed' | 'unchanged'}
+ * @type {(git: Git, options: { base: string, branch: string, tip: string | null, identity: Identity, commit?: string }) => 'pushed' | 'unchanged'}
  */
 export function pushBranch(git, {
-	base, branch, tip, identity,
+	base, branch, tip, identity, commit = 'HEAD',
 }) {
 	assertBotBranch(branch);
-	assertOnBase(git, { base, branch });
+	assertOnBase(git, {
+		base, branch, commit,
+	});
 	if (tip) {
 		assertBotOwned(git, {
 			base, branch, tip, identity,
 		});
-		if (isSingleOnBase(git, { base, tip }) && revParse(git, `${tip}^{tree}`) === revParse(git, 'HEAD^{tree}')) {
+		if (isSingleOnBase(git, { base, tip }) && revParse(git, `${tip}^{tree}`) === revParse(git, `${commit}^{tree}`)) {
 			return 'unchanged';
 		}
 	}
 	const pushed = git([
-		'push', '--quiet', ...tip ? [`--force-with-lease=refs/heads/${branch}:${tip}`] : [], 'origin', `HEAD:refs/heads/${branch}`,
+		'push', '--quiet', ...tip ? [`--force-with-lease=refs/heads/${branch}:${tip}`] : [], 'origin', `${commit}:refs/heads/${branch}`,
 	], { allowFailure: true });
 	if (pushed.status !== 0) {
 		throw leaseError(branch);
@@ -282,7 +288,9 @@ export async function publish({
 		});
 	}
 	if (state.mode === 'reopen') {
-		assertOnBase(git, { base, branch });
+		assertOnBase(git, {
+			base, branch, commit: 'HEAD',
+		});
 		if (lsRemote(git, branch) !== tip) {
 			throw leaseError(branch);
 		}
@@ -310,6 +318,38 @@ export async function publish({
 		create: 'created', update: pushed === 'pushed' ? 'updated' : 'already up to date:', reopen: 'reopened and updated',
 	}[state.mode];
 	return `${done} ${pr.html_url}`;
+}
+
+/**
+ * The first of `markers` that a comment on PR (or issue) `number` by `author` starts with (on a line of its own, as `commentOnce` puts it), or `null` if none does.
+ * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, markers: string[] }) => Promise<string | null>}
+ */
+export async function findMarked({
+	octokit, owner, name, number, author, markers,
+}) {
+	const comments = (await octokit.paginate(octokit.rest.issues.listComments, {
+		owner, repo: name, issue_number: number, per_page: 100, // eslint-disable-line camelcase
+	})).filter((c) => c.user?.login === author);
+	return markers.find((m) => comments.some((c) => c.body?.startsWith(`${m}\n`))) ?? null;
+}
+
+/**
+ * Comments `body` on PR (or issue) `number`, unless `author` already has a comment there with `marker` (see `findMarked`): so that something is only ever said once (eg, once per head commit, when `marker` names it).
+ * Returns whether it commented.
+ * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, marker: string, body: string }) => Promise<boolean>}
+ */
+export async function commentOnce({
+	octokit, owner, name, number, author, marker, body,
+}) {
+	if (await findMarked({
+		octokit, owner, name, number, author, markers: [marker],
+	})) {
+		return false;
+	}
+	await octokit.rest.issues.createComment({
+		owner, repo: name, issue_number: number, body: `${marker}\n${body}`, // eslint-disable-line camelcase
+	});
+	return true;
 }
 
 // a closed (not deleted) branch and PR are what a later run reopens, so the history and discussion stay in one place

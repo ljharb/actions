@@ -437,6 +437,33 @@ test('planFixes: node test files per `engines.node`', (t) => {
 	t.end();
 });
 
+test('planFixes: a rewritten file keeps the inputs the repository keeps', async (t) => {
+	const pretest = `${template('node-pretest.yml')}    with:\n      skip-engines: true # bin/tape requires node 8+, but the rest of tape supports 0.4+\n      bogus: 1\n`;
+	const workflows = withWorkflows([{ name: 'node-pretest.yml', text: pretest }], ['node-pretest.yml']);
+
+	const plain = await plan(repoState({ workflows }));
+	t.deepEqual(plain.writes.map((w) => [w.path, w.content]), [[at('node-pretest.yml'), template('node-pretest.yml')]], 'without `keep`, rewritten from its template');
+
+	const kept = await plan(repoState({
+		workflows,
+		config: /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'], 'rebase.yml': ['nothing'] } }), // eslint-disable-line no-extra-parens
+	}));
+	t.deepEqual(kept.writes.map((w) => [w.path, w.content]), [[at('node-pretest.yml'), `${template('node-pretest.yml')}    with:\n      skip-engines: true # bin/tape requires node 8+, but the rest of tape supports 0.4+\n`]], 'with it, keeping the kept input’s value and comment, and only that');
+
+	const keepConfig = /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } }); // eslint-disable-line no-extra-parens
+	const renamed = await plan(repoState({ workflows: withWorkflows([{ name: 'node-pretest.yml', text: pretest.replace('  tests:', '  pretest:') }], ['node-pretest.yml']), config: keepConfig }));
+	t.deepEqual(renamed.writes.map((w) => [w.path, w.content]), kept.writes.map((w) => [w.path, w.content]), 'from a job with another id than the template’s, too');
+
+	const twice = 'jobs:\n  a:\n    uses: ljharb/actions/.github/workflows/pretest.yml@main\n    with:\n      skip-engines: true\n  b:\n    uses: ljharb/actions/.github/workflows/pretest.yml@main\n    with:\n      skip-engines: true\n';
+	const ambiguous = await plan(repoState({ workflows: withWorkflows([{ name: 'node-pretest.yml', text: twice }], ['node-pretest.yml']), config: keepConfig }));
+	t.deepEqual(ambiguous, {
+		writes: [],
+		deletes: [],
+		skipped: [{ path: at('node-pretest.yml'), why: 'the kept inputs can’t all be kept: job “a” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous; job “b” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous' }],
+	}, 'but when which call it’s kept from is ambiguous, the file is skipped, rather than dropping it');
+	t.end();
+});
+
 test('cleanup: RUNNER_TEMP for this file', (t) => {
 	if (typeof originalRunnerTemp === 'string') {
 		process.env.RUNNER_TEMP = originalRunnerTemp;

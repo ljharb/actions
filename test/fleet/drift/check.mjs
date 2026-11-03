@@ -473,6 +473,63 @@ test('checkRepo: node workflows per `engines.node`', (t) => {
 	t.end();
 });
 
+test('checkRepo: inputs a reusable workflow declares are a repository’s own, not drift', async (t) => {
+	const pretest = `${template('node-pretest.yml')}    with:\n      skip-engines: true # bin/tape requires node 8+, but the rest of tape supports 0.4+\n`;
+	t.equal(await checkRepo(repoState({ workflows: withWorkflows([{ name: 'node-pretest.yml', text: pretest }], ['node-pretest.yml']) })), null, 'a declared input, with a trailing comment, isn’t drift');
+	const commented = `${template('node-pretest.yml')}    with:\n    # bin/tape requires node 8+, but the rest of tape supports 0.4+\n      skip-engines: true\n`;
+	t.equal(await checkRepo(repoState({ workflows: withWorkflows([{ name: 'node-pretest.yml', text: commented }], ['node-pretest.yml']) })), null, 'nor is one with its comment on a line of its own');
+	const node = nodeWorkflow().replace('      command: npm run tests-only\n', '      command: npm run tests-only\n      skip-ls-check: true\n');
+	t.equal(await checkRepo(repoState({ workflows: withWorkflows([{ name: 'node.yml', text: node }]) })), null, 'nor is one alongside the template’s own');
+
+	const unknown = `${pretest}      bogus: 1\n`;
+	const drifted = await checkRepo(repoState({ workflows: withWorkflows([{ name: 'node-pretest.yml', text: unknown }], ['node-pretest.yml']) }));
+	t.deepEqual(summarize(drifted).drifted, ['node-pretest.yml'], 'an input it doesn’t declare is');
+	const [{ diff }] = present(drifted).drifted;
+	t.match(diff, /^- {6}skip-engines: true/m, 'whose diff shows that fixing it would drop the declared one too');
+	t.match(diff, /^- {6}bogus: 1$/m, 'as well as the unknown one');
+
+	const evils = ['      "bogus": 1\n', '      \'bogus\': 1\n', '      <<: *bogus\n', '      ? bogus\n      : 1\n'];
+	const evilResults = await Promise.all(evils.map((evil) => checkRepo(repoState({ workflows: withWorkflows([{ name: 'node-pretest.yml', text: `${pretest}${evil}` }], ['node-pretest.yml']) }))));
+	evils.forEach((evil, i) => {
+		t.deepEqual(summarize(evilResults[i]).drifted, ['node-pretest.yml'], `so is ${JSON.stringify(evil.trim())}, after a declared input`);
+	});
+
+	const kept = await checkRepo(repoState({
+		workflows: withWorkflows([{ name: 'node-pretest.yml', text: unknown }], ['node-pretest.yml']),
+		config: /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } }), // eslint-disable-line no-extra-parens
+	}));
+	const [{ diff: keptDiff }] = present(kept).drifted;
+	t.doesNotMatch(keptDiff, /^-.*skip-engines/m, 'unless it’s kept, which fixing it keeps');
+	t.match(keptDiff, /^- {6}bogus: 1$/m, 'so the diff only drops the unknown one');
+
+	const keptCommented = await checkRepo(repoState({
+		workflows: withWorkflows([{ name: 'node-pretest.yml', text: `${commented}      bogus: 1\n` }], ['node-pretest.yml']),
+		config: /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } }), // eslint-disable-line no-extra-parens
+	}));
+	const [{ diff: commentedDiff }] = present(keptCommented).drifted;
+	t.doesNotMatch(commentedDiff, /^-.*(?:skip-engines|bin\/tape)/m, 'a kept input keeps its comment on a line of its own too');
+	t.match(commentedDiff, /^- {6}bogus: 1$/m, 'and only the unknown one is dropped');
+
+	const keepEngines = /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } }); // eslint-disable-line no-extra-parens
+	const renamed = await checkRepo(repoState({
+		workflows: withWorkflows([{ name: 'node-pretest.yml', text: pretest.replace('  tests:', '  pretest:') }], ['node-pretest.yml']),
+		config: keepEngines,
+	}));
+	const [{ diff: renamedDiff }] = present(renamed).drifted;
+	t.match(renamedDiff, /^- {2}pretest:$/m, 'a job with another id than the template’s is drift');
+	t.doesNotMatch(renamedDiff, /^-.*skip-engines/m, 'but a kept input it passes is kept, in the template’s job');
+	t.equal(present(renamed).error, null, 'with no error');
+
+	const twice = 'jobs:\n  a:\n    uses: ljharb/actions/.github/workflows/pretest.yml@main\n    with:\n      skip-engines: true\n  b:\n    uses: ljharb/actions/.github/workflows/pretest.yml@main\n    with:\n      skip-engines: true\n';
+	const ambiguous = await checkRepo(repoState({
+		workflows: withWorkflows([{ name: 'node-pretest.yml', text: twice }], ['node-pretest.yml']),
+		config: keepEngines,
+	}));
+	t.deepEqual(summarize(ambiguous).drifted, ['node-pretest.yml'], 'two renamed calls where the template has one are drift');
+	t.equal(present(ambiguous).error, 'node-pretest.yml: the kept inputs can’t all be kept: job “a” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous; job “b” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous', 'and when they pass a kept input, which of them it’s kept from is ambiguous, which is an error');
+	t.end();
+});
+
 test('cleanup: RUNNER_TEMP for this file', (t) => {
 	if (restoreFileTemp) {
 		restoreFileTemp();

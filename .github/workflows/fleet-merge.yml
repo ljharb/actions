@@ -12,11 +12,11 @@ cache-mode: none
 
 jobs:
   idle:
-    # only while something is queued: a skipped run never joins the concurrency group
-    if: vars.FLEET_APP_ID != '' && vars.FLEET_MERGE_QUEUE != '' && vars.FLEET_MERGE_QUEUE != '[]'
+    # always: besides the merge queue, every run keeps the App's open PRs rebased (and restores what a failing `fleet/workflows` PR removed), exiting fast when there are none
+    if: vars.FLEET_APP_ID != ''
     runs-on: ubuntu-24.04
 
-    # GitHub keeps only one run waiting in a concurrency group, cancelling any other that was: so the queue only joins the commands' group when no command is running or waiting there, rather than ever displacing a waiting one; a skipped turn is retried 10 minutes later
+    # GitHub keeps only one run waiting in a concurrency group, cancelling any other that was: so this only joins the commands' group when no command is running or waiting there, rather than ever displacing a waiting one; a skipped turn is retried 10 minutes later
     permissions:
       actions: read
 
@@ -54,12 +54,12 @@ jobs:
     if: needs.idle.outputs.idle == 'true'
     runs-on: ubuntu-24.04
 
-    # the commands' group, on the job as theirs is, so that this never reads or writes the queue while a `/merge` does
+    # the commands' group, on the job as theirs is, so that this never reads or writes the queue while a `/merge` does, nor pushes to the App's branches while a `/fix` does
     concurrency:
       group: fleet-commands
       cancel-in-progress: false
 
-    # the fleet App merges, and reads and writes the queue, with tokens of its own
+    # the fleet App merges, reads and writes the queue, and clones and pushes to its PRs' branches, with tokens of its own
     permissions:
       contents: read
 
@@ -71,6 +71,7 @@ jobs:
           egress-policy: audit
           allowed-endpoints: >
             api.github.com:443
+            github.com:443
 
       - uses: ljharb/actions/fleet/merge@main
         with:

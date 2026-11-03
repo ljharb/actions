@@ -1,19 +1,75 @@
+import { loadTemplate, templateFor } from '../drift/check.mjs';
+import { calledWorkflows, declaredInputs } from '../drift/inputs.mjs';
+import { code } from './markdown.mjs';
+
 /**
  * @typedef {{
  *   workflows: false | Record<string, boolean>,
+ *   keep: Record<string, string[]>,
  * }} Config
  */
 
 /** @type {{ [K in keyof Config]: Exclude<Config[K], false> }} */
 const defaults = {
 	workflows: {},
+	keep: {},
 };
 
 const workflowName = /^[\w.-]+\.ya?ml$/;
+const inputName = /^[\w-]+$/;
 
-// only the keys a file actually sets, so that a repository's own file can be merged over its account's defaults
-/** @type {(text: string | null | undefined, file: string) => { config: Partial<Config>, error: string | null }} */
-export function parseConfig(text, file) {
+/** @type {(value: unknown) => value is Record<string, string[]>} */
+function isKeep(value) {
+	return !!value
+		&& typeof value === 'object'
+		&& !Array.isArray(value)
+		&& Object.entries(value).every(([k, v]) => workflowName.test(k) && Array.isArray(v) && v.every((input) => typeof input === 'string' && inputName.test(input)));
+}
+
+/**
+ * Of `keep` (already a valid shape), what `/fix` can keep: for each workflow file, the inputs that a reusable workflow of this repo's that its template calls declares, which are all `/fix` ever writes into it; and what it can't, as config errors.
+ * @type {(keep: Record<string, string[]>) => { keep: Record<string, string[]>, errors: string[] }}
+ */
+function keepable(keep) {
+	/** @type {Record<string, string[]>} */
+	const valid = Object.create(null);
+	/** @type {string[]} */
+	const errors = [];
+	for (const [name, inputs] of Object.entries(keep)) {
+		const template = templateFor(name);
+		const called = template === null ? [] : [...calledWorkflows(loadTemplate(template))];
+		if (called.length === 0) {
+			errors.push(`\`keep\` names ${code(name)}, but \`/fix\` never writes a file of that name that calls one of this repo’s reusable workflows, so it has no inputs to keep`);
+		} else {
+			const declared = new Set(called.flatMap((file) => [...declaredInputs(file)]));
+			const undeclared = inputs.filter((input) => !declared.has(input));
+			if (undeclared.length > 0) {
+				errors.push(`\`keep\`’s ${code(name)} names ${undeclared.map(code).join(', ')}, which ${called.map(code).join(' or ')} doesn’t declare as ${undeclared.length === 1 ? 'an input' : 'inputs'}`);
+			}
+			valid[name] = inputs.filter((input) => declared.has(input));
+		}
+	}
+	return { keep: valid, errors };
+}
+
+/** @type {(keep: unknown, account: boolean) => { keep?: Record<string, string[]>, errors: string[] }} */
+function parseKeep(keep, account) {
+	if (account) {
+		return { errors: ['`keep` only applies to one repository, so it can only be set in its own `.github/ljharb-actions.json`'] };
+	}
+	if (!isKeep(keep)) {
+		return { errors: ['`keep` must be an object mapping workflow file names (`*.yml` or `*.yaml`) to arrays of input names'] };
+	}
+	// what can't be kept is an error, not silently dropped, but what can still is
+	return keepable(keep);
+}
+
+/**
+ * Only the keys a file actually sets, so that a repository's own file can be merged over its account's defaults.
+ * With `account`, it's an account's defaults, which can't set what only applies to one repository (`keep`).
+ * @type {(text: string | null | undefined, file: string, options?: { account?: boolean }) => { config: Partial<Config>, error: string | null }}
+ */
+export function parseConfig(text, file, { account = false } = {}) {
 	if (typeof text !== 'string') {
 		return { config: {}, error: null };
 	}
@@ -49,6 +105,14 @@ export function parseConfig(text, file) {
 		}
 	}
 
+	if ('keep' in raw) {
+		const kept = parseKeep(raw.keep, account);
+		if (kept.keep) {
+			config.keep = kept.keep;
+		}
+		errors.push(...kept.errors);
+	}
+
 	return { config, error: errors.length > 0 ? `${file}: ${errors.join('; ')}` : null };
 }
 
@@ -76,5 +140,7 @@ function mergeKey(account, own, fallback) {
 export function mergeConfig(account, own) {
 	return {
 		workflows: mergeKey(account.workflows, own.workflows, defaults.workflows),
+		// only ever a repository's own
+		keep: Object.assign(Object.create(null), defaults.keep, own.keep),
 	};
 }

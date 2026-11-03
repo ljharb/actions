@@ -19,6 +19,7 @@ import {
 	writePermissions,
 	writeQueue,
 } from '../lib/merge.mjs';
+import { maintain } from './maintain.mjs';
 
 /** @typedef {import('../lib/merge.mjs').Entry} Entry */
 /** @typedef {{ auth: ReturnType<typeof appAuth>, bot: () => Promise<string> }} App */
@@ -208,29 +209,19 @@ async function report({ auth, bot }, dropped, { finished, failedCommands }) {
 	}
 }
 
-async function main() {
-	const auth = appAuth(core.getInput('app-id', { required: true }), core.getInput('private-key', { required: true }));
-	const accounts = parseAccounts(core.getInput('accounts'), process.env.GITHUB_REPOSITORY_OWNER || '');
+/**
+ * Checks every queued PR again, merging the ones that are ready; returns how many public ones failed.
+ * @type {(app: App, accounts: Set<string>) => Promise<number>}
+ */
+async function runQueue(app, accounts) {
 	const [owner, repo] = GITHUB_REPOSITORY.split('/');
-
-	const queue = await queueOctokit(auth, owner, repo);
+	const queue = await queueOctokit(app.auth, owner, repo);
 	const { entries, exists } = await readQueue(queue, owner, repo);
 	if (entries.length === 0) {
-		core.info('the merge queue is empty; nothing to do');
-		return;
+		core.info('the merge queue is empty');
+		return 0;
 	}
 
-	// looked up only once a queued PR is checked, and then only once
-	/** @type {Promise<string> | undefined} */
-	let botPromise;
-	/** @type {App} */
-	const app = {
-		auth,
-		bot() {
-			botPromise ??= botLogin(auth);
-			return botPromise;
-		},
-	};
 	/** @type {Map<Entry, Result>} */
 	const results = new Map();
 	// one at a time, private repositories last, as the commands do
@@ -247,13 +238,47 @@ async function main() {
 		}, remaining);
 	}
 	await report(app, all.filter((r) => !r.keep), { finished, failedCommands });
+	return all.filter((r) => r.error).length;
+}
 
-	const errors = all.filter((r) => r.error).length;
-	if (errors > 0) {
-		core.setFailed(`${errors} queued ${errors === 1 ? 'PR' : 'PRs'} could not be checked or merged`);
+/** @type {(error: unknown) => void} */
+function fail(error) {
+	core.setFailed(error instanceof Error ? error : String(error));
+}
+
+async function main() {
+	const auth = appAuth(core.getInput('app-id', { required: true }), core.getInput('private-key', { required: true }));
+	const accounts = parseAccounts(core.getInput('accounts'), process.env.GITHUB_REPOSITORY_OWNER || '');
+
+	// looked up only once it's needed, and then only once
+	/** @type {Promise<string> | undefined} */
+	let botPromise;
+	/** @type {App} */
+	const app = {
+		auth,
+		bot() {
+			botPromise ??= botLogin(auth);
+			return botPromise;
+		},
+	};
+
+	// the queue first, then every open PR of the App's, so that a failure of either doesn't keep the other from running
+	try {
+		const errors = await runQueue(app, accounts);
+		if (errors > 0) {
+			core.setFailed(`${errors} queued ${errors === 1 ? 'PR' : 'PRs'} could not be checked or merged`);
+		}
+	} catch (error) {
+		fail(error);
+	}
+	try {
+		const failed = await maintain(auth, accounts, { bot: app.bot, serverURL: GITHUB_SERVER_URL });
+		if (failed > 0) {
+			core.setFailed(`the App’s open PRs could not all be kept up to date (failures: ${failed})`);
+		}
+	} catch (error) {
+		fail(error);
 	}
 }
 
-main().catch((error) => {
-	core.setFailed(error instanceof Error ? error : String(error));
-});
+main().catch(fail);

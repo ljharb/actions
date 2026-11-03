@@ -11,12 +11,14 @@ import {
 	render,
 	templateFor,
 } from './check.mjs';
+import { keepInputs } from './inputs.mjs';
 import { expectedShards, shardDecade } from './shards.mjs';
 
 /** @typedef {import('../lib/app.mjs').RepoState} RepoState */
 /** @typedef {import('./check.mjs').Result} Result */
 /** @typedef {'missing' | 'drifted' | 'unexpected'} Category */
-/** @typedef {{ path: string, content: string, reason: Category | 'range' }} Write */
+// `kept` is only ever `/fix`'s own, for the config that keeps what its PR put back
+/** @typedef {{ path: string, content: string, reason: Category | 'range' | 'kept' }} Write */
 /** @typedef {{ path: string, reason: 'unexpected' }} Delete */
 /** @typedef {{ path: string, why: string }} Skip */
 /** @typedef {{ writes: Write[], deletes: Delete[], skipped: Skip[] }} Plan */
@@ -27,6 +29,7 @@ import { expectedShards, shardDecade } from './shards.mjs';
  *   defaults: (name: string) => Promise<Record<string, string> | string>,
  *   plan: Plan,
  *   ignored: Set<string>,
+ *   keep: Record<string, string[]>,
  * }} Context
  */
 // `own` is whether `range` and `label` are the current file's
@@ -119,15 +122,24 @@ async function resolve({ files, defaults }, name, recovered) {
 	};
 }
 
-/** @type {(plan: Plan, resolved: Resolved, reason: Write['reason']) => void} */
-function add(plan, resolved, reason) {
+// a rewritten file keeps the inputs `keep` names, as the repository has them
+/** @type {(context: Context, resolved: Resolved, reason: Write['reason']) => void} */
+function add({
+	plan, files, keep,
+}, resolved, reason) {
 	const path = workflowPath(resolved.name);
 	if ('why' in resolved) {
 		plan.skipped.push({ path, why: resolved.why });
 	} else {
-		plan.writes.push({
-			path, content: render(resolved.template, resolved.values), reason,
-		});
+		// a kept input that can't be kept is never dropped: the file is left as it is
+		const { text, why } = keepInputs(render(resolved.template, resolved.values), files.get(resolved.name), keep[resolved.name]);
+		if (why) {
+			plan.skipped.push({ path, why });
+		} else {
+			plan.writes.push({
+				path, content: text, reason,
+			});
+		}
 	}
 }
 
@@ -177,14 +189,14 @@ async function closeRanges(context, present, added) {
 			}
 			// a file whose own range is unknown gets the one its place among the expected files implies, which ends where the added one starts
 			if ('why' in resolved || !resolved.own) {
-				add(context.plan, resolved, 'range');
+				add(context, resolved, 'range');
 				handled.add(name);
 			} else if (!semver.validRange(resolved.values.range)) {
-				add(context.plan, { name, why: `its range, \`${resolved.values.range}\`, is not a valid semver range, ${unknown}` }, 'range');
+				add(context, { name, why: `its range, \`${resolved.values.range}\`, is not a valid semver range, ${unknown}` }, 'range');
 				handled.add(name);
 			} else if (isOpenEnded(resolved.values.range)) {
 				const upper = next.decade * 10;
-				add(context.plan, {
+				add(context, {
 					name,
 					template: resolved.template,
 					values: {
@@ -224,6 +236,7 @@ export async function planFixes(state, result, { files: names, categories } = {}
 		defaults: nodeDefaults(state.packageJson, files),
 		plan,
 		ignored: new Set(Object.entries(state.config.workflows || {}).filter(([, v]) => !v).map(([k]) => k)),
+		keep: state.config.keep ?? {},
 	};
 
 	for (const name of result.unexpected.filter(wanted('unexpected'))) {
@@ -236,7 +249,7 @@ export async function planFixes(state, result, { files: names, categories } = {}
 		const resolved = templateFor(name)
 			? await resolve(context, name, false) // eslint-disable-line no-await-in-loop
 			: { name, why: 'there is no template for it' };
-		add(plan, resolved, 'missing');
+		add(context, resolved, 'missing');
 		if (!('why' in resolved)) {
 			added.add(name);
 		}
@@ -246,7 +259,7 @@ export async function planFixes(state, result, { files: names, categories } = {}
 	const handled = await closeRanges(context, [...files.keys()].filter((name) => !result.unexpected.includes(name)), added);
 
 	for (const { name } of result.drifted.filter((d) => wanted('drifted')(d.name) && !handled.has(d.name))) {
-		add(plan, await resolve(context, name, true), 'drifted'); // eslint-disable-line no-await-in-loop
+		add(context, await resolve(context, name, true), 'drifted'); // eslint-disable-line no-await-in-loop
 	}
 
 	plan.writes.sort(byPath);

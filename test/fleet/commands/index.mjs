@@ -638,6 +638,62 @@ test('fleet/commands: fixes each repository in a PR from its `fleet/workflows` b
 	t.end();
 });
 
+test('fleet/commands: rebuilding the App’s PR keeps what it put back when its CI failed, so it never oscillates', (t) => {
+	const why = '      skip-engines: true # bin/tape requires node 8+, but the rest of tape supports 0.4+\n';
+	const drifted = `${template('node-pretest.yml')}    with:\n${why}      bogus: 1\n`;
+	const baseKeep = { 'node-pretest.yml': ['skip-pack'], 'node-tens.yml': ['skip-ls-check'] };
+	const baseConfig = JSON.stringify({ relock: false, keep: baseKeep });
+	const remotes = makeRemotes(t, {
+		'ljharb/kept': { ...files(replacing('node-pretest.yml', drifted)), '.github/ljharb-actions.json': baseConfig },
+	});
+	// as `fleet-merge.yml` leaves it, after its CI failed: the input put back, and kept, alongside what the config already kept
+	const restoredConfig = `${JSON.stringify({ relock: false, keep: { 'node-pretest.yml': ['skip-pack', 'skip-engines'], 'node-tens.yml': ['skip-ls-check'], 'node-twenties.yml': ['coverage'] } }, null, 2)}\n`;
+	const restored = remotes.commit('ljharb/kept', 'fleet/workflows', {
+		'.github/workflows/node-pretest.yml': `${template('node-pretest.yml')}    with:\n${why}`,
+		'.github/ljharb-actions.json': restoredConfig,
+	}, { who: bot, from: 'main' });
+	// and then `rebase.yml` drifted on the base
+	remotes.commit('ljharb/kept', 'main', { '.github/workflows/rebase.yml': 'nope\n' });
+	const workflows = replacing('rebase.yml', 'nope\n', replacing('node-pretest.yml', drifted));
+
+	/** @type {() => ChildResult} */
+	const fix = () => run(t, {
+		event: { issue: report, comment: comment('/fix ljharb/kept') },
+		github: {
+			installations: [{ id: 1, account: { login: 'ljharb' } }],
+			installationRepos: { 1: [installedRepo('ljharb', 'kept')] },
+			repos: { 'ljharb/kept': repo({ workflows, config: baseConfig }) },
+		},
+		commands: {
+			permissions: { maintainer: 'write' },
+			serverURL: remotes.serverURL,
+			pulls: {
+				'ljharb/kept': [{
+					number: 3, state: 'open', merged_at: null, head: { sha: restored }, // eslint-disable-line camelcase
+				}],
+			},
+		},
+		env: { GITHUB_SERVER_URL: remotes.serverURL },
+	});
+
+	const first = fix();
+	t.equal(first.status, 0, 'nothing failed');
+	const rebuilt = remotes.tip('ljharb/kept', 'refs/heads/fleet/workflows');
+	t.notEqual(rebuilt, restored, 'the PR is rebuilt');
+	t.deepEqual(remotes.log('ljharb/kept', 'main..fleet/workflows'), [`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${message}`], 'as one commit, on the base’s tip');
+	t.equal(remotes.show('ljharb/kept', 'fleet/workflows', '.github/workflows/node-pretest.yml'), `${template('node-pretest.yml')}    with:\n${why}`, 'still passing the input it put back, as the base has it');
+	t.equal(remotes.show('ljharb/kept', 'fleet/workflows', '.github/ljharb-actions.json'), restoredConfig, 'and still keeping it, with what the base keeps');
+	t.equal(remotes.show('ljharb/kept', 'fleet/workflows', '.github/workflows/rebase.yml'), template('rebase.yml'), 'as well as fixing what drifted since');
+	const [updated] = matching(first.requests, 'PATCH', /^\/repos\/ljharb\/kept\/pulls\/3$/);
+	t.ok(updated.body.body.includes('- `.github/ljharb-actions.json`: keeps the inputs this PR put back when its CI failed, so they aren’t removed again\n'), 'saying so in its body');
+
+	const second = fix();
+	t.equal(second.status, 0, 'nothing failed');
+	t.equal(remotes.tip('ljharb/kept', 'refs/heads/fleet/workflows'), rebuilt, 'fixing it again changes nothing: it doesn’t oscillate');
+	t.ok(replies(second.requests)[0].includes(`| \`ljharb/kept\` | already up to date: ${remotes.serverURL}/ljharb/kept/pull/3 |`), 'and says so');
+	t.end();
+});
+
 test('fleet/commands: a private repository’s outcome is never output, and is after every public one', (t) => {
 	const remotes = makeRemotes(t, {
 		'ljharb/alpha': {},

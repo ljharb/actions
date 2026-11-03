@@ -14,6 +14,12 @@ import { checkRepo } from '../drift/check.mjs';
 import { planFixes } from '../drift/fix.mjs';
 import { installationToken, octokitFor } from '../lib/app.mjs';
 import { fixBranch } from '../lib/branches.mjs';
+import {
+	configFile,
+	keptConfig,
+	keptOnBranch,
+	withKept,
+} from '../lib/kept.mjs';
 import { code } from '../lib/markdown.mjs';
 import {
 	botIdentity,
@@ -56,6 +62,7 @@ const reasons = {
 	missing: 'added, since it’s missing',
 	drifted: 'rewritten from its template, since it has drifted',
 	range: 'its node version range now ends where an added file’s starts',
+	kept: 'keeps the inputs this PR put back when its CI failed, so they aren’t removed again',
 };
 
 /** @type {(plan: Plan) => string[]} */
@@ -186,12 +193,21 @@ async function openPR({
 		const tip = remoteTip(git, branch);
 		// the PR is always one commit, on the base's current tip, with the whole change, planned again from there
 		const current = cloneState(git, state);
-		const plan = await planFixes(current, await checkRepo(current), { files, categories: context.categories });
+		// what the App's PR keeps that its base doesn't (the inputs it put back when its CI failed) is kept again, with the base's values, so that rebuilding it never removes them again
+		const carried = prState.mode !== 'create' && tip ? keptOnBranch(git, { base, tip }) : new Map();
+		const config = carried.size > 0 ? keptConfig(git, 'HEAD', carried) : null;
+		const kept = config === null ? current : { ...current, config: { ...current.config, keep: withKept(current.config.keep, carried) } };
+		const plan = await planFixes(kept, await checkRepo(kept), { files, categories: context.categories });
+		if (config !== null && plan.writes.length + plan.deletes.length > 0) {
+			plan.writes.unshift({
+				path: configFile, content: config, reason: 'kept',
+			});
+		}
 		const planned = new Set([...plan.writes, ...plan.deletes].map((c) => c.path));
 		write(clone, plan);
 		// the default branch moved on since it was checked, and already has these changes
 		if (!commitChanges(git, {
-			base, message, paths: ['.github/workflows'], allowed: (file) => planned.has(file),
+			base, message, paths: ['.github/workflows', ...planned.has(configFile) ? [configFile] : []], allowed: (file) => planned.has(file),
 		})) {
 			return `nothing to fix: ${code(base)} already matches`;
 		}

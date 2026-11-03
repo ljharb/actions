@@ -10,9 +10,12 @@ import {
 import { botBranches } from './branches.mjs';
 import {
 	checkSuites,
+	commitStatuses,
 	commitsRefusal,
+	excerpt,
 	isSingleOnBase,
 	unreportedPending,
+	workflowFile,
 } from './merge-guards.mjs';
 import { code } from './markdown.mjs';
 
@@ -34,7 +37,8 @@ export { behindReason, maxPRCommits } from './merge-guards.mjs';
  *   commandFailed?: boolean,
  * }} Entry
  */
-/** @typedef {{ kind: 'ready' } | { kind: 'pending' } | { kind: 'failed', failures: string[] } | { kind: 'behind' } | { kind: 'refused', reason: string }} Assessment */
+// a failure's `files` are the workflow files (eg, `.github/workflows/tests.yml`) whose runs failed, or had a step whose failure `continue-on-error` hides
+/** @typedef {{ kind: 'ready' } | { kind: 'pending' } | { kind: 'failed', failures: string[], files: string[] } | { kind: 'behind' } | { kind: 'refused', reason: string }} Assessment */
 /** @typedef {{ owner: string, name: string, number: number, base: string, head: string }} Target */
 /** @typedef {{ number: number, head: { sha: string, ref: string, repo: { full_name: string } | null }, base: { ref: string }, user: { login: string } | null }} PR */
 
@@ -142,48 +146,21 @@ export async function candidatePRs(octokit, {
 
 /** @typedef {{ owner: string, name: string, head: string }} Commit */
 
-/** @typedef {{ state: string, context: string, updated_at?: string | null }} CommitStatus */
-
-/** @type {(octokit: Octokit, commit: Commit) => Promise<CommitStatus[]>} */
-async function commitStatuses(octokit, {
-	owner, name, head: sha,
-}) {
-	/** @type {CommitStatus[]} */
-	const statuses = [];
-	// the combined status pages its `statuses`, but isn't a list that `paginate` knows how to page
-	let page = 0;
-	let count = 0;
-	do {
-		page += 1;
-		const { data } = await octokit.rest.repos.getCombinedStatusForRef({ // eslint-disable-line no-await-in-loop
-			owner, repo: name, ref: sha, per_page: 100, page, // eslint-disable-line camelcase
-		});
-		statuses.push(...data.statuses);
-		count = data.statuses.length;
-	} while (count === 100);
-	return statuses;
-}
-
-/** @typedef {{ id: number, name?: string | null, status: string | null, conclusion: string | null, updated_at?: string | null }} WorkflowRun */
+/** @typedef {{ id: number, name?: string | null, path?: string | null, status: string | null, conclusion: string | null, updated_at?: string | null }} WorkflowRun */
 /** @typedef {{ id: number, name: string, url: string, output?: { annotations_count?: number } }} CheckRun */
-
-/** @type {(text: string) => string} */
-function excerpt(text) {
-	const [line] = text.trim().split('\n');
-	return line.length > 100 ? `${line.slice(0, 99)}…` : line;
-}
 
 /**
  * The failures of GitHub Actions jobs that their check runs' conclusions don't show: a step with `continue-on-error` that fails leaves its job, and so its check run, successful.
  * GitHub's jobs API reports such a step's own `conclusion` as `success` too, so the step can't show it; but the runner still leaves a `failure` annotation (eg, “Process completed with exit code 1.”) on its job's check run, so any `failure` annotation counts as a failure. That's conservative: an `::error::` a passing step writes counts too.
  * A step whose own `conclusion` (or `outcome`, should the API ever give one) is a failure counts as well; and a check run whose job can't be found can't be shown to have no such step, so it counts as failed.
- * @type {(octokit: Octokit, commit: Commit, ci: { runs: WorkflowRun[], checkRuns: CheckRun[] }) => Promise<string[]>}
+ * Also returns the workflow files of the runs whose jobs those are (see `workflowFile`).
+ * @type {(octokit: Octokit, commit: Commit, ci: { runs: WorkflowRun[], checkRuns: CheckRun[] }) => Promise<{ failures: string[], files: string[] }>}
  */
 async function maskedFailures(octokit, { owner, name }, { runs, checkRuns }) {
 	if (checkRuns.length === 0) {
-		return [];
+		return { failures: [], files: [] };
 	}
-	/** @type {Map<string, { steps?: { name: string, conclusion: string | null }[] }>} */
+	/** @type {Map<string, { run_id: number, steps?: { name: string, conclusion: string | null }[] }>} */
 	const jobs = new Map();
 	for (const run of runs) {
 		const runJobs = await octokit.paginate(octokit.rest.actions.listJobsForWorkflowRun, { // eslint-disable-line no-await-in-loop
@@ -195,8 +172,11 @@ async function maskedFailures(octokit, { owner, name }, { runs, checkRuns }) {
 	}
 	/** @type {string[]} */
 	const failures = [];
+	/** @type {Set<string>} */
+	const files = new Set();
 	for (const checkRun of checkRuns) {
 		const job = jobs.get(checkRun.url);
+		const before = failures.length;
 		if (!job) {
 			failures.push(`${code(checkRun.name)}: its steps could not be inspected`);
 		}
@@ -214,14 +194,17 @@ async function maskedFailures(octokit, { owner, name }, { runs, checkRuns }) {
 				failures.push(`${code(checkRun.name)}: a step failed: ${code(excerpt(annotation.message ?? ''))}`);
 			}
 		}
+		if (failures.length > before) {
+			workflowFile(runs.find((run) => run.id === job?.run_id)).forEach((file) => files.add(file));
+		}
 	}
-	return failures;
+	return { failures, files: [...files] };
 }
 
 /**
  * Whether CI has fully finished, successfully, on `sha`: every workflow run on it completed as a success or skipped, every check suite completed (as `suiteState` and `unreportedPending` count it), every check run (of every check suite) completed as a success or skipped, every commit status a success, and no step of a GitHub Actions job failed, even one whose failure `continue-on-error` hides.
- * With no check runs and no statuses at all, CI hasn't even started, so it's pending.
- * @type {(octokit: Octokit, commit: Commit) => Promise<Exclude<Assessment, { kind: 'ready' | 'behind' }> | { kind: 'passed' }>}
+ * With no check runs and no statuses at all, CI hasn't even started, so it's pending. A failure says which workflow files failed, as far as that can be told.
+ * @type {(octokit: Octokit, commit: Commit) => Promise<Extract<Assessment, { kind: 'pending' | 'failed' }> | { kind: 'passed' }>}
  */
 export async function ciStatus(octokit, commit) {
 	const {
@@ -240,12 +223,15 @@ export async function ciStatus(octokit, commit) {
 	const suites = await checkSuites(octokit, commit);
 	const statuses = await commitStatuses(octokit, commit);
 	const failures = [...suites.failures];
+	/** @type {Set<string>} */
+	const files = new Set();
 	let pending = suites.pending || (checkRuns.length === 0 && statuses.length === 0);
 	for (const run of runs) {
 		if (run.status !== 'completed') {
 			pending = true;
 		} else if (!passing.has(String(run.conclusion))) {
 			failures.push(`${code(run.name || `workflow run ${run.id}`)}: ${run.conclusion ?? 'no conclusion'}`);
+			workflowFile(run).forEach((file) => files.add(file));
 		}
 	}
 	for (const run of checkRuns) {
@@ -270,16 +256,20 @@ export async function ciStatus(octokit, commit) {
 		]);
 	}
 	if (failures.length === 0 && !pending) {
-		failures.push(...await maskedFailures(octokit, commit, { runs, checkRuns: checkRuns.filter((run) => run.app?.slug === 'github-actions') }));
+		const masked = await maskedFailures(octokit, commit, { runs, checkRuns: checkRuns.filter((run) => run.app?.slug === 'github-actions') });
+		failures.push(...masked.failures);
+		masked.files.forEach((file) => files.add(file));
 	}
 	if (failures.length > 0) {
-		return { kind: 'failed', failures };
+		return {
+			kind: 'failed', failures, files: [...files],
+		};
 	}
 	return pending ? { kind: 'pending' } : { kind: 'passed' };
 }
 
 /**
- * Whether a PR can be merged now: `refused` when it has commits that aren't the App's bot's own (which only a person can review), `behind` when it isn't one commit on its base's current tip (which waiting won't fix), else how its CI went.
+ * Whether a PR can be merged now: `refused` when it has commits that aren't the App's bot's own (which only a person can review), `behind` when it isn't one commit on its base's current tip (which the App fixes by rebasing it, not by waiting), else how its CI went.
  * @type {(octokit: Octokit, target: Target, bot: string) => Promise<Assessment>}
  */
 export async function assess(octokit, target, bot) {

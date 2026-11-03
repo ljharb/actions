@@ -35,7 +35,7 @@ const script = path.join('fleet', 'commands', 'index.mjs');
 
 /** @type {(n: number) => string} */
 const url = (n) => `https://github.com/ljharb/a/pull/${n}`;
-const needsUpdating = 'it needs updating: the App’s PRs must be one commit, on `main`’s tip; have the App update it (eg, with `/fix`, for a `fleet/workflows` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so `/merge` would never take it), then run `/merge` again';
+const needsUpdating = 'it needs updating: the App’s PRs must be one commit, on `main`’s tip, and the App rebases them onto it every 10 minutes, so run `/merge` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so `/merge` would never take it)';
 const queuedText = 'its checks haven’t all finished, so it’ll be merged once they pass';
 
 /** @type {(names: string[], privates?: string[]) => GitHubScenario} */

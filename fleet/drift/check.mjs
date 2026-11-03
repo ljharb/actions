@@ -5,6 +5,7 @@ import path from 'path';
 import semver from 'semver';
 
 import { exec } from '../lib/exec.mjs';
+import { keepInputs, stripKnownInputs } from './inputs.mjs';
 import { expectedShards, isShard } from './shards.mjs';
 
 /** @typedef {import('../lib/app.mjs').RepoState} RepoState */
@@ -188,8 +189,14 @@ export async function checkRepo(state) {
 			if (typeof text === 'string') {
 				const actual = normalize(text);
 				const template = loadTemplate(entry.template);
-				if (!compile(template).test(actual)) {
-					result.drifted.push({ name, diff: unifiedDiff(name, actual, render(template, guessValues(template, actual))) });
+				// the inputs a repository passes that the reusable workflow declares, but the template doesn't pass, are its own choices
+				const comparable = stripKnownInputs(actual, template);
+				if (!compile(template).test(comparable)) {
+					// what fixing it would write, so that the diff shows exactly what fixing it would change
+					const { text: rewritten, why } = keepInputs(render(template, guessValues(template, comparable)), actual, state.config.keep?.[name]);
+					result.drifted.push({ name, diff: unifiedDiff(name, actual, rewritten) });
+					// fixing it would refuse to, rather than drop what it keeps
+					result.error = [result.error, why && `${name}: ${why}`].filter(Boolean).join('; ') || null;
 				}
 			} else {
 				result.unreadable.push(name);
