@@ -9,10 +9,9 @@ import {
 } from './app.mjs';
 import { botBranches } from './branches.mjs';
 import {
-	changedReason,
 	checkSuites,
 	commitsRefusal,
-	fastForwardable,
+	isSingleOnBase,
 	unreportedPending,
 } from './merge-guards.mjs';
 import { code } from './markdown.mjs';
@@ -280,7 +279,7 @@ export async function ciStatus(octokit, commit) {
 }
 
 /**
- * Whether a PR can be merged now: `refused` when it has commits that aren't the App's bot's own (which only a person can review), `behind` when `base` has moved on (which waiting won't fix), else how its CI went.
+ * Whether a PR can be merged now: `refused` when it has commits that aren't the App's bot's own (which only a person can review), `behind` when it isn't one commit on its base's current tip (which waiting won't fix), else how its CI went.
  * @type {(octokit: Octokit, target: Target, bot: string) => Promise<Assessment>}
  */
 export async function assess(octokit, target, bot) {
@@ -288,12 +287,8 @@ export async function assess(octokit, target, bot) {
 	if ('reason' in commits) {
 		return { kind: 'refused', reason: commits.reason };
 	}
-	const forward = await fastForwardable(octokit, target, commits.count);
-	if (forward === 'behind') {
+	if (!await isSingleOnBase(octokit, target, commits)) {
 		return { kind: 'behind' };
-	}
-	if (forward === 'changed') {
-		return { kind: 'refused', reason: changedReason };
 	}
 	const ci = await ciStatus(octokit, target);
 	return ci.kind === 'passed' ? { kind: 'ready' } : ci;

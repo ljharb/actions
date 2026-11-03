@@ -16,8 +16,7 @@ import nock from 'nock';
  * The parts of the GitHub API only `/merge` and the merge queue use:
  * - `openPulls`, keyed by `owner/name`: the open PRs listing them returns, narrowed by `head` as GitHub does (by the head repository's owner, and its branch)
  * - `prs`, keyed by `owner/name#number`: a PR, or an error
- * - `refs`, keyed by `owner/name`: the tip of every branch (unspecified, `base0`)
- * - `compare`, keyed by `owner/name`: what comparing the base's tip with the head says (unspecified, `ahead` by as many commits as `commits` lists for a PR of it whose last is the head, else 1, and behind by 0), or an error
+ * - `refs`, keyed by `owner/name`: the tip of every branch (unspecified, `base0`), or an error reading it
  * - `ci`, keyed by commit: its CI (unspecified, nothing at all)
  * - `commits`, keyed by `owner/name#number`: the PR's commits, of which GitHub lists only the first 250 (unspecified, one: the head of the PR in `prs` or `openPulls`, by the App's bot; none, without such a PR)
  * - `refUpdates`, keyed by `owner/name`: an error that updating a ref replies with (unspecified, it's updated)
@@ -26,8 +25,7 @@ import nock from 'nock';
  * @typedef {{
  *   openPulls?: Record<string, Record<string, any>[]>,
  *   prs?: Record<string, Record<string, unknown> | ErrorReply>,
- *   refs?: Record<string, string>,
- *   compare?: Record<string, { status: string, behind_by: number, ahead_by?: number } | ErrorReply>,
+ *   refs?: Record<string, string | ErrorReply>,
  *   ci?: Record<string, CI>,
  *   commits?: Record<string, Record<string, unknown>[]>,
  *   refUpdates?: Record<string, ErrorReply>,
@@ -73,14 +71,15 @@ export const botId = 42;
 export const botEmail = `${botId}+${botUser}@users.noreply.github.com`;
 
 /**
- * One of a PR's commits, as GitHub lists it: by default, authored and committed by the App's bot, which GitHub links to its user. `author` and `committer` are the GitHub users GitHub links them to (`null`, none), and `authorEmail` and `committerEmail`, their emails in the commit itself (`null`, none).
- * @type {(sha: string, options?: { author?: string | null, committer?: string | null, authorEmail?: string | null, committerEmail?: string | null }) => Record<string, unknown>}
+ * One of a PR's commits, as GitHub lists it: by default, authored and committed by the App's bot, which GitHub links to its user, on the base's tip as the mocked API has it unless specified otherwise (`base0`). `author` and `committer` are the GitHub users GitHub links them to (`null`, none), and `authorEmail` and `committerEmail`, their emails in the commit itself (`null`, none); `parents`, its parents' SHAs.
+ * @type {(sha: string, options?: { author?: string | null, committer?: string | null, authorEmail?: string | null, committerEmail?: string | null, parents?: string[] }) => Record<string, unknown>}
  */
 export function prCommit(sha, {
-	author = botUser, committer = botUser, authorEmail = botEmail, committerEmail = botEmail,
+	author = botUser, committer = botUser, authorEmail = botEmail, committerEmail = botEmail, parents = ['base0'],
 } = {}) {
 	return {
 		sha,
+		parents: parents.map((parent) => ({ sha: parent })),
 		author: author === null ? null : { login: author },
 		committer: committer === null ? null : { login: committer },
 		commit: {
@@ -141,17 +140,13 @@ export function mockMerge(scenario, record) {
 			const reply = scenario.prs?.[`${repoOf(path)}#${path.split('/').pop()}`] ?? { status: 404, body: { message: 'Not Found' } };
 			return isErrorReply(reply) ? errorReply(reply) : [200, reply];
 		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/git\/ref\/.+$/), handle(({ path }) => [200, { object: { sha: scenario.refs?.[repoOf(path)] ?? 'base0' } }])],
+		[scope.get(/^\/repos\/[^/]+\/[^/]+\/git\/ref\/.+$/), handle(({ path }) => {
+			const reply = scenario.refs?.[repoOf(path)] ?? 'base0';
+			return isErrorReply(reply) ? errorReply(reply) : [200, { object: { sha: reply } }];
+		})],
 		[scope.patch(/^\/repos\/[^/]+\/[^/]+\/git\/refs\/.+$/), handle(({ path, body }) => {
 			const error = scenario.refUpdates?.[repoOf(path)];
 			return error ? errorReply(error) : [200, { object: { sha: body.sha } }];
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/compare\/.+$/), handle(({ path }) => {
-			const repository = repoOf(path);
-			const reply = scenario.compare?.[repository] ?? { status: 'ahead', behind_by: 0 }; // eslint-disable-line camelcase
-			const head = decodeURIComponent(path.split('/')[5].split('?')[0]).split('...')[1];
-			const listed = Object.entries(scenario.commits ?? {}).find(([key, commits]) => key.startsWith(`${repository}#`) && commits.at(-1)?.sha === head)?.[1];
-			return isErrorReply(reply) ? errorReply(reply) : [200, { ahead_by: listed?.length ?? 1, ...reply }]; // eslint-disable-line camelcase
 		})],
 		[scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/check-runs(?:\?.*)?$/), handle(({ url, path }) => {
 			const ci = ciOf(decodeURIComponent(path.split('/')[5]));

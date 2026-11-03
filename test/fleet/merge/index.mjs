@@ -114,7 +114,7 @@ test('fleet/merge: re-checks each queued PR, merging, keeping, or dropping it', 
 		ci: {
 			'b-1': failing, 'c-1': pending, 'd-1': passing, 'secret-1': passing, 'refused-1': passing,
 		},
-		compare: { 'ljharb/e': { status: 'diverged', behind_by: 2 }, 'ljharb/flaky': { status: 502, body: { message: 'Bad Gateway' } } }, // eslint-disable-line camelcase
+		refs: { 'ljharb/e': 'moved-on', 'ljharb/flaky': { status: 502, body: { message: 'Bad Gateway' } } },
 		refUpdates: { 'ljharb/refused': { status: 422, body: { message: 'Protected branch update failed: shh' } } },
 		eyes: {
 			77: [{ id: 701, user: { login: bot } }],
@@ -149,7 +149,7 @@ test('fleet/merge: re-checks each queued PR, merging, keeping, or dropping it', 
 		`| \`ljharb/a\` | not merged https://github.com/ljharb/a/pull/2: the PR changed after \`/merge\`; run \`/merge\` again ${row(77)} |`,
 		`| \`ljharb/b\` | not merged https://github.com/ljharb/b/pull/1: its checks failed: \`tests\`: failure ${row(66)} |`,
 		`| \`ljharb/d\` | merged https://github.com/ljharb/d/pull/1 ${row(55)} |`,
-		`| \`ljharb/e\` | not merged https://github.com/ljharb/e/pull/1: it needs updating, since \`main\` has moved on since its branch was made (so it can’t be fast-forwarded); have the App update it (eg, with \`/fix\`, for a \`fleet/workflows\` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so \`/merge\` would never take it), then run \`/merge\` again ${row(44)} |`,
+		`| \`ljharb/e\` | not merged https://github.com/ljharb/e/pull/1: it needs updating: the App’s PRs must be one commit, on \`main\`’s tip; have the App update it (eg, with \`/fix\`, for a \`fleet/workflows\` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so \`/merge\` would never take it), then run \`/merge\` again ${row(44)} |`,
 		`| \`ljharb/f\` | not merged https://github.com/ljharb/f/pull/1: it was closed ${row(33)} |`,
 		`| \`ljharb/gone\` | not merged https://github.com/ljharb/gone/pull/1: it could not be read (HTTP 404) ${row(10)} |`,
 		`| \`ljharb/refused\` | not merged https://github.com/ljharb/refused/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422), eg because of a branch protection rule ${row(10)} |`,

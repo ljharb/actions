@@ -19,8 +19,8 @@ export const maxPRCommits = 250;
  * Each author and committer is matched by the GitHub user GitHub links it to when there is one, else by the bot's noreply email (which is what the App commits with).
  * GitHub lists at most `maxPRCommits` of a PR's commits, so a PR with that many can't be shown to have no others.
  * The last commit listed must be `head`, the commit that's merged, so that the commits checked are the ones merged.
- * Else, how many commits it has, for `assess` to check that they're the ones merged.
- * @type {(octokit: Octokit, target: Target, bot: string) => Promise<{ reason: string } | { count: number }>}
+ * Else, how many commits it has, and the parents of its first, for `assess` to check that it's the one commit on its base's tip that every PR of the App's is.
+ * @type {(octokit: Octokit, target: Target, bot: string) => Promise<{ reason: string } | { count: number, parents: string[] }>}
  */
 export async function commitsRefusal(octokit, {
 	owner, name, number, head,
@@ -54,7 +54,7 @@ export async function commitsRefusal(octokit, {
 			return { reason: 'it has commits by someone else; review and merge it yourself' };
 		}
 	}
-	return { count: commits.length };
+	return { count: commits.length, parents: commits[0].parents.map((p) => p.sha) };
 }
 
 /**
@@ -109,28 +109,25 @@ export function unreportedPending(unreported, others, now = Date.now()) {
 }
 
 /**
- * Whether `base` can be fast-forwarded to `head` (its current tip is an ancestor of `head`), and if so, whether that merges exactly the `count` commits the PR was checked to have: else GitHub's list of them was stale.
- * @type {(octokit: Octokit, target: Target, count: number) => Promise<'behind' | 'changed' | 'ok'>}
+ * Whether a PR whose commits `commitsRefusal` checked is the App's: exactly one commit, whose only parent is `base`'s current tip, so that fast-forwarding `base` to it merges exactly that commit.
+ * @type {(octokit: Octokit, target: Target, commits: { count: number, parents: string[] }) => Promise<boolean>}
  */
-export async function fastForwardable(octokit, {
-	owner, name, base, head,
-}, count) {
+export async function isSingleOnBase(octokit, {
+	owner, name, base,
+}, { count, parents }) {
+	if (count !== 1 || parents.length !== 1) {
+		return false;
+	}
 	const { data: ref } = await octokit.rest.git.getRef({
 		owner, repo: name, ref: `heads/${base}`,
 	});
-	const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
-		owner, repo: name, basehead: `${ref.object.sha}...${head}`, per_page: 1, // eslint-disable-line camelcase
-	});
-	if ((data.status !== 'ahead' && data.status !== 'identical') || data.behind_by !== 0) {
-		return 'behind';
-	}
-	return data.status === 'ahead' && data.ahead_by !== count ? 'changed' : 'ok';
+	return parents[0] === ref.object.sha;
 }
 
 /**
- * Why a PR whose base branch has moved on isn't merged: GitHub's “Update branch” would add a commit that isn't the App's, which `/merge` then never takes, so it must be updated the way the App does.
+ * Why a PR that isn't one commit on its base branch's tip isn't merged: it must be updated the way the App does, since GitHub's “Update branch” would add a commit that isn't the App's, which `/merge` then never takes.
  * @type {(base: string) => string}
  */
 export function behindReason(base) {
-	return `it needs updating, since ${code(base)} has moved on since its branch was made (so it can’t be fast-forwarded); have the App update it (eg, with \`/fix\`, for a \`fleet/workflows\` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so \`/merge\` would never take it), then run \`/merge\` again`;
+	return `it needs updating: the App’s PRs must be one commit, on ${code(base)}’s tip; have the App update it (eg, with \`/fix\`, for a \`fleet/workflows\` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so \`/merge\` would never take it), then run \`/merge\` again`;
 }

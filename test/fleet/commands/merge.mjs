@@ -35,7 +35,7 @@ const script = path.join('fleet', 'commands', 'index.mjs');
 
 /** @type {(n: number) => string} */
 const url = (n) => `https://github.com/ljharb/a/pull/${n}`;
-const needsUpdating = 'it needs updating, since `main` has moved on since its branch was made (so it can’t be fast-forwarded); have the App update it (eg, with `/fix`, for a `fleet/workflows` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so `/merge` would never take it), then run `/merge` again';
+const needsUpdating = 'it needs updating: the App’s PRs must be one commit, on `main`’s tip; have the App update it (eg, with `/fix`, for a `fleet/workflows` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so `/merge` would never take it), then run `/merge` again';
 const queuedText = 'its checks haven’t all finished, so it’ll be merged once they pass';
 
 /** @type {(names: string[], privates?: string[]) => GitHubScenario} */
@@ -112,7 +112,7 @@ test('fleet/commands: `/dry-run merge`', (t) => {
 			ci: {
 				'a-1': passing, 'a-2': pending, 'b-1': failing, 'secret-1': passing,
 			},
-			compare: { 'ljharb/c': { status: 'diverged', behind_by: 1 } }, // eslint-disable-line camelcase
+			refs: { 'ljharb/c': 'moved-on' },
 		},
 	});
 	t.equal(status, 0, 'exits successfully');
@@ -156,7 +156,7 @@ test('fleet/commands: `/merge` fast-forwards what passed, queues what’s pendin
 			ci: {
 				'a-1': passing, 'a-2': pending, 'b-1': failing, 'refused-1': passing, 'secret-1': passing, 'secret-pending-1': {},
 			},
-			compare: { 'ljharb/c': { status: 'behind', behind_by: 3 } }, // eslint-disable-line camelcase
+			refs: { 'ljharb/c': 'moved-on' },
 			refUpdates: { 'ljharb/refused': { status: 422, body: { message: 'Protected branch update failed: the secret-rule rule' } } },
 		},
 	});
@@ -214,7 +214,7 @@ test('fleet/commands: `/merge` that resolves everything at once swaps its 👀',
 	t.equal(failed.status, 0, 'failed CI doesn’t fail the run');
 	t.deepEqual(reactions(failed.requests), ['+eyes', '+confused', '-501'], 'but is 😕');
 
-	const behind = command(t, '/merge ljharb/a', { merge: { openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch)] }, compare: { 'ljharb/a': { status: 'behind', behind_by: 1 } } } }); // eslint-disable-line camelcase
+	const behind = command(t, '/merge ljharb/a', { merge: { openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch)] }, refs: { 'ljharb/a': 'moved-on' } } });
 	t.deepEqual(reactions(behind.requests), ['+eyes', '+confused', '-501'], 'as is needing updating');
 	t.equal(writtenQueue(behind.requests), undefined, 'which is never queued');
 

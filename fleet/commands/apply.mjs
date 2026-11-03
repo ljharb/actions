@@ -10,6 +10,7 @@ import path from 'path';
 
 import * as core from '@actions/core';
 
+import { checkRepo } from '../drift/check.mjs';
 import { planFixes } from '../drift/fix.mjs';
 import { installationToken, octokitFor } from '../lib/app.mjs';
 import { fixBranch } from '../lib/branches.mjs';
@@ -17,10 +18,10 @@ import { code } from '../lib/markdown.mjs';
 import {
 	botIdentity,
 	checkout,
+	commitChanges,
 	findPR,
-	prepareBranch,
 	publish,
-	remoteHasBranch,
+	remoteTip,
 } from '../lib/pr.mjs';
 
 /** @typedef {import('../lib/app.mjs').RepoState} RepoState */
@@ -38,7 +39,8 @@ import {
  *   link: string,
  * }} Context
  */
-/** @typedef {{ context: Context, state: RepoState, plan: Plan, base: string }} Job */
+/** @typedef {{ context: Context, state: RepoState, plan: Plan, base: string, files: Set<string> | undefined }} Job */
+/** @typedef {import('../lib/pr.mjs').Git} Git */
 
 export const branch = fixBranch;
 const title = '[actions] update workflow files to match the shared templates';
@@ -125,16 +127,37 @@ function write(dir, { writes, deletes }) {
 	}
 }
 
+/**
+ * The repository's state as its clone (at the base's current tip) has it, which may have moved on since it was read: so that the PR is planned from what it will be applied to.
+ * As GitHub's API does, a symbolic link's text is its target, and anything in `.github/workflows` that isn't a file (eg, a directory) isn't one of its workflows.
+ * @type {(git: Git, state: RepoState) => RepoState}
+ */
+function cloneState(git, state) {
+	/** @type {(file: string) => string | null} */
+	const show = (file) => {
+		const shown = git(['show', `HEAD:${file}`], { allowFailure: true });
+		return shown.status === 0 ? shown.stdout : null;
+	};
+	const entries = git([
+		'ls-tree', '-z', 'HEAD', '.github/workflows/',
+	]).stdout.split('\0').filter(Boolean).map((line) => {
+		const [info, file] = line.split('\t');
+		return { type: info.split(' ')[1], file };
+	});
+	return {
+		...state,
+		packageJson: show('package.json'),
+		workflows: entries.filter((e) => e.type === 'blob').map(({ file }) => ({ name: path.posix.basename(file), text: show(file) })),
+	};
+}
+
 /** @type {(job: Job) => Promise<string>} */
 async function openPR({
-	context, state, plan, base,
+	context, state, base, files,
 }) {
 	const {
 		owner, name, installationId,
 	} = state;
-	const planned = new Set([...plan.writes, ...plan.deletes].map((c) => c.path));
-	/** @type {(file: string) => boolean} */
-	const isPlanned = (file) => planned.has(file);
 	const token = await installationToken(context.auth, installationId, {
 		repositoryNames: [name],
 		permissions: {
@@ -160,29 +183,16 @@ async function openPR({
 		const prState = await findPR(octokit, {
 			owner, name, base, branch,
 		});
-		const hasBranch = remoteHasBranch(git, branch);
-		prepareBranch(git, {
-			state: prState,
-			base,
-			branch,
-			remoteHasBranch: hasBranch,
-			regenerated: isPlanned,
-		});
+		const tip = remoteTip(git, branch);
+		// the PR is always one commit, on the base's current tip, with the whole change, planned again from there
+		const current = cloneState(git, state);
+		const plan = await planFixes(current, await checkRepo(current), { files, categories: context.categories });
+		const planned = new Set([...plan.writes, ...plan.deletes].map((c) => c.path));
 		write(clone, plan);
-		git([
-			'add', '--all', '--', '.github/workflows',
-		]);
-		if (git([
-			'diff', '--cached', '--quiet',
-		], { allowFailure: true }).status !== 0) {
-			git([
-				'commit', '--quiet', '--message', message,
-			]);
-		}
 		// the default branch moved on since it was checked, and already has these changes
-		if (git([
-			'diff', '--quiet', `origin/${base}`, 'HEAD',
-		], { allowFailure: true }).status === 0) {
+		if (!commitChanges(git, {
+			base, message, paths: ['.github/workflows'], allowed: (file) => planned.has(file),
+		})) {
 			return `nothing to fix: ${code(base)} already matches`;
 		}
 		return await publish({
@@ -193,9 +203,8 @@ async function openPR({
 			base,
 			branch,
 			state: prState,
-			remoteHasBranch: hasBranch,
+			tip,
 			identity,
-			allowed: isPlanned,
 			title,
 			body: prBody(plan, context.link),
 		});
@@ -248,7 +257,7 @@ export async function fixRepo(context, {
 		throw new Error('the repository has no default branch');
 	}
 	const outcome = await (context.dryRun ? describePR : openPR)({
-		context, state, plan, base,
+		context, state, plan, base, files,
 	});
 	return [outcome, ...skips(plan)].join('<br>');
 }

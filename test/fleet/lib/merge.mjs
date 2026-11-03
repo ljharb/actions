@@ -3,7 +3,12 @@ import nock from 'nock';
 import test from 'tape';
 
 import { appAuth } from '../../../fleet/lib/app.mjs';
-import { botBranches, fixBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
+import {
+	botBranches,
+	fixBranch,
+	isBotBranch,
+	relockBranch,
+} from '../../../fleet/lib/branches.mjs';
 import {
 	assess,
 	behindReason,
@@ -110,6 +115,8 @@ test('branches', (t) => {
 	t.equal(relockBranch, 'actions-lock/relock', 'the relock’s branch');
 	t.deepEqual(botBranches, [fixBranch, relockBranch], 'the bot’s branches are both');
 	t.ok(Object.isFrozen(botBranches), 'and can’t be changed');
+	t.ok(isBotBranch(fixBranch) && isBotBranch(relockBranch), 'each is one of the bot’s branches');
+	t.notOk(isBotBranch('main') || isBotBranch('fleet/workflows/x'), 'and nothing else is');
 	t.end();
 });
 
@@ -333,35 +340,32 @@ test('assess', async (t) => {
 	const target = {
 		owner: 'o', name: 'r', number: 1, base: 'main', head: 'h1',
 	};
-	const mine = { 'o/r#1': [prCommit('h0'), prCommit('h1')] };
-	/** @type {[string, MergeScenario['compare'], Awaited<ReturnType<typeof assess>>][]} */
+	const passed = { h1: { checkRuns: [checkRun('a', 'success')] } };
+	/** @type {[string, Record<string, unknown>[], Awaited<ReturnType<typeof assess>>][]} */
 	const cases = [
-		['ahead', { 'o/r': { status: 'ahead', behind_by: 0 } }, { kind: 'pending' }], // eslint-disable-line camelcase
-		['identical', { 'o/r': { status: 'identical', behind_by: 0 } }, { kind: 'pending' }], // eslint-disable-line camelcase
-		['behind', { 'o/r': { status: 'behind', behind_by: 2 } }, { kind: 'behind' }], // eslint-disable-line camelcase
-		['diverged', { 'o/r': { status: 'diverged', behind_by: 1 } }, { kind: 'behind' }], // eslint-disable-line camelcase
-		['ahead, but somehow behind too', { 'o/r': { status: 'ahead', behind_by: 1 } }, { kind: 'behind' }], // eslint-disable-line camelcase
+		['one commit, on the base’s tip', [prCommit('h1', { parents: ['tip'] })], { kind: 'ready' }],
+		['one commit, on an older base commit', [prCommit('h1', { parents: ['old'] })], { kind: 'behind' }],
+		['one merge commit', [prCommit('h1', { parents: ['tip', 'other'] })], { kind: 'behind' }],
+		['two commits, the first on the base’s tip', [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] })], { kind: 'behind' }],
 	];
-	for (const [label, compare, expected] of cases) {
-		const requests = setup(t, { compare, refs: { 'o/r': 'tip' }, commits: mine });
+	for (const [label, commits, expected] of cases) {
+		const requests = setup(t, {
+			refs: { 'o/r': 'tip' }, commits: { 'o/r#1': commits }, ci: passed,
+		});
 		t.deepEqual(await assess(octokit, target, botUser), expected, `${label}: ${expected.kind}`); // eslint-disable-line no-await-in-loop
-		t.ok(requests.some((r) => r.path.startsWith('/repos/o/r/compare/tip...h1')), `${label}: compares the base branch’s current tip with the head`);
+		if (expected.kind === 'behind') {
+			t.notOk(requests.some((r) => r.path.includes('check-runs')), `${label}: CI isn’t even read, since it needs updating first`);
+		}
 	}
-	setup(t, { ci: { h1: { checkRuns: [checkRun('a', 'success')] } }, commits: mine });
-	t.deepEqual(await assess(octokit, target, botUser), { kind: 'ready' }, 'a fast-forward whose CI passed is ready');
-	setup(t, { ci: { h1: { checkRuns: [checkRun('a', 'failure')] } }, commits: mine });
-	t.deepEqual(await assess(octokit, target, botUser), { kind: 'failed', failures: ['`a`: failure'] }, 'one whose CI failed is not');
-	const behind = setup(t, { compare: { 'o/r': { status: 'behind', behind_by: 1 } }, commits: mine }); // eslint-disable-line camelcase
+	const several = setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] })] } });
 	await assess(octokit, target, botUser);
-	t.notOk(behind.some((r) => r.path.includes('check-runs')), 'CI isn’t even read when the base has moved on');
-	for (const aheadBy of [1, 3]) {
-		const stale = setup(t, { compare: { 'o/r': { status: 'ahead', behind_by: 0, ahead_by: aheadBy } }, commits: mine, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } }); // eslint-disable-line camelcase
-		t.deepEqual(await assess(octokit, target, botUser), { kind: 'refused', reason: 'it changed while it was being checked; run `/merge` again' }, `a fast-forward of ${aheadBy} commits, when the PR lists 2, would merge commits that weren’t checked (or GitHub’s list of them is stale), so it’s refused`); // eslint-disable-line no-await-in-loop
-		t.notOk(stale.some((r) => r.path.includes('check-runs')), `${aheadBy} commits: CI isn’t even read`);
-	}
-	setup(t, { compare: { 'o/r': { status: 'identical', behind_by: 0, ahead_by: 0 } }, commits: mine, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } }); // eslint-disable-line camelcase
-	t.deepEqual(await assess(octokit, target, botUser), { kind: 'ready' }, 'one whose head is already the base’s tip merges nothing more, so is ready');
-	t.equal(behindReason('main'), 'it needs updating, since `main` has moved on since its branch was made (so it can’t be fast-forwarded); have the App update it (eg, with `/fix`, for a `fleet/workflows` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so `/merge` would never take it), then run `/merge` again', 'a PR that needs updating must be updated by the App, since `/merge` takes only its commits');
+	t.notOk(several.some((r) => r.path.includes('/git/ref/')), 'with more than one commit, the base’s tip isn’t even read');
+	const tipRead = setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h1', { parents: ['tip'] })] }, ci: passed });
+	await assess(octokit, target, botUser);
+	t.ok(tipRead.some((r) => r.path === '/repos/o/r/git/ref/heads%2Fmain'), 'reads the base branch’s current tip');
+	setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h1', { parents: ['tip'] })] }, ci: { h1: { checkRuns: [checkRun('a', 'failure')] } } });
+	t.deepEqual(await assess(octokit, target, botUser), { kind: 'failed', failures: ['`a`: failure'] }, 'one whose CI failed is not ready');
+	t.equal(behindReason('main'), 'it needs updating: the App’s PRs must be one commit, on `main`’s tip; have the App update it (eg, with `/fix`, for a `fleet/workflows` PR), not GitHub’s “Update branch” (whose commit isn’t the App’s, so `/merge` would never take it), then run `/merge` again', 'a PR that needs updating must be updated by the App, since `/merge` takes only its commits');
 });
 
 test('assess: only the App’s bot’s own commits', async (t) => {
@@ -391,7 +395,7 @@ test('assess: only the App’s bot’s own commits', async (t) => {
 		}
 	}
 	const unlinked = setup(t, { commits: { 'o/r#1': [prCommit('h0', { author: null, committer: null }), prCommit('h1', { author: null })] }, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } });
-	t.deepEqual(await assess(octokit, target, botUser), { kind: 'ready' }, 'commits GitHub doesn’t link to a user, whose emails are the bot’s noreply email, are its own');
+	t.deepEqual(await assess(octokit, target, botUser), { kind: 'behind' }, 'commits GitHub doesn’t link to a user, whose emails are the bot’s noreply email, are its own: so two of them aren’t refused, but need updating into one');
 	t.deepEqual(unlinked.filter((r) => r.path.startsWith('/users/')).map((r) => r.path), ['/users/fleet-bot%5Bbot%5D'], 'looking up the bot’s user ID only once');
 	const linked = setup(t, { commits: { 'o/r#1': [prCommit('h1')] }, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } });
 	await assess(octokit, target, botUser);
@@ -399,7 +403,7 @@ test('assess: only the App’s bot’s own commits', async (t) => {
 	t.deepEqual(linked.filter((r) => r.path.includes('/pulls/1/commits')).map((r) => new URLSearchParams(r.path.split('?')[1]).get('per_page')), ['100'], 'listing the PR’s commits 100 at a time');
 
 	const many = Array.from({ length: 300 }, (_, i) => prCommit(i === 299 ? 'h1' : `c${i}`));
-	for (const [count, expected] of /** @type {[number, string][]} */ ([[249, 'ready'], [250, 'refused'], [300, 'refused']])) { // eslint-disable-line no-extra-parens
+	for (const [count, expected] of /** @type {[number, string][]} */ ([[249, 'behind'], [250, 'refused'], [300, 'refused']])) { // eslint-disable-line no-extra-parens
 		const requests = setup(t, { commits: { 'o/r#1': [...many.slice(0, count - 1), prCommit('h1')] }, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } });
 		const result = await assess(octokit, target, botUser); // eslint-disable-line no-await-in-loop
 		t.equal(result.kind, expected, `${count} commits: ${expected}`);

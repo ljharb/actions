@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 
 import { botLogin, installationToken, octokitFor } from './app.mjs';
+import { isBotBranch } from './branches.mjs';
 import { exec, gitAuthEnv } from './exec.mjs';
 
 /** @typedef {import('./app.mjs').Octokit} Octokit */
@@ -85,132 +86,161 @@ export async function findPR(octokit, {
 	};
 }
 
-/** @type {(git: Git, branch: string) => boolean} */
-export function remoteHasBranch(git, branch) {
+/** @type {(branch: string) => void} */
+function assertBotBranch(branch) {
+	if (!isBotBranch(branch)) {
+		throw new Error(`\`${branch}\` is not one of the App’s own branches, so it is never overwritten`);
+	}
+}
+
+/** @type {(git: Git, branch: string) => string | null} */
+function lsRemote(git, branch) {
 	return git([
 		'ls-remote', '--heads', 'origin', `refs/heads/${branch}`,
-	]).stdout.trim() !== '';
+	]).stdout.split(/\s/)[0] || null;
 }
 
 /**
- * Checks out `branch`, up to date with `base`.
- * @type {(git: Git, options: { state: PRState, base: string, branch: string, remoteHasBranch: boolean, regenerated: PathFilter }) => void}
+ * The commit `branch` is at on the remote, fetched, or `null` if there's no such branch.
+ * @type {(git: Git, branch: string) => string | null}
  */
-export function prepareBranch(git, {
-	state,
-	base,
-	branch,
-	remoteHasBranch: hasBranch,
-	regenerated,
-}) {
-	// build on whatever is on the remote, so the final push is always a fast-forward; a reopened PR's deleted branch is rebuilt from the PR's head
-	/** @type {string | null} */
-	let ref = null;
-	if (hasBranch) {
-		ref = `refs/heads/${branch}`;
-	} else if (state.mode === 'reopen') {
-		ref = `refs/pull/${state.number}/head`;
-	}
-	if (ref) {
-		git([
-			'fetch', '--no-tags', '--quiet', 'origin', ref,
-		]);
-		git([
-			'switch', '--quiet', '--create', branch, 'FETCH_HEAD',
-		]);
-	} else {
-		git([
-			'switch', '--quiet', '--create', branch, `origin/${base}`,
-		]);
-	}
-
-	const merge = git([
-		'merge', '--no-edit', '--quiet', `origin/${base}`,
-	], { allowFailure: true });
-	if (merge.status === 0) {
-		return;
-	}
-	const conflicts = paths(git([
-		'diff', '--name-only', '-z', '--diff-filter=U',
-	]).stdout);
-	if (conflicts.length === 0) {
-		throw new Error(`could not merge \`${base}\` into \`${branch}\`:\n${merge.stderr}${merge.stdout}`.trim());
-	}
-	// a conflict in anything else needs a human: never commit conflict markers, nor silently pick a side
-	const unresolvable = conflicts.filter((file) => !regenerated(file));
-	if (unresolvable.length > 0) {
-		git(['merge', '--abort']);
-		throw new Error(`\`${branch}\` conflicts with \`${base}\` in ${unresolvable.map((file) => `\`${file}\``).join(', ')}; refusing to resolve that automatically. Resolve it on the branch, or delete the branch, so the next run can rebuild it.`);
-	}
-	// the base may have moved, and these files are regenerated anyway, so on a conflict take the base's
-	for (const file of conflicts) {
-		if (git([
-			'cat-file', '-e', `origin/${base}:${file}`,
-		], { allowFailure: true }).status === 0) {
-			git([
-				'checkout', `origin/${base}`, '--', file,
-			]);
-		} else {
-			git([
-				'rm', '--quiet', '--', file,
-			]);
-		}
+export function remoteTip(git, branch) {
+	if (lsRemote(git, branch) === null) {
+		return null;
 	}
 	git([
-		'commit', '--quiet', '--no-edit',
+		'fetch', '--no-tags', '--quiet', 'origin', `refs/heads/${branch}`,
 	]);
+	return git(['rev-parse', 'FETCH_HEAD']).stdout.trim();
+}
+
+/** @type {(git: Git, rev: string) => string} */
+function revParse(git, rev) {
+	return git(['rev-parse', rev]).stdout.trim();
 }
 
 /**
- * The branch is reused across runs, so refuse to put the bot's name on anything it didn't write itself:
- * every file it changes from `base` must be `allowed`, and every commit must be authored and committed by `identity`,
- * except a merge by someone else (eg, GitHub's "Update branch") whose tree is exactly what merging its parents produces, so it adds nothing of its own.
- *
- * This guards against accidents, not adversaries: authorship is read from the commits' author and committer emails,
- * which anyone who can push to the branch can set to the bot's. Stronger guarantees would need the bot's commits made through the API,
- * so GitHub verifies them, and verified signatures required on every non-merge commit.
- * @type {(git: Git, options: { base: string, branch: string, identity: Identity, allowed: PathFilter }) => void}
+ * The commits on `tip` that aren't on `base` (newest first): everything a branch at `tip` adds.
+ * @type {(git: Git, options: { base: string, tip: string }) => string[]}
  */
-export function assertOwnChanges(git, {
-	base, branch, identity, allowed,
+export function ownCommits(git, { base, tip }) {
+	return git([
+		'rev-list', tip, '--not', `origin/${base}`,
+	]).stdout.split('\n').filter(Boolean);
+}
+
+/**
+ * How many of the commits on `tip` that aren't on `base` weren't both authored and committed by `identity`: matched by email, the bot's noreply one, which is what the App commits with.
+ * This guards against accidents, not adversaries: authorship is unverified git metadata, which anyone who can push to the branch can set to the bot's.
+ * @type {(git: Git, options: { base: string, tip: string, identity: Identity }) => number}
+ */
+export function foreignCommits(git, {
+	base, tip, identity,
 }) {
-	const files = paths(git([
-		'diff', '--name-only', '-z', `origin/${base}`, 'HEAD',
-	]).stdout).filter((file) => !allowed(file));
-	const foreign = git([
-		'log', '--format=%ae%x09%ce%x09%T%x09%P', `origin/${base}..HEAD`,
-	]).stdout.split('\n').filter(Boolean).filter((line) => {
-		const [
-			author,
-			committer,
-			tree,
-			parents,
-		] = line.split('\t');
-		if (author === identity.email && committer === identity.email) {
-			return false;
-		}
-		/*
-		 * a merge can carry changes of its own (an "evil merge"), which the file check can't attribute when they're in allowed files;
-		 * a conflicted one was resolved by hand, so it can't be told apart from one, either
-		 */
-		const parentList = parents.split(' ');
-		const merged = parentList.length === 2 && git([
-			'merge-tree', '--write-tree', ...parentList,
-		], { allowFailure: true });
-		return !merged || merged.status !== 0 || merged.stdout.trim() !== tree;
+	const email = identity.email.toLowerCase();
+	return git([
+		'log', '--format=%ae%x09%ce', tip, '--not', `origin/${base}`,
+	]).stdout.split('\n').filter(Boolean).filter((line) => line.split('\t').some((e) => e.toLowerCase() !== email)).length;
+}
+
+/**
+ * Refuses to overwrite `branch` at `tip` when it has anyone else's commits, so that nobody's work is ever lost.
+ * @type {(git: Git, options: { base: string, branch: string, tip: string, identity: Identity }) => void}
+ */
+export function assertBotOwned(git, {
+	base, branch, tip, identity,
+}) {
+	const foreign = foreignCommits(git, {
+		base, tip, identity,
 	});
-	if (files.length > 0 || foreign.length > 0) {
-		const problems = [
-			files.length > 0 && `files: ${files.join(', ')}`,
-			foreign.length > 0 && `${foreign.length} commit(s) by someone else`,
-		].filter(Boolean);
-		throw new Error(`\`${branch}\` has changes this job didn’t make (${problems.join('; ')}); refusing to push. Remove them from the branch, or delete the branch, so the next run can rebuild it.`);
+	if (foreign > 0) {
+		throw new Error(`\`${branch}\` has ${foreign} commit(s) by someone else, so it is never overwritten; remove them from the branch, or delete the branch, so the next run can rebuild it`);
 	}
 }
 
 /**
- * Pushes HEAD to `branch`, and opens, reopens, or updates its PR; returns what it did.
- * First, before pushing or touching the PR, it refuses (via `assertOwnChanges`) anything on the branch that `identity` didn't write, or outside what's `allowed`.
+ * Whether `tip` is exactly one commit whose only parent is `base`'s current tip: what every PR of the App's is.
+ * @type {(git: Git, options: { base: string, tip: string }) => boolean}
+ */
+export function isSingleOnBase(git, { base, tip }) {
+	return ownCommits(git, { base, tip }).length === 1
+		&& git(['rev-parse', `${tip}^@`]).stdout.trim() === revParse(git, `origin/${base}`);
+}
+
+/**
+ * Stages everything under `paths`, and commits it on top of `base`'s tip, where the clone is: unless it has nothing to commit, or (refused) anything that isn't `allowed`.
+ * Returns whether it committed.
+ * @type {(git: Git, options: { base: string, message: string, paths: string[], allowed: PathFilter }) => boolean}
+ */
+export function commitChanges(git, {
+	base, message, paths: staged, allowed,
+}) {
+	if (revParse(git, 'HEAD') !== revParse(git, `origin/${base}`)) {
+		throw new Error(`the clone is not at \`${base}\`’s tip, so nothing is committed`);
+	}
+	git([
+		'add', '--all', '--', ...staged,
+	]);
+	const files = paths(git([
+		'diff', '--cached', '--name-only', '-z',
+	]).stdout);
+	const outside = files.filter((file) => !allowed(file));
+	if (outside.length > 0) {
+		throw new Error(`refusing to commit changes to files this job doesn’t write: ${outside.map((file) => `\`${file}\``).join(', ')}`);
+	}
+	if (files.length === 0) {
+		return false;
+	}
+	git([
+		'commit', '--quiet', '--message', message,
+	]);
+	return true;
+}
+
+/** @type {(git: Git, options: { base: string, branch: string }) => void} */
+function assertOnBase(git, { base, branch }) {
+	if (git(['rev-parse', 'HEAD^@']).stdout.trim() !== revParse(git, `origin/${base}`)) {
+		throw new Error(`refusing to push \`${branch}\`: it must be one commit on top of \`${base}\`’s tip`);
+	}
+}
+
+/** @type {(branch: string) => Error} */
+function leaseError(branch) {
+	return new Error(`\`${branch}\` changed after it was read, so it was not overwritten (its push was rejected); the next run rebuilds it from what it is now`);
+}
+
+/**
+ * Makes the App's own `branch` exactly HEAD: one commit, whose only parent is `base`'s tip.
+ * A branch that already has that tree on that parent is left alone. Otherwise, with no branch, it's a plain push; with one, observed at `tip`, it's only overwritten when every commit it adds is the bot's own, and only with a lease on `tip`, so anything pushed since makes the push fail instead of being lost.
+ * Returns whether it pushed.
+ * @type {(git: Git, options: { base: string, branch: string, tip: string | null, identity: Identity }) => 'pushed' | 'unchanged'}
+ */
+export function pushBranch(git, {
+	base, branch, tip, identity,
+}) {
+	assertBotBranch(branch);
+	assertOnBase(git, { base, branch });
+	if (tip) {
+		assertBotOwned(git, {
+			base, branch, tip, identity,
+		});
+		if (isSingleOnBase(git, { base, tip }) && revParse(git, `${tip}^{tree}`) === revParse(git, 'HEAD^{tree}')) {
+			return 'unchanged';
+		}
+	}
+	const pushed = git([
+		'push', '--quiet', ...tip ? [`--force-with-lease=refs/heads/${branch}:${tip}`] : [], 'origin', `HEAD:refs/heads/${branch}`,
+	], { allowFailure: true });
+	if (pushed.status !== 0) {
+		throw leaseError(branch);
+	}
+	return 'pushed';
+}
+
+/**
+ * Makes `branch` HEAD (one commit on `base`'s tip; see `pushBranch`), and opens, reopens, or updates its PR; returns what it did.
+ * `tip` is where the branch was observed on the remote (`null`: it wasn't there). A closed PR whose branch is gone has the branch restored at the PR's head (a plain push) before it's reopened, since GitHub only reopens a PR whose branch is at its head; only then is the branch overwritten.
+ * Before anything is pushed or any PR touched, it refuses (via `assertBotOwned`) a branch with anyone else's commits on it; and before a closed PR is reopened, anything else that would refuse its update: HEAD that isn't one commit on `base`'s tip, or a branch that's no longer where it was observed (which would fail the update's lease), so that it's never reopened only to be left as it was.
  * @type {(options: {
  *   octokit: Octokit,
  *   git: Git,
@@ -219,9 +249,8 @@ export function assertOwnChanges(git, {
  *   base: string,
  *   branch: string,
  *   state: PRState,
- *   remoteHasBranch: boolean,
+ *   tip: string | null,
  *   identity: Identity,
- *   allowed: PathFilter,
  *   title: string,
  *   body: string,
  * }) => Promise<string>}
@@ -234,18 +263,30 @@ export async function publish({
 	base,
 	branch,
 	state,
-	remoteHasBranch: hasBranch,
+	tip,
 	identity,
-	allowed,
 	title,
 	body,
 }) {
-	assertOwnChanges(git, {
-		base, branch, identity, allowed,
-	});
+	assertBotBranch(branch);
+	let observed = tip;
+	if (state.mode === 'reopen' && !observed) {
+		git([
+			'fetch', '--no-tags', '--quiet', 'origin', `refs/pull/${state.number}/head`,
+		]);
+		observed = state.head;
+	}
+	if (observed) {
+		assertBotOwned(git, {
+			base, branch, tip: observed, identity,
+		});
+	}
 	if (state.mode === 'reopen') {
-		// a closed PR can only be reopened while its head branch exists at its head commit
-		if (!hasBranch) {
+		assertOnBase(git, { base, branch });
+		if (lsRemote(git, branch) !== tip) {
+			throw leaseError(branch);
+		}
+		if (!tip) {
 			git([
 				'push', '--quiet', 'origin', `${state.head}:refs/heads/${branch}`,
 			]);
@@ -254,21 +295,21 @@ export async function publish({
 			owner, repo: name, pull_number: state.number, state: 'open', // eslint-disable-line camelcase
 		});
 	}
-	// never forced: the branch was built on the remote's tip, so anything else pushed meanwhile makes this fail instead of being lost
-	git([
-		'push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`,
-	]);
-
-	if (state.mode === 'create') {
-		const { data: pr } = await octokit.rest.pulls.create({
-			owner, repo: name, base, head: branch, title, body,
-		});
-		return `created ${pr.html_url}`;
-	}
-	const { data: pr } = await octokit.rest.pulls.update({
-		owner, repo: name, pull_number: state.number, title, body, // eslint-disable-line camelcase
+	const pushed = pushBranch(git, {
+		base, branch, tip: observed, identity,
 	});
-	return `${state.mode === 'reopen' ? 'reopened and updated' : 'updated'} ${pr.html_url}`;
+
+	const { data: pr } = state.mode === 'create'
+		? await octokit.rest.pulls.create({
+			owner, repo: name, base, head: branch, title, body,
+		})
+		: await octokit.rest.pulls.update({
+			owner, repo: name, pull_number: state.number, title, body, // eslint-disable-line camelcase
+		});
+	const done = {
+		create: 'created', update: pushed === 'pushed' ? 'updated' : 'already up to date:', reopen: 'reopened and updated',
+	}[state.mode];
+	return `${done} ${pr.html_url}`;
 }
 
 // a closed (not deleted) branch and PR are what a later run reopens, so the history and discussion stay in one place

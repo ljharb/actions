@@ -601,8 +601,7 @@ test('fleet/commands: fixes each repository in a PR from its `fleet/workflows` b
 	t.ok(updated.body.body.includes('- `.github/workflows/node-pretest.yml`: rewritten from its template, since it has drifted\n- `.github/workflows/rebase.yml`: rewritten'), 'and its body lists every file');
 	t.deepEqual(remotes.log('ljharb/existing', 'main..fleet/workflows'), [
 		`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${message}`,
-		`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|change`,
-	], 'the branch gets a commit on top of what it had');
+	], 'the branch is rebuilt as one commit, replacing what it had');
 	t.equal(remotes.show('ljharb/existing', 'fleet/workflows', '.github/workflows/node-pretest.yml'), template('node-pretest.yml'), 'fixing the rest');
 
 	t.equal(remotes.tip('ljharb/current', 'refs/heads/fleet/workflows'), '', 'nothing is pushed when the default branch already matches');
@@ -629,7 +628,7 @@ test('fleet/commands: fixes each repository in a PR from its `fleet/workflows` b
 		'| `ljharb/empty` | failed: `the repository has no default branch` |',
 		`| \`ljharb/existing\` | updated ${remotes.serverURL}/ljharb/existing/pull/3 |`,
 	], 'saying what happened to each');
-	t.match(rows[4], /^\| `ljharb\/foreign` \| failed: `.*refusing to push.*` \|$/, 'including why one failed');
+	t.match(rows[4], /^\| `ljharb\/foreign` \| failed: `.*has 1 commit\(s\) by someone else, so it is never overwritten.*` \|$/, 'including why one failed');
 	t.equal(rows[5], `| \`ljharb/new\` | created ${remotes.serverURL}/ljharb/new/pull/1<br>left as it is: \`.github/workflows/node-twenties.yml\`: \`\`there is no valid \`engines.node\` in \`package.json\` to derive its node version range from\`\` |`, 'and what it left alone');
 	t.notOk(rows.some((r) => r.includes('secret')), 'and not one for a private repository');
 	t.ok(reply.endsWith(`\n\n${privateNote(false)}`), 'which only ends by saying that any private repositories matching were processed too');
@@ -817,10 +816,13 @@ test('fleet/commands: a reply that fails partway is still in the run summary, as
 
 test('fleet/commands: an error that isn’t an `Error`, and the system temp directory', (t) => {
 	const unexpected = [...standardWorkflows(), { name: 'node.yml', text: nodeWorkflow() }, { name: 'node-tens.yml', text: nodeWorkflow() }];
-	const remotes = makeRemotes(t, { 'ljharb/conflict': {}, 'ljharb/plain': {}, 'ljharb/unexpected': files(unexpected) });
-	// the branch and the default branch have each added `rebase.yml` since the default branch was read
-	remotes.commit('ljharb/conflict', 'fleet/workflows', { '.github/workflows/rebase.yml': 'bot\n' }, { who: bot, from: 'main' });
-	remotes.commit('ljharb/conflict', 'main', { '.github/workflows/rebase.yml': 'other\n' });
+	const remotes = makeRemotes(t, { 'ljharb/conflict': {}, 'ljharb/plain': {}, 'ljharb/unexpected': { ...files(unexpected), 'package.json': '{ "engines": { "node": "^20" } }' } });
+	// since the default branch was read, it gained every file it needs, though `rebase.yml` drifted, so that's all fixing it changes
+	remotes.commit('ljharb/conflict', 'main', {
+		'.github/workflows/node-pretest.yml': template('node-pretest.yml'),
+		'.github/workflows/require-allow-edits.yml': template('require-allow-edits.yml'),
+		'.github/workflows/rebase.yml': 'other\n',
+	});
 
 	const { status, stdout, requests } = run(t, {
 		event: { issue: report, comment: comment('/fix ljharb') },
@@ -836,7 +838,7 @@ test('fleet/commands: an error that isn’t an `Error`, and the system temp dire
 		},
 		commands: { permissions: { maintainer: 'write' }, serverURL: remotes.serverURL },
 		env: { GITHUB_SERVER_URL: remotes.serverURL, RUNNER_TEMP: '' },
-		// listing the conflicted files throws a string
+		// listing the files it changes throws a string
 		throwStringOnSplit: '.github/workflows/rebase.yml\0',
 		versions: true,
 	});
