@@ -8,11 +8,11 @@ import {
 	installationToken,
 	parseAccounts,
 } from '../../../fleet/lib/app.mjs';
+import { missingPermissions } from '../../../fleet/lib/installations.mjs';
 import { installedRepo, mockGitHub, privateKey } from './helpers/github.mjs';
 
-/** @typedef {import('./helpers/github.mjs').Recorded} Recorded */
-/** @typedef {import('./helpers/github.mjs').Scenario} Scenario */
-/** @typedef {import('../../../fleet/lib/app.mjs').RepoState} RepoState */
+/** @import { Recorded, Scenario } from './helpers/github.mjs' */
+/** @import { RepoState } from '../../../fleet/lib/app.mjs' */
 
 /** @type {(t: import('tape').Test, scenario: Scenario) => Recorded[]} */
 function setup(t, scenario) {
@@ -79,7 +79,7 @@ test('parseAccounts', (t) => {
 test('installationToken', async (t) => {
 	/** @type {unknown[]} */
 	const calls = [];
-	const auth = /** @type {ReturnType<typeof appAuth>} */ (/** @type {unknown} */ (async (/** @type {unknown} */ options) => { // eslint-disable-line no-extra-parens
+	const auth = /** @type {ReturnType<typeof appAuth>} */ (/** @type {unknown} */ (async (/** @type {unknown} */ options) => {
 		calls.push(options);
 		return { token: `token-${calls.length}` };
 	}));
@@ -112,7 +112,7 @@ test('appAuth + appOctokit: signs a JWT as the app', async (t) => {
 test('discover: no installations', async (t) => {
 	const requests = setup(t, { installations: [] });
 	const result = await discover(appAuth('1', privateKey()), new Set(['ljharb']));
-	t.deepEqual(result, { states: [], failures: [] }, 'nothing found, nothing failed');
+	t.deepEqual(result, { states: [], failures: [], waiting: [] }, 'nothing found, nothing failed');
 	t.deepEqual(requests.map((r) => r.path), ['/app/installations?per_page=100'], 'only lists installations');
 });
 
@@ -344,12 +344,75 @@ test('discover: a failing installation does not fail the others', async (t) => {
 	t.equal(failures.find((f) => f.scope === 'installation 42')?.message, 'could not be read (HTTP 500)', 'listing failure message: only its status');
 });
 
+/**
+ * Runs `fn`, returning what it writes to stdout (where `@actions/core` writes its commands) instead of writing it.
+ * @type {<T>(fn: () => Promise<T>) => Promise<{ result: T, stdout: string }>}
+ */
+async function captureStdout(fn) {
+	let stdout = '';
+	const { write } = process.stdout;
+	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+		stdout += String(chunk);
+		return true;
+	});
+	try {
+		return { result: await fn(), stdout };
+	} finally {
+		process.stdout.write = write;
+	}
+}
+
+test('missingPermissions', (t) => {
+	const wanted = { contents: 'read', metadata: 'read', pull_requests: 'write' }; // eslint-disable-line camelcase
+	t.deepEqual(missingPermissions({ id: 1, permissions: { contents: 'write', metadata: 'read', pull_requests: 'admin' } }, wanted), [], 'a higher level covers a lower one'); // eslint-disable-line camelcase
+	t.deepEqual(missingPermissions({ id: 1, permissions: { contents: 'read', pull_requests: 'read' } }, wanted), ['metadata: read', 'pull_requests: write'], 'each one not granted, or not at that level'); // eslint-disable-line camelcase
+	t.deepEqual(missingPermissions({ id: 1, permissions: { contents: 'none', metadata: 'read', pull_requests: 'write' } }, wanted), ['contents: read'], 'an unknown level grants nothing'); // eslint-disable-line camelcase
+	t.deepEqual(missingPermissions({ id: 1 }, wanted), [], 'without its permissions listed, none can be shown to be missing');
+	t.end();
+});
+
+test('discover: an installation waiting on its account to approve the App’s permissions is skipped, not failed', async (t) => {
+	const requests = setup(t, {
+		installations: [
+			{ id: 60, account: { login: 'ljharb' }, permissions: { contents: 'write', metadata: 'read' } },
+			{ id: 61, account: { login: 'es-shims' }, permissions: { metadata: 'read', issues: 'write' } },
+			{ id: 62, account: { login: 'inspect-js' }, permissions: { contents: 'read', metadata: 'read' } },
+		],
+		tokens: { 62: { status: 422, body: { message: 'The permissions requested are not granted to this installation.' } } },
+		installationRepos: { 60: [installedRepo('ljharb', 'ok')], 61: [installedRepo('es-shims', 'never')] },
+		repos: { 'ljharb/ok': { data: {} } },
+	});
+	const { result: { states, failures, waiting }, stdout } = await captureStdout(() => discover(appAuth('1', privateKey()), new Set(['ljharb', 'es-shims', 'inspect-js'])));
+	t.deepEqual(states.map((s) => s.repository), ['ljharb/ok'], 'an installation with every permission it needs (or more) is read');
+	t.deepEqual(waiting, ['es-shims'], 'one without them is waiting, by its account');
+	t.ok(stdout.split('\n').includes('::notice::installation 61 (es-shims) is waiting on its account to approve the App’s permissions (contents: read), so it’s skipped until then'), 'and says so');
+	t.deepEqual(failures, [{ scope: 'installation 62', message: 'could not be read (HTTP 422)' }], 'which isn’t a failure; but a token refused for an installation listed with every permission still is');
+	t.deepEqual(requests.filter((r) => r.path.endsWith('/access_tokens')).map((r) => r.path).sort(), ['/app/installations/60/access_tokens', '/app/installations/62/access_tokens'], 'no token is asked for for the waiting one');
+});
+
+test('discover: an installation lacking a permission the App itself doesn’t have fails, rather than waiting', async (t) => {
+	const requests = setup(t, {
+		installations: [
+			{ id: 63, account: { login: 'ljharb' }, permissions: { metadata: 'read' } },
+			{ id: 64, account: { login: 'es-shims' }, permissions: { contents: 'read' } },
+		],
+		appPermissions: { contents: 'read', issues: 'write' },
+	});
+	const { result: { states, failures, waiting }, stdout } = await captureStdout(() => discover(appAuth('1', privateKey()), new Set(['ljharb', 'es-shims'])));
+	t.deepEqual(states, [], 'neither is read');
+	t.deepEqual(waiting, ['ljharb'], 'one lacking only what the App has is waiting');
+	t.ok(stdout.split('\n').includes('::notice::installation 63 (ljharb) is waiting on its account to approve the App’s permissions (contents: read), so it’s skipped until then'), 'and says so');
+	t.deepEqual(failures, [{ scope: 'installation 64', message: 'the App itself doesn’t have permissions this needs (metadata: read); give them to it in its settings' }], 'one lacking what the App lacks fails, naming it, since no approval can give it that');
+	t.deepEqual(requests.filter((r) => r.path.endsWith('/access_tokens')), [], 'and no token is asked for for either');
+	t.equal(requests.filter((r) => r.path === '/app').length, 1, 'the App’s own permissions being read once');
+});
+
 test('discover: a non-Error failure', async (t) => {
 	setup(t, {
 		installations: [{ id: 50, account: { login: 'ljharb' } }],
 	});
 	const real = appAuth('1', privateKey());
-	const auth = /** @type {typeof real} */ (/** @type {unknown} */ (async (/** @type {{ type: string }} */ options) => { // eslint-disable-line no-extra-parens
+	const auth = /** @type {typeof real} */ (/** @type {unknown} */ (async (/** @type {{ type: string }} */ options) => {
 		if (options.type === 'app') {
 			return real({ type: 'app' });
 		}
@@ -717,7 +780,7 @@ test('discover: an installation whose repositories are all ignored makes no Grap
 	t.deepEqual(graphqlRequests(requests), [], 'no GraphQL queries');
 });
 
-/** @typedef {import('./helpers/github.mjs').ParentData} ParentData */
+/** @import { ParentData } from './helpers/github.mjs' */
 
 // a fork's data, with each parent in turn the parent of the one before it
 /** @type {(...parents: Omit<ParentData, 'parent'>[]) => { data: { isFork: true, parent: ParentData | null } }} */
@@ -790,13 +853,13 @@ test('discover: forks are dropped, and a fork’s source is the deepest parent r
 	t.match(query, /\bisFork\b/, 'the query reads whether a repository is a fork');
 	t.match(query, /parent \{ \.\.\.origin parent \{ \.\.\.origin parent \{ \.\.\.origin \} \} \}/, 'and up to three levels of parents');
 
-	for (const repository of ['ljharb/plain', 'ljharb/odd']) {
+	['ljharb/plain', 'ljharb/odd'].forEach((repository) => {
 		const state = find(states, repository);
 		t.equal(state.fork, false, `${repository}: not a fork`);
 		t.equal(state.source, null, `${repository}: no source`);
 		t.equal(state.external, false, `${repository}: not external`);
 		t.deepEqual(plain(state.config.workflows), { 'rebase.yml': false }, `${repository}: the account’s defaults`);
-	}
+	});
 	t.equal(find(states, 'ljharb/plain').defaultBranch, 'main', 'an installed repository’s state');
 
 	const one = find(states, 'up/one');
@@ -970,14 +1033,14 @@ test('discover: a non-Error failure checking a source', async (t) => {
 	});
 	const real = appAuth('1', privateKey());
 	let installationCalls = 0;
-	const auth = /** @type {typeof real} */ (/** @type {unknown} */ (async (/** @type {{ type: 'app' | 'installation', installationId: number }} */ options) => { // eslint-disable-line no-extra-parens
+	const auth = /** @type {typeof real} */ (/** @type {unknown} */ (async (/** @type {{ type: 'app' | 'installation', installationId: number }} */ options) => {
 		if (options.type === 'installation') {
 			installationCalls += 1;
 			if (installationCalls > 1) {
 				throw 'no source token for you'; // eslint-disable-line no-throw-literal
 			}
 		}
-		return real(/** @type {any} */ (options)); // eslint-disable-line no-extra-parens
+		return real(/** @type {any} */ (options));
 	}));
 
 	const { states, failures } = await discover(auth, new Set(['ljharb']), { sourceAccounts: new Set(['allowed']), committer: 'ljharb' });
@@ -1005,13 +1068,14 @@ test('discover: no source is checked without a committer, or without a candidate
 		['no source accounts', { committer: 'ljharb' }],
 		['an empty set of source accounts', { sourceAccounts: new Set(), committer: 'ljharb' }],
 	];
-	for (const [description, options] of cases) {
+	await cases.reduce(async (previous, [description, options]) => {
+		await previous;
 		/** @type {Recorded[]} */
 		const requests = [];
 		const teardown = mockGitHub(scenario, (r) => requests.push(r));
 		nock.disableNetConnect();
 		try {
-			const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb']), options); // eslint-disable-line no-await-in-loop
+			const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb']), options);
 			t.deepEqual(failures, [], `${description}: no failures`);
 			t.deepEqual(states.map((s) => s.repository), ['ljharb/own'], `${description}: only the installed non-fork`);
 			t.deepEqual(commitRequests(requests), [], `${description}: no commits are listed`);
@@ -1021,7 +1085,7 @@ test('discover: no source is checked without a committer, or without a candidate
 			teardown();
 			nock.enableNetConnect();
 		}
-	}
+	}, Promise.resolve());
 });
 
 test('discover: sources are queried in batches of 20, one batch at a time, retrying a failed batch one source at a time', async (t) => {

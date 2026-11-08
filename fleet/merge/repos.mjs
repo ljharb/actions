@@ -8,8 +8,9 @@ import {
 } from '../lib/app.mjs';
 import { botBranches } from '../lib/branches.mjs';
 import { isIgnored } from '../lib/ignored.mjs';
+import { awaitingApproval } from '../lib/installations.mjs';
 
-/** @typedef {import('../lib/app.mjs').Octokit} Octokit */
+/** @import { Octokit } from '../lib/app.mjs' */
 /** @typedef {ReturnType<typeof import('../lib/app.mjs').appAuth>} Auth */
 /** @typedef {{ owner: string, name: string, repository: string, private: boolean, installationId: number }} Repo */
 
@@ -18,7 +19,7 @@ const batchSize = 20;
 /** @type {(error: unknown) => Record<string, any>} */
 function partialData(error) {
 	if (error && typeof error === 'object' && 'data' in error && error.data && typeof error.data === 'object') {
-		return /** @type {Record<string, any>} */ (error.data); // eslint-disable-line no-extra-parens
+		return /** @type {Record<string, any>} */ (error.data);
 	}
 	throw error;
 }
@@ -59,28 +60,50 @@ function getReader(token) {
 	return octokitFor(token, true);
 }
 
+// what finding the repositories needs
+/** @type {Record<string, string>} */
+const readPermissions = { metadata: 'read', pull_requests: 'read' }; // eslint-disable-line camelcase
+
 /**
  * Every repository the App is installed on, in `accounts`, that isn't archived, ignored, or a fork, and has an open PR from one of the App's branches; and how many installations couldn't be read.
- * @type {(auth: Auth, accounts: Set<string>) => Promise<{ repos: Repo[], failures: number }>}
+ * An installation that's waiting on its account to approve the permissions finding them needs, or `needs` (what's then done with them), is skipped, and isn't a failure; one lacking any the App itself doesn't have is (see `awaitingApproval`).
+ * @type {(auth: Auth, accounts: Set<string>, needs: Record<string, string>) => Promise<{ repos: Repo[], failures: number }>}
  */
-export async function reposWithAppPRs(auth, accounts) {
+export async function reposWithAppPRs(auth, accounts, needs) {
 	const app = await appOctokit(auth);
 	const installations = (await app.paginate('GET /app/installations', { per_page: 100 })) // eslint-disable-line camelcase
 		.filter((i) => !i.suspended_at && accounts.has(String(i.account && 'login' in i.account ? i.account.login : '').toLowerCase()));
-	/** @type {Repo[]} */
-	const repos = [];
-	let failures = 0;
-	for (const installation of installations) {
+	const { ready, failures: unavailable } = await awaitingApproval(app, installations, { ...readPermissions, ...needs });
+	unavailable.forEach(({ scope, message }) => {
+		core.warning(`${scope}: ${message}`);
+	});
+	// one installation at a time, each awaiting the one before
+	/** @type {Promise<{ repos: Repo[], failures: number }>} */
+	const initial = Promise.resolve({
+		repos: [],
+		failures: unavailable.length,
+	});
+	return ready.reduce(async (previous, installation) => {
+		const { repos, failures } = await previous;
 		try {
-			const octokit = getReader(await installationToken(auth, installation.id, { permissions: { metadata: 'read', pull_requests: 'read' } })); // eslint-disable-line camelcase, no-await-in-loop
-			const installed = (await octokit.paginate('GET /installation/repositories', { per_page: 100 })).filter((r) => !isIgnored(r.full_name)); // eslint-disable-line camelcase, no-await-in-loop
-			repos.push(...(await withAppPRs(octokit, installed)).map((r) => ({ // eslint-disable-line no-await-in-loop
-				owner: r.owner.login, name: r.name, repository: r.full_name, private: r.private, installationId: installation.id,
-			})));
+			const octokit = getReader(await installationToken(auth, installation.id, { permissions: readPermissions }));
+			const installed = (await octokit.paginate('GET /installation/repositories', { per_page: 100 })).filter((r) => !isIgnored(r.full_name)); // eslint-disable-line camelcase
+			return {
+				repos: repos.concat((await withAppPRs(octokit, installed)).map((r) => ({
+					owner: r.owner.login,
+					name: r.name,
+					repository: r.full_name,
+					private: r.private,
+					installationId: installation.id,
+				}))),
+				failures,
+			};
 		} catch (error) {
-			failures += 1;
 			core.warning(`installation ${installation.id} ${failureMessage(error)}`);
+			return {
+				repos,
+				failures: failures + 1,
+			};
 		}
-	}
-	return { repos, failures };
+	}, initial);
 }

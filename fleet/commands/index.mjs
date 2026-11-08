@@ -20,16 +20,15 @@ import { fixRepo } from './apply.mjs';
 import { runMerge } from './merge.mjs';
 import { legend, parseCommand, quote } from './syntax.mjs';
 
-/** @typedef {import('../lib/app.mjs').Octokit} Octokit */
-/** @typedef {import('../lib/app.mjs').RepoState} RepoState */
-/** @typedef {import('../drift/check.mjs').Result} Result */
-/** @typedef {import('../drift/fix.mjs').Category} Category */
-/** @typedef {import('./syntax.mjs').Filters} Filters */
-/** @typedef {import('./apply.mjs').Candidate} Candidate */
-/** @typedef {import('./apply.mjs').Context} Context */
+/** @import { Octokit, RepoState } from '../lib/app.mjs' */
+/** @import { Result } from '../drift/check.mjs' */
+/** @import { Category } from '../drift/fix.mjs' */
+/** @import { Filters } from './syntax.mjs' */
+/** @import { Candidate, Context } from './apply.mjs' */
+/** @import { Unit } from '../lib/markdown.mjs' */
 
-const maxBodyLength = 60000; // GitHub's limit for a comment is 65536 characters
-const maxSummaryBytes = 1000000; // GitHub's limit for a run summary is 1 MiB
+const maxBodyLength = 60e3; // GitHub's limit for a comment is 65536 characters
+const maxSummaryBytes = 100e4; // GitHub's limit for a run summary is 1 MiB
 
 const {
 	GITHUB_SERVER_URL = 'https://github.com',
@@ -45,9 +44,16 @@ const runURL = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_
  * A private repository is kept exactly like a public one; what's output about it is limited elsewhere.
  * @type {(state: RepoState, result: Result | null, filters: Filters) => Set<string> | undefined | null}
  */
-function select(state, result, {
-	repositories, accounts, files, categories,
-}) {
+function select(
+	state,
+	result,
+	{
+		repositories,
+		accounts,
+		files,
+		categories,
+	},
+) {
 	if (
 		(repositories.size > 0 && !repositories.has(state.repository.toLowerCase()))
 		|| (accounts.size > 0 && !accounts.has(state.owner.toLowerCase()))
@@ -57,12 +63,11 @@ function select(state, result, {
 	if (files.size === 0 && categories.size === 0) {
 		return result || repositories.size > 0 ? undefined : null;
 	}
-	/** @type {{ name: string, category: Category }[]} */
-	const entries = [
-		...(result?.missing ?? []).map((name) => ({ name, category: /** @type {const} */ ('missing') })), // eslint-disable-line no-extra-parens
-		...(result?.unexpected ?? []).map((name) => ({ name, category: /** @type {const} */ ('unexpected') })), // eslint-disable-line no-extra-parens
-		...(result?.drifted ?? []).map(({ name }) => ({ name, category: /** @type {const} */ ('drifted') })), // eslint-disable-line no-extra-parens
-	];
+	const entries = /** @type {{ name: string, category: Category }[]} */ ([]).concat(
+		(result?.missing ?? []).map((name) => ({ name, category: /** @type {const} */ ('missing') })),
+		(result?.unexpected ?? []).map((name) => ({ name, category: /** @type {const} */ ('unexpected') })),
+		(result?.drifted ?? []).map(({ name }) => ({ name, category: /** @type {const} */ ('drifted') })),
+	);
 	// file names are case-sensitive, but the filters aren't
 	const names = entries
 		.filter(({ name, category }) => (files.size === 0 || files.has(name.toLowerCase())) && (categories.size === 0 || categories.has(category)))
@@ -73,7 +78,10 @@ function select(state, result, {
 /** @type {(context: Context, candidate: Candidate) => Promise<{ outcome: string, failed: boolean }>} */
 async function attempt(context, candidate) {
 	try {
-		return { outcome: await fixRepo(context, candidate), failed: false };
+		return {
+			outcome: await fixRepo(context, candidate),
+			failed: false,
+		};
 	} catch (error) {
 		/*
 		 * a private repository's error can quote its files, branches, or git output, and the run's log is as public as the reply;
@@ -109,41 +117,66 @@ function privateNote(dryRun) {
  *   what: string,
  *   rows: string[],
  *   failures: number,
+ *   waiting: string[],
  * }) => string[]}
  */
 function replyBodies({
-	line, dryRun, what, rows, failures,
+	line,
+	dryRun,
+	what,
+	rows,
+	failures,
+	waiting,
 }) {
 	const table = { open: '| Repository | Outcome |\n| --- | --- |', close: '' };
-	return split([
+	return split(/** @type {(string | Unit)[]} */ ([]).concat(
 		`${quote(line)} (${dryRun ? what : `from each repository’s ${what}`}; see [the run](${runURL})):`,
 		'',
-		...rows.length > 0 ? [{ text: table.open, group: table }, ...rows.map((text) => ({ text, group: table }))] : ['No repository matches those filters.'],
-		...failures > 0 ? ['', `⚠️ Some repositories could not be read, so they were not considered; see [the run](${runURL}).`] : [],
+		rows.length > 0
+			? [{ text: table.open, group: table }].concat(rows.map((text) => ({ text, group: table })))
+			: ['No repository matches those filters.'],
+		failures > 0
+			? ['', `⚠️ Some repositories could not be read, so they were not considered; see [the run](${runURL}).`]
+			: [],
+		waiting.length > 0
+			? ['', `⏳ Waiting on permission approval: ${waiting.map(code).join(', ')}; until each of these accounts approves the App’s permissions, its repositories are not considered.`]
+			: [],
 		// last, so it's at the very end of the last comment
 		'',
 		privateNote(dryRun),
-	], maxBodyLength);
+	), maxBodyLength);
 }
 
 /**
- * Every repository the App is installed on, in an allowed account, and how many installations couldn't be read.
- * @type {(auth: Context['auth']) => Promise<{ states: RepoState[], unread: number }>}
+ * Every repository the App is installed on, in an allowed account; how many installations couldn't be read; and the logins of the accounts whose installation is waiting on them to approve the App's permissions (see `discover`).
+ * @type {(auth: Context['auth']) => Promise<{ states: RepoState[], unread: number, waiting: string[] }>}
  */
 async function installed(auth) {
 	const accounts = parseAccounts(core.getInput('accounts'), process.env.GITHUB_REPOSITORY_OWNER || '');
 	// without source accounts, only repositories the App is installed on are discovered: it can't change any other
-	const { states, failures } = await discover(auth, accounts);
-	for (const { scope, message } of failures) {
+	const {
+		states,
+		failures,
+		waiting,
+	} = await discover(auth, accounts);
+	failures.forEach(({ scope, message }) => {
 		core.warning(`${scope}: ${message}`);
-	}
+	});
 	// an installation on an account that isn't allowed is left out on purpose, so it's only in the log
-	return { states, unread: failures.filter((f) => !isSkippedAccount(f)).length };
+	return {
+		states,
+		unread: failures.filter((f) => !isSkippedAccount(f)).length,
+		waiting,
+	};
 }
 
 /** @type {(context: Context, filters: Filters, line: string) => Promise<{ bodies: string[], failed: number }>} */
 async function run(context, filters, line) {
-	const { states, unread } = await installed(context.auth);
+	const {
+		states,
+		unread,
+		waiting,
+	} = await installed(context.auth);
 
 	const checked = states.filter((s) => s.stateError || (!s.archived && s.config.workflows !== false));
 	/** @type {Candidate[]} */
@@ -161,17 +194,25 @@ async function run(context, filters, line) {
 	const rows = [];
 	let failed = 0;
 	// one at a time, to stay clear of secondary rate limits; private repositories last, so that where one falls among the public ones' log lines, or how long one takes, says nothing about it
-	for (const candidate of [...candidates.filter((c) => !c.state.private), ...candidates.filter((c) => c.state.private)]) {
-		const { outcome, failed: didFail } = await attempt(context, candidate); // eslint-disable-line no-await-in-loop
+	await candidates.filter((c) => !c.state.private).concat(candidates.filter((c) => c.state.private)).reduce(async (previous, candidate) => {
+		await previous;
+		const { outcome, failed: didFail } = await attempt(context, candidate);
 		failed += Number(didFail);
 		if (!candidate.state.private) {
 			rows.push(`| ${code(candidate.state.repository)} | ${outcome} |`);
 		}
-	}
+	}, Promise.resolve());
 
 	return {
 		bodies: replyBodies({
-			line, dryRun: context.dryRun, what: context.dryRun ? 'a dry run, so nothing was changed' : `\`${fixBranch}\` branch`, rows, failures: unread,
+			line,
+			dryRun: context.dryRun,
+			what: context.dryRun
+				? 'a dry run, so nothing was changed'
+				: `\`${fixBranch}\` branch`,
+			rows,
+			failures: unread,
+			waiting,
 		}),
 		failed,
 	};
@@ -291,17 +332,39 @@ async function finish({
  * @type {(options: PerformOptions, command: Extract<ReturnType<typeof parseCommand>, { type: 'merge' }>) => Promise<{ bodies: string[], ok: boolean }>}
  */
 async function merge({
-	auth, comment, issueNumber, finishOther, progress,
+	auth,
+	comment,
+	issueNumber,
+	finishOther,
+	progress,
 }, {
-	dryRun, filters, line,
+	dryRun,
+	filters,
+	line,
 }) {
-	const { states, unread } = await installed(auth);
+	const {
+		states,
+		unread,
+		waiting,
+	} = await installed(auth);
 	const { rows, ok } = await runMerge({
-		auth, dryRun, commentId: comment.id, issueNumber, finishOther, progress,
+		auth,
+		dryRun,
+		commentId: comment.id,
+		issueNumber,
+		finishOther,
+		progress,
 	}, states, filters);
 	return {
 		bodies: replyBodies({
-			line, dryRun, what: dryRun ? 'a dry run, so nothing was changed or queued' : `\`${fixBranch}\` and \`${relockBranch}\` PRs by the App’s bot`, rows, failures: unread,
+			line,
+			dryRun,
+			what: dryRun
+				? 'a dry run, so nothing was changed or queued'
+				: `\`${fixBranch}\` and \`${relockBranch}\` PRs by the App’s bot`,
+			rows,
+			failures: unread,
+			waiting,
 		}),
 		ok,
 	};
@@ -313,12 +376,19 @@ async function merge({
  */
 async function perform(options) {
 	const {
-		command, comment, reply,
+		command,
+		comment,
+		reply,
 	} = options;
 	if (command.type === 'error') {
-		await reply(split([
-			`${command.message} Nothing was done.`, '', legend(),
-		], maxBodyLength));
+		await reply(split(
+			[
+				`${command.message} Nothing was done.`,
+				'',
+				legend(),
+			],
+			maxBodyLength,
+		));
 		core.info('not a valid command; replied with how to use them');
 		return false;
 	}
@@ -328,13 +398,17 @@ async function perform(options) {
 	if (command.type === 'merge') {
 		result = await merge(options, command);
 	} else {
-		const { bodies, failed } = await run({
-			auth: options.auth,
-			identities: new Map(),
-			dryRun: command.dryRun,
-			categories: command.filters.categories,
-			link: comment.html_url,
-		}, command.filters, command.line);
+		const { bodies, failed } = await run(
+			{
+				auth: options.auth,
+				identities: new Map(),
+				dryRun: command.dryRun,
+				categories: command.filters.categories,
+				link: comment.html_url,
+			},
+			command.filters,
+			command.line,
+		);
 		if (failed > 0) {
 			core.setFailed(`${failed} ${plural(failed, 'repository', 'repositories')} could not be fixed`);
 		}
@@ -375,35 +449,59 @@ async function main() {
 	// a reply too long for one comment goes on in the next ones, in order; `posted` gets each one's link as it's posted
 	/** @type {(bodies: string[], posted?: string[]) => Promise<void>} */
 	const reply = async (bodies, posted = []) => {
-		for (const body of bodies) {
-			const { data } = await octokit.rest.issues.createComment({ // eslint-disable-line no-await-in-loop
-				owner, repo, issue_number: issue.number, body, // eslint-disable-line camelcase
+		await bodies.reduce(async (previous, body) => {
+			await previous;
+			const { data } = await octokit.rest.issues.createComment({
+				owner,
+				repo,
+				issue_number: issue.number, // eslint-disable-line camelcase
+				body,
 			});
 			posted.push(data.html_url);
-		}
+		}, Promise.resolve());
 	};
 
 	const eyes = await authorize({
-		octokit, owner, repo, comment, reply,
+		octokit,
+		owner,
+		repo,
+		comment,
+		reply,
 	});
 	if (eyes === null) {
 		return;
 	}
 	/** @type {(commentId: number, ok: boolean) => Promise<void>} */
 	const finishOther = async (commentId, ok) => finishQueued({
-		octokit, owner, repo, commentId, bot: await botLogin(auth), ok,
+		octokit,
+		owner,
+		repo,
+		commentId,
+		bot: await botLogin(auth),
+		ok,
 	});
 	const progress = { queued: false };
 	let ok = false;
 	try {
 		ok = await perform({
-			auth, command, comment, issueNumber: issue.number, reply, finishOther, progress,
+			auth,
+			command,
+			comment,
+			issueNumber: issue.number,
+			reply,
+			finishOther,
+			progress,
 		});
 	} finally {
 		// also when it throws, so a command never stays 👀 forever; but a public PR it queued keeps it 👀 until the merge queue resolves it
 		if (!progress.queued) {
 			await finish({
-				octokit, owner, repo, comment, eyes, ok,
+				octokit,
+				owner,
+				repo,
+				comment,
+				eyes,
+				ok,
 			});
 		}
 	}

@@ -13,9 +13,15 @@
 		"func-style": "off",
 		"sort-keys": "off",
 		"max-len": "off",
+		"max-lines": ["error", {
+			"max": 400,
+			"skipBlankLines": true,
+			"skipComments": true,
+		}],
 		"max-lines-per-function": "off",
 		"max-statements-per-line": ["error", { "max": 2 }],
 		"multiline-comment-style": "off",
+		"no-extra-parens": "off",
 	},
 
 	"overrides": [
@@ -23,6 +29,12 @@
 			"files": ["**/*.js"],
 			"parserOptions": {
 				"sourceType": "script",
+			},
+		},
+		{
+			"files": ["test/**"],
+			"rules": {
+				"max-lines": "off",
 			},
 		},
 	],

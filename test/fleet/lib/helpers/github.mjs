@@ -52,6 +52,7 @@ import nock from 'nock';
  * @typedef {{
  *   installations?: unknown[] | ErrorReply,
  *   appSlug?: string | null,
+ *   appPermissions?: Record<string, string>,
  *   repoInstallations?: Record<string, number | ErrorReply>,
  *   deniedPermissions?: string[],
  *   tokens?: Record<string, ErrorReply>,
@@ -77,7 +78,7 @@ import nock from 'nock';
  * @typedef {{ id: string, description: string | null, public: boolean, files?: Record<string, unknown> }} Gist
  */
 /*
- * The App (`GET /app`) has the slug `appSlug` (unspecified, `fleet-bot`; `null`, none);
+ * The App (`GET /app`) has the slug `appSlug` (unspecified, `fleet-bot`; `null`, none), and the permissions `appPermissions` (unspecified, none listed);
  * `repoInstallations`, keyed by `owner/name`, is the id of the installation on a repository (unspecified, 99), or an error;
  * a token asking for any of the `deniedPermissions` is refused, as one the installation hasn't been granted is.
  * Listing issues with a `creator` lists only theirs: the ones whose `user.login` it is.
@@ -219,7 +220,11 @@ export function mockGitHub(scenario, record) {
 		const reply = scenario.installations ?? [];
 		return isErrorReply(reply) ? [reply.status, reply.body ?? { message: 'error' }] : [200, reply];
 	}));
-	app.reply(handle(() => [200, { id: 1, ...scenario.appSlug === null ? {} : { slug: scenario.appSlug ?? 'fleet-bot' } }]));
+	app.reply(handle(() => [200, {
+		id: 1,
+		...scenario.appSlug === null ? {} : { slug: scenario.appSlug ?? 'fleet-bot' },
+		...scenario.appPermissions ? { permissions: scenario.appPermissions } : {},
+	}]));
 	repoInstallation.reply(handle(({ path }) => {
 		const reply = scenario.repoInstallations?.[path.split('/').slice(2, 4).join('/')] ?? 99;
 		return isErrorReply(reply) ? [reply.status, reply.body ?? { message: 'Not Found' }] : [200, { id: reply }];
@@ -251,7 +256,7 @@ export function mockGitHub(scenario, record) {
 	graphql.reply(handle(({ body }) => graphqlReply(scenario, body.variables)));
 	listIssues.reply(handle(({ path }) => {
 		const creator = new URLSearchParams(path.split('?')[1]).get('creator');
-		return [200, (scenario.issues ?? []).filter((i) => !creator || (/** @type {{ user?: { login?: string } }} */ (i)).user?.login === creator)]; // eslint-disable-line no-extra-parens
+		return [200, (scenario.issues ?? []).filter((i) => !creator || (/** @type {{ user?: { login?: string } }} */ (i)).user?.login === creator)];
 	}));
 	createIssue.reply(handle(() => (scenario.createError
 		? [scenario.createError.status, scenario.createError.body ?? { message: 'error' }]

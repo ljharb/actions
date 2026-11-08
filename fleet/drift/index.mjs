@@ -13,7 +13,7 @@ import { marker } from './marker.mjs';
 import { upsertGist } from './gist.mjs';
 import { report } from './report.mjs';
 
-/** @typedef {import('./report.mjs').Written} Written */
+/** @import { Written } from './report.mjs' */
 
 // how the full report's gist is found again on the next run; a dry run has its own, so it never changes what the issue links to
 const gistMarker = 'ljharb/actions fleet workflow drift report';
@@ -80,13 +80,17 @@ async function main() {
 
 	const auth = appAuth(core.getInput('app-id', { required: true }), core.getInput('private-key', { required: true }));
 	const accounts = parseAccounts(core.getInput('accounts'), process.env.GITHUB_REPOSITORY_OWNER || '');
-	const { states, failures } = await discover(auth, accounts, {
+	const {
+		states,
+		failures,
+		waiting,
+	} = await discover(auth, accounts, {
 		sourceAccounts: parseAccounts(core.getInput('source-accounts'), ''),
 		committer: core.getInput('committer'),
 	});
-	for (const { scope, message } of failures) {
+	failures.forEach(({ scope, message }) => {
 		core.warning(`${scope}: ${message}`);
-	}
+	});
 
 	const checked = states.filter((s) => s.stateError || (!s.archived && s.config.workflows !== false));
 	const all = (await Promise.all(checked.map(async (s) => {
@@ -97,7 +101,18 @@ async function main() {
 	const results = all.filter((r) => !r.private).map((r) => r.result);
 	const privateCount = all.length - results.length;
 	// an incomplete check is never reported as "no discrepancies"
-	const found = all.length > 0 || failures.length > 0 ? report(results, privateCount, failures, { installed: checked.filter((s) => !s.external).length, external: checked.filter((s) => s.external).length }) : null;
+	const found = all.length > 0 || failures.length > 0 || waiting.length > 0
+		? report(
+			results,
+			privateCount,
+			failures,
+			{
+				installed: checked.filter((s) => !s.external).length,
+				external: checked.filter((s) => s.external).length,
+			},
+			waiting,
+		)
+		: null;
 
 	const dryRun = core.getBooleanInput('dry-run');
 	// the gist first, since the summary and the issue link to it; then the summary, so a failure to update the issue still leaves the report in the run

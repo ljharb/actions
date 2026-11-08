@@ -8,10 +8,8 @@ import { runChild } from './helpers/child.mjs';
 import { nodeWorkflow, standardWorkflows, template } from './helpers/states.mjs';
 import { versionFixture } from './helpers/versions.mjs';
 
-/** @typedef {import('../lib/helpers/github.mjs').Scenario} Scenario */
-/** @typedef {import('../lib/helpers/github.mjs').RepoSpec} RepoSpec */
-/** @typedef {import('../lib/helpers/github.mjs').Recorded} Recorded */
-/** @typedef {import('./helpers/child.mjs').ChildResult} ChildResult */
+/** @import { Scenario, RepoSpec, Recorded } from '../lib/helpers/github.mjs' */
+/** @import { ChildResult } from './helpers/child.mjs' */
 
 const marker = '<!-- ljharb/actions: fleet workflow drift -->';
 // the report issue's authors: the App's bot, and GitHub Actions' bot, which opened the report before the App wrote it
@@ -95,7 +93,7 @@ function gistContent(t, requests) {
 // the full report's files, as written to its gist, in order, one in each request
 /** @type {(requests: Recorded[]) => [string, string][]} */
 function gistFiles(requests) {
-	return gistWrites(requests).flatMap((r) => Object.entries(r.body.files).filter(([, file]) => file !== null).map(([name, file]) => /** @type {[string, string]} */ ([name, String(file.content)]))); // eslint-disable-line no-extra-parens
+	return gistWrites(requests).flatMap((r) => Object.entries(r.body.files).filter(([, file]) => file !== null).map(([name, file]) => /** @type {[string, string]} */ ([name, String(file.content)])));
 }
 
 /** @type {(requests: Recorded[]) => Recorded[]} */
@@ -193,11 +191,11 @@ function gistLink(id) {
 
 /** @type {(text: string) => void} */
 function neverOmits(text) {
-	for (const word of ['omitted', 'more repositories', 'truncated', '…', 'more entries', 'cut short']) {
+	['omitted', 'more repositories', 'truncated', '…', 'more entries', 'cut short'].forEach((word) => {
 		if (text.includes(word)) {
 			throw new Error(`“${word}” in: ${text.slice(Math.max(0, text.indexOf(word) - 200), text.indexOf(word) + 200)}`);
 		}
-	}
+	});
 }
 
 test('fleet/drift: keeps the full report in a new secret gist, and summarizes it in a new issue and the run summary', (t) => {
@@ -589,6 +587,32 @@ test('fleet/drift: a dry run writes the gist, and an incomplete check is never �
 	t.end();
 });
 
+test('fleet/drift: an installation waiting on its account to approve the App’s permissions is said in the report, but isn’t a failure', (t) => {
+	const { status, stdout, requests, summary } = run({
+		installations: [
+			{ id: 1, account: { login: 'ljharb' }, permissions: { contents: 'read', metadata: 'read' } },
+			{ id: 2, account: { login: 'es-shims' }, permissions: { metadata: 'read' } },
+		],
+		installationRepos: { 1: [installedRepo('ljharb', 'clean')], 2: [installedRepo('es-shims', 'unseen')] },
+		repos: { 'ljharb/clean': repo() },
+		issues: [],
+	}, { INPUT_ACCOUNTS: 'ljharb es-shims' });
+	const line = '⏳ Waiting on permission approval: `es-shims`. Until each of these accounts approves the App’s permissions (in its settings, under “Applications”, or from GitHub’s email about them), its repositories aren’t checked.';
+
+	t.equal(status, 0, 'exits successfully');
+	t.ok(stdout.split('\n').includes('::notice::installation 2 (es-shims) is waiting on its account to approve the App’s permissions (contents: read), so it’s skipped until then'), 'saying so in the log');
+	t.notOk((/^::warning::/m).test(stdout), 'without a warning');
+	t.match(stdout, /^0 of 1 repositories have discrepancies; the full report is https:\/\/gist\.github\.com\/new-gist; created https:\/\/github\.com\/created\/1$/m, 'and, since not every repository was checked, it’s never “no discrepancies”');
+	const [created] = issueWrites(requests);
+	t.ok(String(created?.body.body).includes(`\n\n${line}\n\n`), 'the issue says which accounts are waiting');
+	t.notOk(String(created?.body.body).includes('incomplete'), 'with no failures');
+	t.ok(summary.includes(line), 'as does the run summary');
+	t.ok(gistContent(t, requests).includes(line), 'and the full report');
+	t.deepEqual(matching(requests, 'POST', /^\/app\/installations\/2\/access_tokens$/), [], 'no token is asked for for the waiting installation');
+
+	t.end();
+});
+
 test('fleet/drift: groups repositories by account, case-insensitively, in result order', (t) => {
 	const server = 'https://github.com';
 	const { status, stdout, requests } = run({
@@ -853,10 +877,10 @@ test('fleet/drift: nothing about a private repository reaches the log, the summa
 	t.notOk(full.includes('es-shims/shown'), 'nor its being invalid');
 	t.notOk(body.includes('| `'), 'and no account has public discrepancies to count');
 	const secrets = ['secret', 'hidden', 'zero', '0.x', 'preset', 'defaults', 'internal-ci.yml'];
-	for (const [where, text] of [['the log', stdout], ['stderr', stderr], ['the summary', summary], ['the issue', body], ['the title', String(created?.body.title)], ['the gist', full]]) {
+	[['the log', stdout], ['stderr', stderr], ['the summary', summary], ['the issue', body], ['the title', String(created?.body.title)], ['the gist', full]].forEach(([where, text]) => {
 		// the gist's link says it's a secret gist, which is GitHub's name for one only those with its link can see
 		t.deepEqual(secrets.filter((secret) => text.replace(gistLink('new-gist'), '').includes(secret)), [], `${where} reveals nothing about a private repository`);
-	}
+	});
 	t.end();
 });
 

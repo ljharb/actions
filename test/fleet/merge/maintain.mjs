@@ -25,10 +25,9 @@ import {
 } from '../lib/helpers/git.mjs';
 import { installedRepo, mockGitHub, privateKey } from '../lib/helpers/github.mjs';
 
-/** @typedef {import('../lib/helpers/github.mjs').Recorded} Recorded */
-/** @typedef {import('../lib/helpers/github.mjs').Scenario} Scenario */
-/** @typedef {import('../commands/helpers/merge.mjs').MergeScenario} MergeScenario */
-/** @typedef {import('../lib/helpers/git.mjs').Server} Server */
+/** @import { Recorded, Scenario } from '../lib/helpers/github.mjs' */
+/** @import { MergeScenario } from '../commands/helpers/merge.mjs' */
+/** @import { Server } from '../lib/helpers/git.mjs' */
 /** @typedef {{ key: string, user: { login: string }, body: string }} Comment */
 
 const repository = 'ljharb/r';
@@ -84,7 +83,7 @@ async function run(t, {
 	const requests = [];
 	const scope = nock('https://api.github.com').persist();
 	const listComments = scope.get(/^\/repos\/[^/]+\/[^/]+\/issues\/\d+\/comments(?:\?.*)?$/);
-	listComments.reply(/** @type {any} */ ((/** @type {Request} */ req) => { // eslint-disable-line no-extra-parens
+	listComments.reply(/** @type {any} */ ((/** @type {Request} */ req) => {
 		const { pathname, search } = new URL(req.url);
 		requests.push({
 			method: 'GET', path: `${pathname}${search}`, body: null, authorization: '',
@@ -104,7 +103,7 @@ async function run(t, {
 
 	let stdout = '';
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) { // eslint-disable-line no-extra-parens
+	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
 		stdout += String(chunk);
 		return true;
 	});
@@ -124,9 +123,9 @@ async function run(t, {
 			renameSync(`${server.remote}.offline`, server.remote);
 		}
 	}
-	for (const r of requests.filter((x) => x.method === 'POST' && (/\/issues\/\d+\/comments$/).test(x.path))) {
+	requests.filter((x) => x.method === 'POST' && (/\/issues\/\d+\/comments$/).test(x.path)).forEach((r) => {
 		posted.push({ key: r.path.replace(/\/comments$/, ''), user: { login: bot.name }, body: r.body.body });
-	}
+	});
 	return { errors, stdout, requests };
 }
 
@@ -248,7 +247,7 @@ test('maintain: with no open PRs from the App’s branches, exits fast', async (
 
 test('maintain: the installed repositories are found in batches, by how many PRs are open from each of the App’s branches', async (t) => {
 	const server = setup(t);
-	const names = Array.from({ length: 21 }, (_, i) => ({ name: `quiet${i}`, open: /** @type {[number, number]} */ ([0, 0]) })); // eslint-disable-line no-extra-parens
+	const names = Array.from({ length: 21 }, (_, i) => ({ name: `quiet${i}`, open: /** @type {[number, number]} */ ([0, 0]) }));
 	const { requests, stdout } = await run(t, { server, github: installed(names), merge: {} });
 	const queries = requests.filter((r) => r.path === '/graphql');
 	t.equal(queries.length, 2, 'twenty at a time');
@@ -274,6 +273,51 @@ test('maintain: an installation that can’t be read fails, without naming what 
 	const failedQuery = await run(t, { server, github: installed([{ name: 'r' }], { graphqlNullData: ['ljharb/r'] }), merge: {} });
 	t.equal(failedQuery.errors, 1, 'as does one whose query fails outright');
 	t.ok(failedQuery.stdout.includes('::warning::installation 1 could not be read'), 'warning about it');
+	t.end();
+});
+
+test('maintain: an installation waiting on its account to approve the App’s permissions is skipped, not failed', async (t) => {
+	const server = setup(t);
+	const granted = { ...permissions, metadata: 'read' };
+	const waiting = await run(t, {
+		server,
+		github: installed([{ name: 'r' }], {
+			installations: [
+				{ id: 1, account: { login: 'ljharb' }, permissions: { ...granted, workflows: 'read' } },
+				{ id: 2, account: { login: 'es-shims' }, permissions: { metadata: 'read', contents: 'write' } },
+			],
+		}),
+		merge: {},
+	});
+	t.equal(waiting.errors, 0, 'nothing failed');
+	t.deepEqual(logged(waiting.stdout), [
+		'::notice::installation 1 (ljharb) is waiting on its account to approve the App’s permissions (workflows: write), so it’s skipped until then',
+		'no open PRs from the App’s branches to keep up to date',
+	], 'saying so, for an installation without a permission keeping its PRs up to date needs');
+	t.deepEqual(waiting.requests.map((r) => `${r.method} ${r.path}`), ['GET /app/installations?per_page=100', 'GET /app'], 'without asking for a token, or reading anything but what permissions the App itself has');
+
+	const unavailable = await run(t, {
+		server,
+		github: installed([{ name: 'r' }], {
+			installations: [{ id: 1, account: { login: 'ljharb' }, permissions: { ...granted, workflows: 'read' } }],
+			appPermissions: { ...granted, workflows: 'read' },
+		}),
+		merge: {},
+	});
+	t.equal(unavailable.errors, 1, 'one lacking a permission the App itself doesn’t have fails, since no approval can give it that');
+	t.ok(unavailable.stdout.split('\n').includes('::warning::installation 1: the App itself doesn’t have permissions this needs (workflows: write); give them to it in its settings'), 'naming it');
+	t.deepEqual(unavailable.requests.filter((r) => r.path.endsWith('/access_tokens')), [], 'without asking for a token');
+
+	const refused = await run(t, {
+		server,
+		github: installed([{ name: 'r' }], {
+			installations: [{ id: 1, account: { login: 'ljharb' }, permissions: granted }],
+			deniedPermissions: ['pull_requests'],
+		}),
+		merge: {},
+	});
+	t.equal(refused.errors, 1, 'a token refused for an installation listed with every permission still fails');
+	t.ok(refused.stdout.includes('::warning::installation 1 could not be read (HTTP 422)'), 'and is warned about');
 	t.end();
 });
 
@@ -334,9 +378,9 @@ test('maintain: rebasing and restoring work in a shallow clone without file cont
 	t.deepEqual(other.log(`main..${restored}`), [`${botLine}|${botLine}|${message}|${otherTip}`], 'restoring: one commit by the bot, on the base’s tip');
 	t.equal(`${other.show(restored, pretest)}\n`, tapePretest, 'restoring: the input is back');
 	t.equal(other.show(restored, 'big.txt'), 'not needed', 'restoring: and every other file is as it was');
-	for (const { remote } of [server, other]) {
+	[server, other].forEach(({ remote }) => {
 		t.equal(fixtureGit(remote, ['fsck', '--connectivity-only', '--no-dangling', '--no-progress']), '', 'and the server’s repository is whole: everything pushed came with every object it needs');
-	}
+	});
 	t.end();
 });
 
@@ -650,12 +694,15 @@ test('maintain: a failure it can’t restore anything for needs a person', async
 		['restoring an input would change anything else in the file', { [pretest]: `${template('node-pretest.yml')}    with:\n      skip-engines: &a true\n` }, { [pretest]: `env:\n  A: &a x\n${template('node-pretest.yml')}  other:\n    runs-on: *a\n` }, [pretest], 'the App can’t restore inputs this PR removed: in `.github/workflows/node-pretest.yml`, `adding them would change more of the file than those inputs`. It needs a person to look at it.'],
 		['its `keep` isn’t an object', { [config]: '{ "keep": [] }' }, { [pretest]: template('node-pretest.yml') }, [pretest], 'the App would restore inputs this PR removed, but `.github/ljharb-actions.json` isn’t a JSON object (with an object `keep`, if it has one), so it can’t keep them there: it needs a person to look at it. The workflow files that failed: `.github/workflows/node-pretest.yml`.'],
 	];
-	for (const [label, base, change, failed, why] of cases) {
+	await cases.reduce(async (previous, [label, base, change, failed, why]) => {
+		await previous;
 		const server = setup(t, {
-			[pretest]: tapePretest, [aught]: tapeAught, ...base,
+			[pretest]: tapePretest,
+			[aught]: tapeAught,
+			...base,
 		});
 		const head = server.commit(fixBranch, change, { who: bot, from: 'main', message });
-		const { requests } = await run(t, { // eslint-disable-line no-await-in-loop
+		const { requests } = await run(t, {
 			server,
 			github: installed([{ name: 'r' }]),
 			merge: shown(server, [[1, fixBranch, head]], {
@@ -664,7 +711,7 @@ test('maintain: a failure it can’t restore anything for needs a person', async
 		});
 		t.deepEqual(comments(requests), [`${marker('stuck', head)}\nCI failed on this PR’s head commit, and ${why}`], `${label}: says so`);
 		t.equal(server.tip(`refs/heads/${fixBranch}`), head, `${label}: pushes nothing`);
-	}
+	}, Promise.resolve());
 	t.end();
 });
 

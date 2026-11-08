@@ -31,12 +31,11 @@ import {
 } from '../lib/pr.mjs';
 import { reposWithAppPRs } from './repos.mjs';
 
-/** @typedef {import('../lib/app.mjs').Octokit} Octokit */
+/** @import { Octokit } from '../lib/app.mjs' */
 /** @typedef {ReturnType<typeof import('../lib/app.mjs').appAuth>} Auth */
-/** @typedef {import('../lib/merge.mjs').PR} PR */
-/** @typedef {import('../lib/pr.mjs').Git} Git */
-/** @typedef {import('../lib/pr.mjs').Identity} Identity */
-/** @typedef {import('./repos.mjs').Repo} Repo */
+/** @import { PR } from '../lib/merge.mjs' */
+/** @import { Git, Identity } from '../lib/pr.mjs' */
+/** @import { Repo } from './repos.mjs' */
 /**
  * What keeping one PR up to date came to:
  * - `changed`: its branch moved while it was being looked at, so it's left for the next run
@@ -148,12 +147,12 @@ async function rebase(job) {
 function declaredOnly(inputs) {
 	/** @type {import('../drift/inputs.mjs').Inputs} */
 	const declared = new Map();
-	for (const [job, { file, inputs: passed }] of inputs) {
-		const known = new Map([...passed].filter(([key]) => declaredInputs(file).has(key)));
+	inputs.forEach(({ file, inputs: passed }, job) => {
+		const known = new Map(Array.from(passed).filter(([key]) => declaredInputs(file).has(key)));
 		if (known.size > 0) {
 			declared.set(job, { file, inputs: known });
 		}
-	}
+	});
 	return declared;
 }
 
@@ -173,13 +172,16 @@ function restorations(git, { base, tip }, failed) {
 	const ambiguous = new Map();
 	/** @type {Map<string, string>} */
 	const unwritable = new Map();
-	for (const file of failed.filter((f) => changed.has(f))) {
+	failed.filter((f) => changed.has(f)).forEach((file) => {
 		const before = show(git, `origin/${base}:${file}`);
 		const after = show(git, `${tip}:${file}`);
 		const none = new Map();
-		const found = before === null || after === null ? {
-			removed: none, ambiguous: none,
-		} : removedInputs(before, after);
+		const found = before === null || after === null
+			? {
+				removed: none,
+				ambiguous: none,
+			}
+			: removedInputs(before, after);
 		const removed = declaredOnly(found.removed);
 		const unplaced = declaredOnly(found.ambiguous);
 		if (unplaced.size > 0) {
@@ -190,12 +192,15 @@ function restorations(git, { base, tip }, failed) {
 				unwritable.set(file, why);
 			} else {
 				writes.set(file, written);
-				kept.set(path.posix.basename(file), [...new Set([...removed.values()].flatMap(({ inputs }) => [...inputs.keys()]))]);
+				kept.set(path.posix.basename(file), Array.from(new Set(Array.from(removed.values()).flatMap(({ inputs }) => Array.from(inputs.keys())))));
 			}
 		}
-	}
+	});
 	return {
-		writes, kept, ambiguous, unwritable,
+		writes,
+		kept,
+		ambiguous,
+		unwritable,
 	};
 }
 
@@ -205,14 +210,19 @@ function restorations(git, { base, tip }, failed) {
  */
 function rewrite(git, { base, tip }, writes) {
 	git(['read-tree', tip]);
-	for (const [file, content] of writes) {
+	writes.forEach((content, file) => {
 		const blob = git([
-			'hash-object', '-w', '--stdin',
+			'hash-object',
+			'-w',
+			'--stdin',
 		], { input: content }).stdout.trim();
 		git([
-			'update-index', '--add', '--cacheinfo', `100644,${blob},${file}`,
+			'update-index',
+			'--add',
+			'--cacheinfo',
+			`100644,${blob},${file}`,
 		]);
-	}
+	});
 	return commitOnBase(git, {
 		base, tree: git(['write-tree']).stdout.trim(), from: tip,
 	});
@@ -278,7 +288,7 @@ async function alreadySaid({
 	return kind ? { kind, text: `left as it is: as already said on it, it’s \`${kind}\` until its head commit${base ? ', or its base’s tip,' : ''} changes` } : null;
 }
 
-const branchChanged = /** @type {const} */ ({ kind: 'changed', text: 'its branch changed while it was being looked at; it’s looked at again next time' }); // eslint-disable-line no-extra-parens
+const branchChanged = /** @type {const} */ ({ kind: 'changed', text: 'its branch changed while it was being looked at; it’s looked at again next time' });
 
 /**
  * Clones the PR's repository, as little of it as `act` needs, and has `act` change its branch: unless what the clone has isn't what the API showed.
@@ -358,30 +368,38 @@ export async function maintainPR(context, {
  * @type {(auth: Auth, accounts: Set<string>, options: { bot: () => Promise<string>, serverURL: string }) => Promise<number>}
  */
 export async function maintain(auth, accounts, { bot, serverURL }) {
-	const { repos, failures } = await reposWithAppPRs(auth, accounts);
+	const { repos, failures } = await reposWithAppPRs(auth, accounts, permissions);
 	if (repos.length === 0) {
 		core.info('no open PRs from the App’s branches to keep up to date');
 		return failures;
 	}
 	/** @type {Context} */
 	const context = {
-		auth, bot: await bot(), serverURL, identities: new Map(),
+		auth,
+		bot: await bot(),
+		serverURL,
+		identities: new Map(),
 	};
 	let errors = failures;
 	// one at a time, private repositories last, as the commands do
-	for (const repo of [...repos.filter((r) => !r.private), ...repos.filter((r) => r.private)]) {
+	await repos.filter((r) => !r.private).concat(repos.filter((r) => r.private)).reduce(async (previous, repo) => {
+		await previous;
 		try {
-			const token = await installationToken(auth, repo.installationId, { repositoryNames: [repo.name], permissions }); // eslint-disable-line no-await-in-loop
+			const token = await installationToken(auth, repo.installationId, { repositoryNames: [repo.name], permissions });
 			core.setSecret(token);
 			const octokit = octokitFor(token, repo.private);
-			for (const pr of await candidatePRs(octokit, repo, context.bot)) { // eslint-disable-line no-await-in-loop
-				const { text } = await maintainPR(context, { // eslint-disable-line no-await-in-loop
-					repo, pr, octokit, token,
+			await (await candidatePRs(octokit, repo, context.bot)).reduce(async (previousPR, pr) => {
+				await previousPR;
+				const { text } = await maintainPR(context, {
+					repo,
+					pr,
+					octokit,
+					token,
 				});
 				if (!repo.private) {
 					core.info(`${serverURL}/${repo.repository}/pull/${pr.number}: ${text}`);
 				}
-			}
+			}, Promise.resolve());
 		} catch (error) {
 			// a private repository's failure is never shown, and never fails the run
 			if (!repo.private) {
@@ -389,7 +407,7 @@ export async function maintain(auth, accounts, { bot, serverURL }) {
 				core.warning(`${repo.repository}: ${messageOf(error)}`);
 			}
 		}
-	}
+	}, Promise.resolve());
 	core.info('Open PRs in private repositories, if any, were also kept up to date; nothing about them is shown here.');
 	return errors;
 }

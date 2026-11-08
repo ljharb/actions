@@ -4,9 +4,10 @@ import { createAppAuth } from '@octokit/auth-app';
 
 import { mergeConfig, parseConfig } from './config.mjs';
 import { isIgnored } from './ignored.mjs';
+import { accountLogin, awaitingApproval } from './installations.mjs';
 
 /** @typedef {ReturnType<typeof getOctokit>} Octokit */
-/** @typedef {import('./config.mjs').Config} Config */
+/** @import { Config } from './config.mjs' */
 /** @typedef {{ name: string, text: string | null }} WorkflowFile */
 // an `external` state is a fork's source the App isn't installed on: its `installationId` is borrowed from the fork, for reading only
 /**
@@ -33,6 +34,7 @@ import { isIgnored } from './ignored.mjs';
 /** @typedef {ReturnType<typeof parseConfig> & { private?: boolean }} AccountDefaults */
 /** @typedef {{ installationId: number, account: AccountDefaults, external: boolean }} Context */
 /** @typedef {{ sourceAccounts?: Set<string>, committer?: string }} Options */
+/** @import { Installation } from './installations.mjs' */
 
 const batchSize = 20;
 
@@ -181,7 +183,7 @@ function toState({
 /** @type {(error: unknown) => Record<string, any>} */
 function partialData(error) {
 	if (error && typeof error === 'object' && 'data' in error && error.data && typeof error.data === 'object') {
-		return /** @type {Record<string, any>} */ (error.data); // eslint-disable-line no-extra-parens
+		return /** @type {Record<string, any>} */ (error.data);
 	}
 	throw error;
 }
@@ -240,17 +242,14 @@ async function accountDefaults(octokit, owner) {
 	};
 }
 
-/** @type {(installation: { account?: unknown }) => string} */
-function accountLogin({ account }) {
-	return account && typeof account === 'object' && 'login' in account && typeof account.login === 'string' ? account.login : '';
-}
+const readPermissions = { contents: 'read', metadata: 'read' };
 
 /** @type {(auth: ReturnType<typeof createAppAuth>, installationId: number) => Promise<Octokit>} */
 async function readOctokit(auth, installationId) {
-	return getOctokit(await installationToken(auth, installationId, { permissions: { contents: 'read', metadata: 'read' } }));
+	return getOctokit(await installationToken(auth, installationId, { permissions: readPermissions }));
 }
 
-/** @type {(auth: ReturnType<typeof createAppAuth>, installation: { id: number, account?: unknown }) => Promise<RepoState[]>} */
+/** @type {(auth: ReturnType<typeof createAppAuth>, installation: Installation) => Promise<RepoState[]>} */
 async function installationStates(auth, installation) {
 	const octokit = await readOctokit(auth, installation.id);
 	const repos = (await octokit.paginate('GET /installation/repositories', { per_page: 100 })) // eslint-disable-line camelcase
@@ -295,16 +294,18 @@ function sourceCandidates(installed, sourceAccounts, installedAccounts) {
 	/** @type {Map<string, Candidate>} */
 	const candidates = new Map();
 	// a private fork's source isn't checked either: that it's checked at all would show the fork exists
-	for (const {
-		source, installationId, private: isPrivate,
-	} of installed) {
+	installed.forEach(({
+		source,
+		installationId,
+		private: isPrivate,
+	}) => {
 		const key = source?.repository.toLowerCase() ?? '';
 		const owner = key.split('/')[0];
 		if (source && !isPrivate && !source.archived && !source.private && !isIgnored(key) && sourceAccounts.has(owner) && !installedAccounts.has(owner) && !candidates.has(key)) {
 			candidates.set(key, { repository: source.repository, installationId });
 		}
-	}
-	return [...candidates.values()];
+	});
+	return Array.from(candidates.values());
 }
 
 // forks are never checked themselves; their sources are, when `committer` has committed to them
@@ -318,15 +319,19 @@ async function sourceStates(auth, installed, {
 	/** @type {Candidate[]} */
 	const committed = [];
 	// one at a time, to stay clear of secondary rate limits
-	for (const candidate of candidates) {
+	await candidates.reduce(async (previous, candidate) => {
+		await previous;
 		try {
-			if (await hasCommitted(await readOctokit(auth, candidate.installationId), candidate.repository, committer)) { // eslint-disable-line no-await-in-loop
+			if (await hasCommitted(await readOctokit(auth, candidate.installationId), candidate.repository, committer)) {
 				committed.push(candidate);
 			}
 		} catch (error) {
-			failures.push({ scope: `source ${candidate.repository}`, message: error instanceof Error ? error.message : String(error) });
+			failures.push({
+				scope: `source ${candidate.repository}`,
+				message: error instanceof Error ? error.message : String(error),
+			});
 		}
-	}
+	}, Promise.resolve());
 
 	const account = parseConfig(null, '');
 	const states = [];
@@ -360,7 +365,10 @@ export function isSkippedAccount(failure) {
 	return skips.has(failure);
 }
 
-/** @type {(auth: ReturnType<typeof createAppAuth>, accounts: Set<string>, options?: Options) => Promise<{ states: RepoState[], failures: Failure[] }>} */
+/**
+ * Every repository the App is installed on in `accounts` (and, per `options`, the sources of their forks), as it is; what couldn't be read; and the logins of the accounts whose installation is waiting on them to approve the permissions reading needs (see `awaitsApproval`), which aren't failures.
+ * @type {(auth: ReturnType<typeof createAppAuth>, accounts: Set<string>, options?: Options) => Promise<{ states: RepoState[], failures: Failure[], waiting: string[] }>}
+ */
 export async function discover(auth, accounts, { sourceAccounts = new Set(), committer = '' } = {}) {
 	const app = await appOctokit(auth);
 	const installations = await app.paginate('GET /app/installations', { per_page: 100 }); // eslint-disable-line camelcase
@@ -378,9 +386,20 @@ export async function discover(auth, accounts, { sourceAccounts = new Set(), com
 		}
 		return !i.suspended_at;
 	});
+	const {
+		ready,
+		waiting,
+		failures: unavailable,
+	} = await awaitingApproval(app, allowed, readPermissions);
+	unavailable.forEach((failure) => {
+		failures.push(failure);
+	});
 
-	const states = await Promise.all(allowed.map((installation) => installationStates(auth, installation).catch((error) => {
-		failures.push({ scope: `installation ${installation.id}`, message: failureMessage(error) });
+	const states = await Promise.all(ready.map((installation) => installationStates(auth, installation).catch((error) => {
+		failures.push({
+			scope: `installation ${installation.id}`,
+			message: failureMessage(error),
+		});
 		return [];
 	})));
 
@@ -393,5 +412,6 @@ export async function discover(auth, accounts, { sourceAccounts = new Set(), com
 	return {
 		states: [...installed.filter((s) => !s.fork), ...sources.states].sort((a, b) => a.repository.localeCompare(b.repository)),
 		failures: [...failures, ...sources.failures.sort((a, b) => a.scope.localeCompare(b.scope))],
+		waiting: waiting.map(accountLogin),
 	};
 }

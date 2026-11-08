@@ -8,11 +8,11 @@ import {
 import { templateFor } from './check.mjs';
 import { marker } from './marker.mjs';
 
-/** @typedef {import('./check.mjs').Result} Result */
-/** @typedef {import('../lib/app.mjs').Failure} Failure */
+/** @import { Result } from './check.mjs' */
+/** @import { Failure } from '../lib/app.mjs' */
 /** @typedef {{ installed: number, external: number }} Checked */
-/** @typedef {import('../lib/markdown.mjs').Unit} Unit */
-/** @typedef {import('./gist.mjs').Gist} Gist */
+/** @import { Unit } from '../lib/markdown.mjs' */
+/** @import { Gist } from './gist.mjs' */
 /** @typedef {Gist | { error: string }} Written */
 /** @typedef {{ title: string, parts: string[], summary: (written: Written, forIssue: boolean) => string }} Report */
 
@@ -96,13 +96,13 @@ function row({
 function byAccount(results) {
 	/** @type {Map<string, Account>} */
 	const accounts = new Map();
-	for (const result of results) {
+	results.forEach((result) => {
 		const [owner] = result.repository.split('/');
 		const account = accounts.get(owner.toLowerCase()) ?? { owner, results: [] };
 		account.results.push(result);
 		accounts.set(owner.toLowerCase(), account);
-	}
-	return [...accounts.values()];
+	});
+	return Array.from(accounts.values());
 }
 
 const tableHeader = '<tr><th>Repository</th><th>Missing</th><th>Unexpected</th><th>Drifted</th><th>Other</th></tr>';
@@ -158,9 +158,10 @@ function accountCounts(accounts) {
 	];
 }
 
-/** @type {(results: Result[], privateCount: number, failures: Failure[], checked: Checked) => Report} */
+// `waiting` are the logins of the accounts whose installation is waiting on them to approve the App's permissions, so their repositories weren't checked; that's not a failure, but the report says so
+/** @type {(results: Result[], privateCount: number, failures: Failure[], checked: Checked, waiting?: string[]) => Report} */
 // eslint-disable-next-line max-params
-export function report(results, privateCount, failures, checked) {
+export function report(results, privateCount, failures, checked, waiting = []) {
 	const total = results.length + privateCount;
 	const count = checked.installed + checked.external;
 	const sources = checked.external > 0 ? `, and ${checked.external} sources of forks it’s installed on` : '';
@@ -171,21 +172,23 @@ export function report(results, privateCount, failures, checked) {
 		...updated ? [updated] : [],
 	].join(' ');
 	const incomplete = '⚠️ Some repositories could not be checked, so this report is incomplete:';
+	const awaiting = `⏳ Waiting on permission approval: ${waiting.map(code).join(', ')}. Until each of these accounts approves the App’s permissions (in its settings, under “Applications”, or from GitHub’s email about them), its repositories aren’t checked.`;
 	const accounts = byAccount(results);
 	const title = `Workflow drift: ${total} of ${count} repositories`;
 
 	// everything: every failure, every repository, and every diff, in as many files as it takes
-	const parts = split([
+	const parts = split(/** @type {(string | Unit)[]} */ ([]).concat(
 		`# ${title}`,
 		'',
 		intro('This report is updated in place on every run.'),
-		...failures.length > 0 ? [
-			'', incomplete, ...failures.map(failureItem),
-		] : [],
-		...accounts.flatMap((account) => ['', ...accountTable(account)]),
+		failures.length > 0
+			? ['', incomplete].concat(failures.map(failureItem))
+			: [],
+		waiting.length > 0 ? ['', awaiting] : [],
+		accounts.flatMap((account) => /** @type {(string | Unit)[]} */ (['']).concat(accountTable(account))),
 		'',
 		legend(),
-	], maxPartLength);
+	), maxPartLength);
 
 	return {
 		title,
@@ -205,29 +208,42 @@ export function report(results, privateCount, failures, checked) {
 			};
 			const fullReport = where ? `[the full report](${where})` : 'the full report';
 			/** @type {(listFailures: boolean, withAccounts: boolean, detailed?: boolean) => string} */
-			const render = (listFailures, withAccounts, detailed = true) => [
-				...forIssue ? [marker] : [],
+			const render = (listFailures, withAccounts, detailed = true) => /** @type {string[]} */ ([]).concat(
+				forIssue ? [marker] : [],
 				intro(forIssue ? 'This issue is updated in place on every run, and closed when there are none.' : ''),
 				'',
 				link(detailed),
-				...failures.length > 0 ? [
-					'',
-					...listFailures
-						? [incomplete, ...failures.map(failureItem)]
-						: [`⚠️ ${failures.length} repositories or installations could not be checked, so this report is incomplete; ${fullReport} lists them all.`],
-				] : [],
-				...accounts.length > 0 ? [
-					'',
-					...withAccounts
+				failures.length > 0
+					? [''].concat(listFailures
+						? [incomplete].concat(failures.map(failureItem))
+						: [`⚠️ ${failures.length} repositories or installations could not be checked, so this report is incomplete; ${fullReport} lists them all.`])
+					: [],
+				waiting.length > 0
+					? [
+						'',
+						listFailures
+							? awaiting
+							: `⏳ ${waiting.length} accounts are waiting on permission approval, so their repositories weren’t checked; ${fullReport} lists them.`,
+					]
+					: [],
+				accounts.length > 0
+					? [''].concat(withAccounts
 						? accountCounts(accounts)
-						: [`${accounts.length} accounts have repositories with discrepancies; ${fullReport} has a table for each.`],
-				] : [],
+						: [`${accounts.length} accounts have repositories with discrepancies; ${fullReport} has a table for each.`])
+					: [],
 				// last, so it's where anyone looking for how to act on the report expects it
-				...forIssue ? [
-					'', '<details><summary><b>Commands</b></summary>', '', legend({ heading: false }), '', '</details>',
-				] : [],
-			].join('\n');
-			// the failures, the accounts' counts, or the links to each file (or the gist's error), are left to the full report (or the log) only when there are too many for this; without all three, nothing in it grows with the fleet, so it always fits
+				forIssue
+					? [
+						'',
+						'<details><summary><b>Commands</b></summary>',
+						'',
+						legend({ heading: false }),
+						'',
+						'</details>',
+					]
+					: [],
+			).join('\n');
+			// the failures (and the accounts waiting on approval), the accounts' counts, or the links to each file (or the gist's error), are left to the full report (or the log) only when there are too many for this; without all three, nothing in it grows with the fleet, so it always fits
 			return [
 				render(true, true),
 				render(false, true),

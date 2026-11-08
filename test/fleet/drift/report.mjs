@@ -6,7 +6,7 @@ const collapsedLegend = ['<details><summary><b>Commands</b></summary>', '', lege
 import { marker } from '../../../fleet/drift/marker.mjs';
 import { maxPartLength, maxSummaryLength, report } from '../../../fleet/drift/report.mjs';
 
-/** @typedef {import('../../../fleet/drift/check.mjs').Result} Result */
+/** @import { Result } from '../../../fleet/drift/check.mjs' */
 
 const gist = { html_url: 'https://gist.github.com/g', files: [{ name: 'workflow-drift.md', raw_url: 'https://gist.githubusercontent.com/u/g/raw/1/workflow-drift.md' }] }; // eslint-disable-line camelcase
 
@@ -38,7 +38,7 @@ function failureItems(text) {
 }
 
 test('report: the summary always fits, and the full report always has everything', (t) => {
-	for (const [accountCount, failureCount] of [
+	[
 		[1, 0],
 		[100, 100],
 		[2000, 0],
@@ -46,11 +46,11 @@ test('report: the summary always fits, and the full report always has everything
 		[0, 5000],
 		[10, 5000],
 		[2000, 5000],
-	]) {
+	].forEach(([accountCount, failureCount]) => {
 		const results = accounts(accountCount);
 		const found = report(results, 3, failures(failureCount), { installed: accountCount + 3, external: 0 });
 		const label = `${accountCount} accounts, ${failureCount} failures`;
-		for (const forIssue of [true, false]) {
+		[true, false].forEach((forIssue) => {
 			const summary = found.summary(gist, forIssue);
 			const where = `${label}, ${forIssue ? 'the issue' : 'the run summary'}`;
 			t.ok(summary.length <= maxSummaryLength, `${where}: fits (${summary.length} characters)`);
@@ -69,13 +69,13 @@ test('report: the summary always fits, and the full report always has everything
 			const hasTable = accountRows(summary) === accountCount;
 			const countsAccounts = summary.includes(`${accountCount} accounts have repositories with discrepancies; [the full report](https://gist.github.com/g) has a table for each.`);
 			t.ok(accountCount === 0 || hasTable !== countsAccounts, `${where}: has every account’s row, or counts the accounts`);
-		}
+		});
 
 		const full = found.parts.join('\n');
 		t.equal(failureItems(full), failureCount, `${label}: the full report lists every failure`);
 		t.equal((full.match(/<details><summary><b>account-[^<]*<\/b>: 1 repository<\/summary>/g) ?? []).length, accountCount, `${label}: and has every account’s table`);
 		t.ok(found.parts.every((part) => part.length <= maxPartLength && Buffer.byteLength(part) < 1000000), `${label}: in files that are each under 1 MB (${found.parts.length})`);
-	}
+	});
 
 	const someFailures = report(accounts(2000), 0, failures(10), { installed: 2000, external: 0 }).summary(gist, true);
 	t.equal(failureItems(someFailures), 10, 'with too many accounts, failures that fit are still listed');
@@ -105,6 +105,23 @@ test('report: the summary always fits, and the full report always has everything
 	const failedCounted = report(accounts(1), 0, failures(5000), { installed: 1, external: 0 }).summary({ error: 'boom' }, true);
 	t.ok(failedCounted.includes('⚠️ 5000 repositories or installations could not be checked, so this report is incomplete; the full report lists them all.'), 'counting what doesn’t fit, with no link');
 
+	t.end();
+});
+
+test('report: accounts waiting on permission approval are said once, but aren’t failures', (t) => {
+	const line = '⏳ Waiting on permission approval: `es-shims`, `inspect-js`. Until each of these accounts approves the App’s permissions (in its settings, under “Applications”, or from GitHub’s email about them), its repositories aren’t checked.';
+	const found = report(accounts(1), 0, [], { installed: 1, external: 0 }, ['es-shims', 'inspect-js']);
+	[true, false].forEach((forIssue) => {
+		const summary = found.summary(gist, forIssue);
+		t.equal(summary.split(line).length, 2, `${forIssue ? 'the issue' : 'the run summary'} lists them once`);
+		t.notOk(summary.includes('incomplete'), `${forIssue ? 'the issue' : 'the run summary'} lists no failures`);
+	});
+	t.equal(found.parts.join('\n').split(line).length, 2, 'as does the full report');
+
+	const counted = report(accounts(2000), 0, failures(5000), { installed: 2000, external: 0 }, ['es-shims', 'inspect-js']).summary(gist, true);
+	t.ok(counted.length <= maxSummaryLength, 'with too many failures, it still fits');
+	t.ok(counted.includes('\n\n⏳ 2 accounts are waiting on permission approval, so their repositories weren’t checked; [the full report](https://gist.github.com/g) lists them.\n\n'), 'counting them, as it counts the failures');
+	t.notOk(report(accounts(1), 0, [], { installed: 1, external: 0 }).summary(gist, true).includes('⏳'), 'with none, it says nothing about them');
 	t.end();
 });
 

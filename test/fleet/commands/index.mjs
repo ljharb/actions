@@ -18,12 +18,9 @@ import {
 import { installedRepo, privateKey } from '../lib/helpers/github.mjs';
 import { makeRemotes } from './helpers/remotes.mjs';
 
-/** @typedef {import('../lib/helpers/github.mjs').Scenario} GitHubScenario */
-/** @typedef {import('../lib/helpers/github.mjs').RepoSpec} RepoSpec */
-/** @typedef {import('../lib/helpers/github.mjs').Recorded} Recorded */
-/** @typedef {import('./helpers/preload.mjs').Scenario} Scenario */
-/** @typedef {import('./helpers/preload.mjs').CommandsScenario} CommandsScenario */
-/** @typedef {import('../drift/helpers/child.mjs').ChildResult} ChildResult */
+/** @import { Scenario as GitHubScenario, RepoSpec, Recorded } from '../lib/helpers/github.mjs' */
+/** @import { Scenario, CommandsScenario } from './helpers/preload.mjs' */
+/** @import { ChildResult } from '../drift/helpers/child.mjs' */
 /** @typedef {{ name: string, text: string | null }[]} Workflows */
 
 const script = path.join('fleet', 'commands', 'index.mjs');
@@ -181,19 +178,19 @@ test('fleet/commands: ignores anything but a command on the report issue', (t) =
 		['an issue without the marker', { issue: { ...report, body: 'some other issue' }, comment: comment('/fix ljharb') }],
 		['an issue without a creator', { issue: { number: 9, body: marker }, comment: comment('/fix ljharb') }],
 	];
-	for (const [label, event] of events) {
+	events.forEach(([label, event]) => {
 		const { status, stdout, requests } = run(t, { event });
 		t.equal(status, 0, `${label}: exits successfully`);
 		t.match(stdout, notReport, `${label}: says why it does nothing`);
 		t.deepEqual(requests, [], `${label}: makes no request`);
-	}
+	});
 
-	for (const login of ['mallory', 'other-app[bot]']) {
+	['mallory', 'other-app[bot]'].forEach((login) => {
 		const { status, stdout, requests } = run(t, { event: { issue: { ...report, user: { login } }, comment: comment('/fix ljharb') } });
 		t.equal(status, 0, `an issue ${login} created: exits successfully`);
 		t.match(stdout, notReport, `an issue ${login} created: says why it does nothing`);
 		t.deepEqual(requests.map((r) => `${r.method} ${r.path}`), ['GET /app'], `an issue ${login} created: only reads the App, to compare its bot’s login`);
-	}
+	});
 
 	const other = run(t, { event: { issue: report, comment: comment('thanks!\n/fix ljharb') } });
 	t.equal(other.status, 0, 'a comment that is not a command: exits successfully');
@@ -217,7 +214,7 @@ test('fleet/commands: ignores anything but a command on the report issue', (t) =
 test('fleet/commands: only people with write access can run commands', (t) => {
 	/** @type {[string, Record<string, string>][]} */
 	const cases = [['no access', {}], ['read access', { maintainer: 'read' }]];
-	for (const [label, permissions] of cases) {
+	cases.forEach(([label, permissions]) => {
 		const { status, stdout, requests } = run(t, { event: { issue: report, comment: comment('/fix ljharb') }, commands: { permissions } });
 		t.equal(status, 0, `${label}: exits successfully`);
 		const rest = asBot(t, requests, label);
@@ -228,7 +225,7 @@ test('fleet/commands: only people with write access can run commands', (t) => {
 		t.deepEqual(rest.map((r) => r.authorization), [issueToken, issueToken], `${label}: both as the App’s bot`);
 		t.deepEqual(replies(requests), ['Only people with write access to this repository can run fleet commands, so nothing was done.'], `${label}: says they’re not allowed`);
 		t.match(stdout, new RegExp(`^the commenter’s permission is \`${permissions.maintainer ?? 'none'}\`; nothing done$`, 'm'), `${label}: logs why`);
-	}
+	});
 
 	t.end();
 });
@@ -240,7 +237,7 @@ test('fleet/commands: replies with the legend to anything it can’t run', (t) =
 		['/dry-run fix', '`/dry-run fix` needs at least one filter: every repository at once is too broad.'],
 		['/fix ljharb @everyone ![x](https://evil.example)', 'Unknown filters: `@everyone`, `![x](https://evil.example)`.'],
 	];
-	for (const [body, expected] of cases) {
+	cases.forEach(([body, expected]) => {
 		const { status, stdout, requests } = run(t, { event: { issue: report, comment: comment(body, 'admin-person') }, commands: { permissions: { 'admin-person': 'admin' } } });
 		t.equal(status, 0, `${body}: exits successfully`);
 		const rest = asBot(t, requests, body);
@@ -256,7 +253,7 @@ test('fleet/commands: replies with the legend to anything it can’t run', (t) =
 		t.deepEqual(rest.map((r) => r.authorization), [issueToken, issueToken, issueToken, issueToken, issueToken], `${body}: all as the App’s bot`);
 		t.deepEqual(replies(requests), [`${expected} Nothing was done.\n\n${legend()}`], `${body}: explains, then shows the legend`);
 		t.match(stdout, /^not a valid command; replied with how to use them$/m, `${body}: logs it`);
-	}
+	});
 
 	t.end();
 });
@@ -362,6 +359,35 @@ test('fleet/commands: dry run', (t) => {
 	t.end();
 });
 
+test('fleet/commands: an account whose installation is waiting on it to approve the App’s permissions is said in the reply', (t) => {
+	const { status, stdout, requests } = run(t, {
+		event: { issue: report, comment: comment('/dry-run fix es-shims') },
+		github: {
+			installations: [
+				{ id: 1, account: { login: 'ljharb' }, permissions: { contents: 'read', metadata: 'read' } },
+				{ id: 2, account: { login: 'es-shims' }, permissions: { metadata: 'read' } },
+			],
+			installationRepos: { 1: [installedRepo('ljharb', 'clean')], 2: [installedRepo('es-shims', 'unseen')] },
+			repos: { 'ljharb/clean': repo() },
+		},
+		commands: { permissions: { maintainer: 'write' } },
+		env: { INPUT_ACCOUNTS: 'ljharb es-shims' },
+	});
+
+	t.equal(status, 0, 'exits successfully');
+	t.notOk((/^::warning::/m).test(stdout), 'without a warning');
+	t.deepEqual(replies(requests), [
+		expectedReply('/dry-run fix es-shims', [], [
+			'No repository matches those filters.',
+			'',
+			'⏳ Waiting on permission approval: `es-shims`; until each of these accounts approves the App’s permissions, its repositories are not considered.',
+		], true),
+	], 'the reply says its repositories weren’t considered, rather than only that nothing matched');
+	t.deepEqual(matching(requests, 'POST', /^\/app\/installations\/2\/access_tokens$/), [], 'no token is asked for for the waiting installation');
+
+	t.end();
+});
+
 test('fleet/commands: filters', (t) => {
 	const github = {
 		installations: [
@@ -449,7 +475,7 @@ test('fleet/commands: filters', (t) => {
 		'/dry-run fix ljharb',
 		'/dry-run fix inspect-js ljharb es-shims',
 	]);
-	for (const [line, rows, extra = []] of cases) {
+	cases.forEach(([line, rows, extra = []]) => {
 		const { status, stdout, requests } = run(t, {
 			event: { issue: report, comment: comment(line) }, github, env: { INPUT_ACCOUNTS: 'ljharb es-shims inspect-js' }, versions: true,
 		});
@@ -459,13 +485,13 @@ test('fleet/commands: filters', (t) => {
 		const planned = matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).some((r) => r.body?.repositories?.[0] === 'secret');
 		t.equal(planned, privateMatches.has(line), `${line}: the private repository is ${privateMatches.has(line) ? '' : 'not '}planned, as the filters say`);
 		t.notOk(stdout.includes('secret') || stdout.includes('private repositor'), `${line}: and never mentioned in the log`);
-	}
+	});
 
 	t.end();
 });
 
 test('fleet/commands: a reply for filters that match only private repositories is the same as for ones that match nothing', (t) => {
-	for (const [line, dryRun] of /** @type {const} */ ([['/dry-run fix ljharb/secret', true], ['/fix ljharb/secret', false], ['/fix ljharb/secret-broken', false]])) { // eslint-disable-line no-extra-parens
+	/** @type {const} */ ([['/dry-run fix ljharb/secret', true], ['/fix ljharb/secret', false], ['/fix ljharb/secret-broken', false]]).forEach(([line, dryRun]) => {
 		const remotes = makeRemotes(t, { 'ljharb/secret': {} });
 		const commands = { permissions: { maintainer: 'write' }, serverURL: remotes.serverURL };
 		const env = { GITHUB_SERVER_URL: remotes.serverURL };
@@ -512,7 +538,7 @@ test('fleet/commands: a reply for filters that match only private repositories i
 		} else {
 			t.deepEqual(changes(withPrivate.requests), [], `${line}: changing nothing`);
 		}
-	}
+	});
 
 	t.end();
 });
@@ -592,9 +618,9 @@ test('fleet/commands: fixes each repository in a PR from its `fleet/workflows` b
 		'- `.github/workflows/node-twenties.yml`: ``there is no valid `engines.node` in `package.json` to derive its node version range from``',
 	].join('\n'), 'with a body listing each change and why, and what it left alone, linking the comment');
 	t.deepEqual(remotes.log('ljharb/new', 'main..fleet/workflows'), [`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${message}`], 'one commit, by the bot');
-	for (const name of all) {
+	all.forEach((name) => {
 		t.equal(remotes.show('ljharb/new', 'fleet/workflows', `.github/workflows/${name}`), template(name), `\`${name}\` is written from its template`);
-	}
+	});
 
 	const updated = matching(requests, 'PATCH', /^\/repos\/ljharb\/existing\/pulls\/3$/)[0];
 	t.equal(updated.body.title, title, 'the existing PR is retitled');
@@ -740,9 +766,9 @@ test('fleet/commands: a private repository’s outcome is never output, and is a
 
 	const [reply] = replies(requests);
 	const secrets = ['secret', 'acquisition', 'release-', 'git clone', 'does not exist', 'someone else', 'private repositor', '2 of'];
-	for (const [where, text] of [['the log', stdout], ['stderr', stderr], ['the summary', summary], ['the reply', reply]]) {
+	[['the log', stdout], ['stderr', stderr], ['the summary', summary], ['the reply', reply]].forEach(([where, text]) => {
 		t.deepEqual(secrets.filter((secret) => text.includes(secret)), [], `${where} reveals nothing about a private repository`);
-	}
+	});
 	t.deepEqual(reply.split('\n').filter((l) => l.startsWith('| `')), [
 		`| \`ljharb/alpha\` | created ${remotes.serverURL}/ljharb/alpha/pull/1 |`,
 		'| `ljharb/empty` | failed: `the repository has no default branch` |',
@@ -812,9 +838,9 @@ test('fleet/commands: a reply too long for a comment goes on in more, splitting 
 	t.ok(bodies[0].startsWith('`/dry-run fix ljharb` (a dry run, so nothing was changed; see [the run](https://github.com/ljharb/actions/actions/runs/42)):\n\n| Repository | Outcome |'), 'the first starts the reply');
 	t.ok(bodies.at(-1)?.endsWith(`\n\n${privateNote(true)}`), 'and the last ends it, saying that any private repositories matching were processed too');
 	t.equal(summary, bodies.join('\n\n---\n\n'), 'the run summary has every comment');
-	for (const body of [...bodies, summary]) {
+	bodies.concat(summary).forEach((body) => {
 		t.notOk((/omitted|more repositories|…/).test(body), 'nothing is left out');
-	}
+	});
 
 	t.end();
 });
@@ -967,7 +993,7 @@ test('fleet/commands: swapping the 👀 is only a best effort', (t) => {
 		['removing the 👀 fails', { remove: 500 }, ['eyes'], 'could not mark the command as failed: could not be read (HTTP 500)'],
 		['adding the 😕 fails', { finish: 500 }, ['eyes', 'confused'], 'could not mark the command as failed: could not be read (HTTP 500)'],
 	];
-	for (const [label, reactions, contents, warning] of cases) {
+	cases.forEach(([label, reactions, contents, warning]) => {
 		const { status, stdout, requests } = run(t, {
 			event: { issue: report, comment: comment('/frobnicate') },
 			commands: { permissions: { maintainer: 'write' }, reactions },
@@ -977,12 +1003,12 @@ test('fleet/commands: swapping the 👀 is only a best effort', (t) => {
 		t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/9\/comments$/).length, 1, `${label}: and still replies`);
 		const warnings = stdout.split('\n').filter((l) => l.startsWith('::warning::'));
 		t.deepEqual(warnings, warning ? [`::warning::${warning}`] : [], `${label}: ${warning ? 'warns' : 'without a warning'}`);
-	}
+	});
 	t.end();
 });
 
 test('fleet/commands: a command that worked gets 🚀, and saying so failing only warns', (t) => {
-	for (const finish of [undefined, 500]) {
+	[undefined, 500].forEach((finish) => {
 		const { status, stdout, requests } = run(t, {
 			event: { issue: report, comment: comment('/dry-run fix ljharb') },
 			commands: { permissions: { maintainer: 'write' }, reactions: finish ? { finish } : {} },
@@ -991,6 +1017,6 @@ test('fleet/commands: a command that worked gets 🚀, and saying so failing onl
 		t.equal(status, 0, `${label}: exits successfully`);
 		t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), ['eyes', 'rocket'], `${label}: swaps the 👀 for 🚀`);
 		t.deepEqual(stdout.split('\n').filter((l) => l.startsWith('::warning::could not mark')), finish ? ['::warning::could not mark the command as done: could not be read (HTTP 500)'] : [], `${label}: ${finish ? 'warns' : 'without a warning'}`);
-	}
+	});
 	t.end();
 });
