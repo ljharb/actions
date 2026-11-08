@@ -13,12 +13,14 @@ import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+/** @import { Test } from 'tape' */
+
 export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 export const actionDir = path.join(repoRoot, 'bun', 'install');
 
 const childSetupURL = new URL('child-setup.mjs', import.meta.url).href;
 
-/** @param {import('tape').Test} t */
+/** @param {Test} t */
 export function makeTmp(t) {
 	const dir = realpathSync(mkdtempSync(path.join(os.tmpdir(), 'bun-install-test-')));
 	t.teardown(() => rmSync(dir, { force: true, recursive: true }));

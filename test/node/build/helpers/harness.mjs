@@ -4,6 +4,8 @@ import os from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
+/** @import { PreloadConfig } from './preload.mjs' */
+
 export const repoRoot = path.resolve(import.meta.dirname, '../../../..');
 
 const preloadURL = pathToFileURL(path.join(import.meta.dirname, 'preload.mjs')).href;
@@ -162,7 +164,7 @@ export function runAction(script, options = {}) {
 		FAKE_LOG_DIR: logDir,
 	});
 
-	/** @type {import('./preload.mjs').PreloadConfig} */
+	/** @type {PreloadConfig} */
 	const preloadConfig = { report: reportFile };
 	if (options.nvmVersion) {
 		preloadConfig.nvmVersion = options.nvmVersion;

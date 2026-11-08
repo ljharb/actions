@@ -29,6 +29,7 @@ import { botEmail, prCommit } from './helpers/merge.mjs';
 
 /** @import { Scenario as GitHubScenario, Recorded } from '../lib/helpers/github.mjs' */
 /** @import { MergeScenario } from './helpers/merge.mjs' */
+/** @import { Test } from 'tape' */
 
 const script = path.join('fleet', 'commands', 'index.mjs');
 
@@ -49,7 +50,7 @@ function github(names, privates = []) {
 	};
 }
 
-/** @type {(t: import('tape').Test, line: string, options?: { github?: GitHubScenario, merge?: MergeScenario }) => ReturnType<typeof runScript>} */
+/** @type {(t: Test, line: string, options?: { github?: GitHubScenario, merge?: MergeScenario }) => ReturnType<typeof runScript>} */
 function command(t, line, options = {}) {
 	return runScript(t, script, {
 		event: { issue: report, comment: comment(line) },

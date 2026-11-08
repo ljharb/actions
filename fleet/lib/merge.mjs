@@ -15,8 +15,8 @@ import { code } from './markdown.mjs';
 export { ciStatus };
 export { behindReason, maxPRCommits } from './merge-guards.mjs';
 
-/** @import { Octokit } from './app.mjs' */
-/** @typedef {ReturnType<typeof import('./app.mjs').appAuth>} Auth */
+/** @import { Octokit, appAuth } from './app.mjs' */
+/** @typedef {ReturnType<typeof appAuth>} Auth */
 /**
  * A PR waiting for its checks to finish, as the merge queue stores it: `headSha` and `base` are what `/merge` saw, and only that is ever merged. `private` is whether its repository was private when it was queued, and `commandFailed` whether anything else the same command did already failed, so that its reaction says so once its last PR is resolved.
  * @typedef {{

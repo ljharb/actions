@@ -38,7 +38,8 @@ import {
 } from './helpers/git.mjs';
 
 /** @import { PRState } from '../../../fleet/lib/pr.mjs' */
-/** @import { Server } from './helpers/git.mjs' */
+/** @import { Server, Person } from './helpers/git.mjs' */
+/** @import { Test } from 'tape' */
 /** @typedef {{ method: string, path: string, body: any, authorization: string }} Recorded */
 /** @typedef {(request: { path: string, body: any }) => [number, unknown]} Handler */
 
@@ -60,7 +61,7 @@ const isLockfile = (file) => file === lockfile;
 
 /**
  * Mocks the GitHub REST API: each handler is `[method, path pattern, reply]`; every request is recorded.
- * @type {(t: import('tape').Test, handlers: [string, RegExp, Handler][]) => Recorded[]}
+ * @type {(t: Test, handlers: [string, RegExp, Handler][]) => Recorded[]}
  */
 function mockAPI(t, handlers) {
 	nock.disableNetConnect();
@@ -116,7 +117,7 @@ function captureMasks(fn) {
 	}
 }
 
-/** @type {(t: import('tape').Test, server: Server, extra?: { base?: string }) => ReturnType<typeof checkout> & { dir: string }} */
+/** @type {(t: Test, server: Server, extra?: { base?: string }) => ReturnType<typeof checkout> & { dir: string }} */
 function clone(t, server, extra = {}) {
 	const dir = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
 	return {
@@ -132,7 +133,7 @@ function clone(t, server, extra = {}) {
 	};
 }
 
-/** @type {(t: import('tape').Test, key: string, value: string | undefined) => void} */
+/** @type {(t: Test, key: string, value: string | undefined) => void} */
 function setEnv(t, key, value) {
 	const saved = process.env[key];
 	if (typeof value === 'undefined') {
@@ -149,7 +150,7 @@ function setEnv(t, key, value) {
 	});
 }
 
-/** @type {(t: import('tape').Test, extra?: Record<string, string>) => Server} */
+/** @type {(t: Test, extra?: Record<string, string>) => Server} */
 function setup(t, extra = {}) {
 	isolateProcessGit(t);
 	return makeServer(t, repository, { ...files, ...extra });
@@ -392,7 +393,7 @@ test('remoteTip', (t) => {
 	t.end();
 });
 
-/** @type {(dir: string, message: string, contents: Record<string, string | null>, committer: import('./helpers/git.mjs').Person) => void} */
+/** @type {(dir: string, message: string, contents: Record<string, string | null>, committer: Person) => void} */
 function commitAs(dir, message, contents, committer) {
 	writeFiles(dir, contents);
 	fixtureGit(dir, ['add', '--all'], committer);

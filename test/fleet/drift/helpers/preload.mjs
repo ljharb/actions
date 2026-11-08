@@ -6,10 +6,13 @@ import nock from 'nock';
 import { mockGitHub } from '../../lib/helpers/github.mjs';
 import { mockVersions } from './versions.mjs';
 
+/** @import { VersionFixture } from './versions.mjs' */
+/** @import { Scenario } from '../../lib/helpers/github.mjs' */
+
 /**
  * @typedef {{
- *   versions?: import('./versions.mjs').VersionFixture,
- *   github?: import('../../lib/helpers/github.mjs').Scenario,
+ *   versions?: VersionFixture,
+ *   github?: Scenario,
  *   log?: string,
  *   throwStringOnSplit?: string,
  * }} ChildScenario

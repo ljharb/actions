@@ -7,9 +7,11 @@ import test from 'tape';
 
 import { runAction, repoRoot, CACHE_URL } from './harness.mjs';
 
+/** @import { RunResult } from './harness.mjs' */
+
 const NVM_VERSION = 'v0.40.3';
 
-/** @type {(result: import('./harness.mjs').RunResult) => string[]} */
+/** @type {(result: RunResult) => string[]} */
 const requestURLs = (result) => result.report.requests.map(({ method, url }) => `${method} ${url}`);
 
 const nvmRequests = [

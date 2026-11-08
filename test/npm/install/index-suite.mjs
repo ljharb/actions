@@ -13,6 +13,8 @@ import {
 	runAction,
 } from './helpers.mjs';
 
+/** @import { Test } from 'tape' */
+
 /**
  * @typedef {{
  *   nodeVersion: string,
@@ -25,7 +27,7 @@ import {
  */
 
 /**
- * @param {import('tape').Test} t
+ * @param {Test} t
  * @param {{
  *   dir: string,
  *   baseEnv: Record<string, string>,

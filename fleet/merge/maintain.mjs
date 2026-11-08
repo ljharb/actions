@@ -28,12 +28,13 @@ import {
 } from '../lib/pr.mjs';
 import { reposWithAppPRs } from './repos.mjs';
 
-/** @import { Octokit } from '../lib/app.mjs' */
-/** @typedef {ReturnType<typeof import('../lib/app.mjs').appAuth>} Auth */
-/** @import { PR } from '../lib/merge.mjs' */
+/** @import { Octokit, appAuth } from '../lib/app.mjs' */
+/** @typedef {ReturnType<typeof appAuth>} Auth */
+/** @import { PR, Target as MergeTarget } from '../lib/merge.mjs' */
 /** @import { CIFailure, Commit } from '../lib/ci.mjs' */
 /** @import { Git, Identity } from '../lib/pr.mjs' */
 /** @import { Repo } from './repos.mjs' */
+/** @import { Inputs } from '../drift/inputs.mjs' */
 /**
  * What keeping one PR up to date came to:
  * - `changed`: its branch moved while it was being looked at, so it's left for the next run
@@ -140,10 +141,10 @@ async function rebase(job) {
 
 /**
  * Only the inputs the reusable workflow each is passed to declares: only those can be what it needed (and can be kept).
- * @type {(inputs: import('../drift/inputs.mjs').Inputs) => import('../drift/inputs.mjs').Inputs}
+ * @type {(inputs: Inputs) => Inputs}
  */
 function declaredOnly(inputs) {
-	/** @type {import('../drift/inputs.mjs').Inputs} */
+	/** @type {Inputs} */
 	const declared = new Map();
 	inputs.forEach(({ file, inputs: passed }, job) => {
 		const known = new Map(Array.from(passed).filter(([key]) => declaredInputs(file).has(key)));
@@ -347,7 +348,7 @@ export async function maintainPR(context, {
 	const target = {
 		context, repo, pr, octokit, token,
 	};
-	/** @type {import('../lib/merge.mjs').Target} */
+	/** @type {MergeTarget} */
 	const at = {
 		owner: repo.owner, name: repo.name, number: pr.number, base: pr.base.ref, head: pr.head.sha,
 	};

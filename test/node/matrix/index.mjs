@@ -4,6 +4,9 @@ import test from 'tape';
 
 import { runAction } from './index/run.mjs';
 
+/** @import { RunResult } from './index/run.mjs' */
+/** @import { Test } from 'tape' */
+
 /* eslint camelcase: 0 */
 
 const script = fileURLToPath(new URL('../../../node/matrix/index.mjs', import.meta.url));
@@ -14,7 +17,7 @@ const noneFetched = 'NOCK_PENDING=["GET https://raw.githubusercontent.com:443/lj
 
 const eventPayload = { action: 'opened', number: 42 };
 
-/** @type {(inputs: Record<string, string>, mode?: string) => import('./index/run.mjs').RunResult} */
+/** @type {(inputs: Record<string, string>, mode?: string) => RunResult} */
 function run(inputs, mode = 'ok') {
 	return runAction(script, {
 		inputs,
@@ -24,7 +27,7 @@ function run(inputs, mode = 'ok') {
 	});
 }
 
-/** @type {(t: import('tape').Test, result: import('./index/run.mjs').RunResult, message: string) => void} */
+/** @type {(t: Test, result: RunResult, message: string) => void} */
 function assertFailure(t, result, message) {
 	t.equal(result.status, 1, 'exits with failure');
 	t.ok(result.stdout.includes(`::error::${message}`), `reports error: ${message}`);
@@ -32,7 +35,7 @@ function assertFailure(t, result, message) {
 	t.ok(result.stderr.includes(noneFetched), 'makes no network requests');
 }
 
-/** @type {(t: import('tape').Test, result: import('./index/run.mjs').RunResult) => { requireds: unknown, optionals: unknown }} */
+/** @type {(t: Test, result: RunResult) => { requireds: unknown, optionals: unknown }} */
 function parsedOutputs(t, result) {
 	t.equal(result.status, 0, 'exits successfully');
 	t.deepEqual(Object.keys(result.outputs).sort(), ['optionals', 'requireds'], 'sets exactly `requireds` and `optionals`');

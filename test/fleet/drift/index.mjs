@@ -8,8 +8,9 @@ import { runChild } from './helpers/child.mjs';
 import { nodeWorkflow, standardWorkflows, template } from './helpers/states.mjs';
 import { versionFixture } from './helpers/versions.mjs';
 
-/** @import { Scenario, RepoSpec, Recorded } from '../lib/helpers/github.mjs' */
+/** @import { Scenario, RepoSpec, Recorded, Gist } from '../lib/helpers/github.mjs' */
 /** @import { ChildResult } from './helpers/child.mjs' */
+/** @import { Test } from 'tape' */
 
 const marker = '<!-- ljharb/actions: fleet workflow drift -->';
 // the report issue's authors: the App's bot, and GitHub Actions' bot, which opened the report before the App wrote it
@@ -82,7 +83,7 @@ function gistWrites(requests) {
 }
 
 // the full report, as written to its gist: in one file, unless it's too big for one
-/** @type {(t: import('tape').Test, requests: Recorded[]) => string} */
+/** @type {(t: Test, requests: Recorded[]) => string} */
 function gistContent(t, requests) {
 	const writes = gistWrites(requests);
 	t.equal(writes.length, 1, 'writes the gist once');
@@ -158,7 +159,7 @@ function accountTable(owner, summary, rows) {
 }
 
 // every report ends with the commands' legend; this is the rest of it
-/** @type {(t: import('tape').Test, text: string) => string} */
+/** @type {(t: Test, text: string) => string} */
 function withoutLegend(t, text) {
 	const tail = `\n\n${legend()}`;
 	t.ok(text.endsWith(tail), 'ends with the commands’ legend');
@@ -411,7 +412,7 @@ test('fleet/drift: applies an account’s defaults, and skips its `.github` repo
 });
 
 test('fleet/drift: updates the gist found by its description, through every page, and the latest report issue, reopening it', (t) => {
-	/** @type {import('../lib/helpers/github.mjs').Gist[]} */
+	/** @type {Gist[]} */
 	const gists = [
 		...Array.from({ length: 120 }, (_, i) => ({ id: `other-${i}`, description: i % 2 ? `something else ${i}` : null, public: false })),
 		{ id: 'public-one', description: gistMarker, public: true, files: reportFiles },

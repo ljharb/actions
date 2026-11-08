@@ -4,6 +4,9 @@ import test from 'tape';
 
 import { runAction } from '../../node/matrix/index/run.mjs';
 
+/** @import { RunResult } from '../../node/matrix/index/run.mjs' */
+/** @import { Test } from 'tape' */
+
 /* eslint camelcase: 0 */
 
 const script = fileURLToPath(new URL('../../../bun/matrix/index.mjs', import.meta.url));
@@ -11,7 +14,7 @@ const versionsSetup = new URL('fixtures/versions-setup.mjs', import.meta.url).hr
 
 const eventPayload = { ref: 'refs/heads/main' };
 
-/** @type {(inputs: Record<string, string>, versions?: string[]) => import('../../node/matrix/index/run.mjs').RunResult} */
+/** @type {(inputs: Record<string, string>, versions?: string[]) => RunResult} */
 function run(inputs, versions) {
 	return runAction(script, {
 		inputs,
@@ -23,14 +26,14 @@ function run(inputs, versions) {
 	});
 }
 
-/** @type {(t: import('tape').Test, result: import('../../node/matrix/index/run.mjs').RunResult, message: string) => void} */
+/** @type {(t: Test, result: RunResult, message: string) => void} */
 function assertFailure(t, result, message) {
 	t.equal(result.status, 1, 'exits with failure');
 	t.ok(result.stdout.includes(`::error::${message}`), `reports error: ${message}`);
 	t.deepEqual(result.outputs, {}, 'sets no outputs');
 }
 
-/** @type {(t: import('tape').Test, result: import('../../node/matrix/index/run.mjs').RunResult) => { requireds: unknown, optionals: unknown }} */
+/** @type {(t: Test, result: RunResult) => { requireds: unknown, optionals: unknown }} */
 function parsedOutputs(t, result) {
 	t.equal(result.status, 0, 'exits successfully');
 	t.deepEqual(Object.keys(result.outputs).sort(), ['optionals', 'requireds'], 'sets exactly `requireds` and `optionals`');

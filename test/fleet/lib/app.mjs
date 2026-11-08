@@ -11,10 +11,11 @@ import {
 import { missingPermissions } from '../../../fleet/lib/installations.mjs';
 import { installedRepo, mockGitHub, privateKey } from './helpers/github.mjs';
 
-/** @import { Recorded, Scenario } from './helpers/github.mjs' */
-/** @import { RepoState } from '../../../fleet/lib/app.mjs' */
+/** @import { Test } from 'tape' */
+/** @import { Recorded, Scenario, RepoSpec, ParentData } from './helpers/github.mjs' */
+/** @import { RepoState, Options } from '../../../fleet/lib/app.mjs' */
 
-/** @type {(t: import('tape').Test, scenario: Scenario) => Recorded[]} */
+/** @type {(t: Test, scenario: Scenario) => Recorded[]} */
 function setup(t, scenario) {
 	nock.disableNetConnect();
 	/** @type {Recorded[]} */
@@ -262,7 +263,7 @@ test('discover: repository states', async (t) => {
 
 test('discover: batches of 20, one batch at a time, retrying a failed batch one repo at a time', async (t) => {
 	const repos = Array.from({ length: 45 }, (_, i) => installedRepo('es-shims', `r${String(i).padStart(2, '0')}`));
-	/** @type {Record<string, import('./helpers/github.mjs').RepoSpec>} */
+	/** @type {Record<string, RepoSpec>} */
 	const specs = Object.fromEntries(repos.map((r) => [r.full_name, { data: { isArchived: false } }]));
 	specs['es-shims/r25'] = { failInBatch: true, data: { isArchived: true } };
 	specs['es-shims/r30'] = { failAlways: true };
@@ -780,8 +781,6 @@ test('discover: an installation whose repositories are all ignored makes no Grap
 	t.deepEqual(graphqlRequests(requests), [], 'no GraphQL queries');
 });
 
-/** @import { ParentData } from './helpers/github.mjs' */
-
 // a fork's data, with each parent in turn the parent of the one before it
 /** @type {(...parents: Omit<ParentData, 'parent'>[]) => { data: { isFork: true, parent: ParentData | null } }} */
 function forkOf(...parents) {
@@ -1060,7 +1059,7 @@ test('discover: no source is checked without a committer, or without a candidate
 		},
 		commits: { 'allowed/source': 1 },
 	};
-	/** @type {[string, import('../../../fleet/lib/app.mjs').Options | undefined][]} */
+	/** @type {[string, Options | undefined][]} */
 	const cases = [
 		['no options', undefined],
 		['an empty committer', { sourceAccounts: new Set(['allowed']), committer: '' }],
@@ -1091,7 +1090,7 @@ test('discover: no source is checked without a committer, or without a candidate
 test('discover: sources are queried in batches of 20, one batch at a time, retrying a failed batch one source at a time', async (t) => {
 	const forks = Array.from({ length: 45 }, (_, i) => installedRepo('ljharb', `f${String(i).padStart(2, '0')}`));
 	const sources = forks.map((_, i) => `allowed/s${String(i).padStart(2, '0')}`);
-	/** @type {Record<string, import('./helpers/github.mjs').RepoSpec>} */
+	/** @type {Record<string, RepoSpec>} */
 	const specs = {
 		...Object.fromEntries(forks.map((r, i) => [r.full_name, forkOf({ nameWithOwner: sources[i] })])),
 		...Object.fromEntries(sources.map((s) => [s, { data: { defaultBranchRef: { name: 'main' } } }])),

@@ -12,6 +12,7 @@ import { privateKey } from '../../lib/helpers/github.mjs';
 /** @import { Scenario, CommandsScenario } from './preload.mjs' */
 /** @import { MergeScenario } from './merge.mjs' */
 /** @import { ChildResult } from '../../drift/helpers/child.mjs' */
+/** @import { Test } from 'tape' */
 
 const preload = pathToFileURL(path.join(import.meta.dirname, 'preload.mjs')).href;
 
@@ -73,7 +74,7 @@ export const failing = { checkRuns: [checkRun('tests', 'failure')] };
 
 /**
  * Runs `script` (relative to the repository's root) in a child process, as the workflow would, against the mocked API.
- * @type {(t: import('tape').Test, script: string, options: {
+ * @type {(t: Test, script: string, options: {
  *   event?: unknown,
  *   github?: GitHubScenario,
  *   commands?: CommandsScenario,

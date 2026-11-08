@@ -21,7 +21,8 @@ import {
 } from '../commands/helpers/merge-run.mjs';
 
 /** @import { Scenario as GitHubScenario } from '../lib/helpers/github.mjs' */
-/** @import { MergeScenario } from '../commands/helpers/merge.mjs' */
+/** @import { MergeScenario, CI } from '../commands/helpers/merge.mjs' */
+/** @import { Test } from 'tape' */
 
 const script = path.join('fleet', 'merge', 'index.mjs');
 // recently enough that nothing queued has been waiting too long
@@ -33,7 +34,7 @@ function queue(...entries) {
 	return JSON.stringify(entries.map((e) => ({ ...e, queuedAt })));
 }
 
-/** @type {(t: import('tape').Test, merge: MergeScenario, github?: GitHubScenario) => ReturnType<typeof runScript>} */
+/** @type {(t: Test, merge: MergeScenario, github?: GitHubScenario) => ReturnType<typeof runScript>} */
 function run(t, merge, github = {}) {
 	return runScript(t, script, { merge, github });
 }
@@ -246,7 +247,7 @@ test('fleet/merge: a command that had already failed is 😕 once its last PR is
 });
 
 test('fleet/merge: swapping a queued command’s reaction is only a best effort', (t) => {
-	/** @type {[import('../commands/helpers/merge.mjs').CI, string][]} */
+	/** @type {[CI, string][]} */
 	const cases = [[passing, 'done'], [failing, 'failed']];
 	for (const [ci, outcome] of cases) {
 		const { status, stdout, requests } = run(t, {

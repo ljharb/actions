@@ -1,4 +1,5 @@
-/** @typedef {ReturnType<typeof import('@actions/github').getOctokit>} Octokit */
+/** @import { getOctokit } from '@actions/github' */
+/** @typedef {ReturnType<typeof getOctokit>} Octokit */
 /** @typedef {{ name: string, raw_url: string }} GistFile */
 /** @typedef {{ html_url: string, files: GistFile[] }} Gist */
 

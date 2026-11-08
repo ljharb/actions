@@ -38,12 +38,14 @@ import { mockGitHub, privateKey } from './helpers/github.mjs';
 
 /** @import { Recorded, Scenario } from './helpers/github.mjs' */
 /** @import { MergeScenario, CI } from '../commands/helpers/merge.mjs' */
+/** @import { Test } from 'tape' */
+/** @import { Octokit } from '../../../fleet/lib/app.mjs' */
 
 /** @type {() => void} */
 let current = () => {};
 
 // each scenario replaces the one before it, even within a test
-/** @type {(t: import('tape').Test, merge: MergeScenario, github?: Scenario) => Recorded[]} */
+/** @type {(t: Test, merge: MergeScenario, github?: Scenario) => Recorded[]} */
 function setup(t, merge, github = {}) {
 	current();
 	nock.disableNetConnect();
@@ -104,7 +106,7 @@ function suite(id, conclusion, extra = {}) {
 	};
 }
 
-/** @type {(t: import('tape').Test, ci: CI) => Promise<Awaited<ReturnType<typeof ciStatus>>>} */
+/** @type {(t: Test, ci: CI) => Promise<Awaited<ReturnType<typeof ciStatus>>>} */
 async function classify(t, ci) {
 	setup(t, { ci: { h1: ci } });
 	return ciStatus(octokit, commit);
@@ -502,7 +504,7 @@ test('fastForward', async (t) => {
 	} catch (error) {
 		t.equal(messageOf(error), 'GitHub refused to fast-forward `main` to it (HTTP 422), eg because of a branch protection rule', 'a refusal says only its HTTP status, not its message');
 	}
-	const failing = /** @type {import('../../../fleet/lib/app.mjs').Octokit} */ (/** @type {unknown} */ ({ rest: { git: { async updateRef() { throw new Error('offline'); } } } }));
+	const failing = /** @type {Octokit} */ (/** @type {unknown} */ ({ rest: { git: { async updateRef() { throw new Error('offline'); } } } }));
 	await fastForward(failing, target).then(() => t.fail('should have thrown'), (error) => {
 		t.equal(messageOf(error), 'GitHub refused to fast-forward `main` to it, eg because of a branch protection rule', 'or nothing, without one');
 	});

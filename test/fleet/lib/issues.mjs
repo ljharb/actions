@@ -6,8 +6,9 @@ import { isReportAuthor, issueOctokit, legacyAuthor } from '../../../fleet/lib/i
 import { mockGitHub, privateKey } from './helpers/github.mjs';
 
 /** @import { Recorded, Scenario } from './helpers/github.mjs' */
+/** @import { Test } from 'tape' */
 
-/** @type {(t: import('tape').Test, scenario: Scenario) => Recorded[]} */
+/** @type {(t: Test, scenario: Scenario) => Recorded[]} */
 function setup(t, scenario) {
 	nock.disableNetConnect();
 	/** @type {Recorded[]} */

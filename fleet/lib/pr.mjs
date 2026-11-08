@@ -4,10 +4,11 @@ import { botLogin, installationToken, octokitFor } from './app.mjs';
 import { isBotBranch } from './branches.mjs';
 import { exec, gitAuthEnv } from './exec.mjs';
 
-/** @import { Octokit } from './app.mjs' */
+/** @import { Octokit, appAuth } from './app.mjs' */
+/** @import { ExecResult } from './exec.mjs' */
 /** @typedef {{ name: string, email: string }} Identity */
 /** @typedef {{ mode: 'create' } | { mode: 'update' | 'reopen', number: number, head: string }} PRState */
-/** @typedef {(args: string[], options?: { allowFailure?: boolean, input?: string }) => import('./exec.mjs').ExecResult} Git */
+/** @typedef {(args: string[], options?: { allowFailure?: boolean, input?: string }) => ExecResult} Git */
 /** @typedef {(path: string) => boolean} PathFilter */
 
 /** @type {(output: string) => string[]} */
@@ -16,7 +17,7 @@ function paths(output) {
 }
 
 // the App's bot user, so that its commits are attributed to it
-/** @type {(auth: ReturnType<typeof import('./app.mjs').appAuth>, installationId: number) => Promise<Identity>} */
+/** @type {(auth: ReturnType<typeof appAuth>, installationId: number) => Promise<Identity>} */
 export async function botIdentity(auth, installationId) {
 	// quiet, like a private repository's own requests: these only happen when there's a repository to fix, which may be a private one
 	const login = await botLogin(auth, true);

@@ -18,13 +18,13 @@ import {
 	writeQueue,
 } from '../lib/merge.mjs';
 
-/** @import { Octokit, RepoState } from '../lib/app.mjs' */
+/** @import { Octokit, RepoState, appAuth } from '../lib/app.mjs' */
 /** @import { Entry, PR } from '../lib/merge.mjs' */
 /** @import { Filters } from './syntax.mjs' */
 /**
  * `progress.queued` becomes whether the queue holds a public PR this command queued as soon as the queue is written, so that even if what follows (eg, replying) fails, the command's 👀 stays until the queue resolves that PR.
  * @typedef {{
- *   auth: ReturnType<typeof import('../lib/app.mjs').appAuth>,
+ *   auth: ReturnType<typeof appAuth>,
  *   dryRun: boolean,
  *   commentId: number,
  *   issueNumber: number,

@@ -28,6 +28,7 @@ import { installedRepo, mockGitHub, privateKey } from '../lib/helpers/github.mjs
 /** @import { Recorded, Scenario } from '../lib/helpers/github.mjs' */
 /** @import { MergeScenario } from '../commands/helpers/merge.mjs' */
 /** @import { Server } from '../lib/helpers/git.mjs' */
+/** @import { Test } from 'tape' */
 /** @typedef {{ key: string, user: { login: string }, body: string }} Comment */
 
 const repository = 'ljharb/r';
@@ -72,7 +73,7 @@ let current = () => {};
  * Comments the bot posted on a PR in earlier runs (`posted`, which this adds to) are listed as its comments.
  * With `offline`, the server's repository is out of reach while it runs, so that anything that clones it fails.
  * With `partial`, it's cloned by a `file://` URL from a server that allows filters, so that a clone is really as shallow, and as partial, as asked for (a local clone ignores `--depth` and `--filter`).
- * @type {(t: import('tape').Test, options: { server: Server, github: Scenario, merge: MergeScenario, posted?: Comment[], offline?: boolean, partial?: boolean }) => Promise<{ errors: number, stdout: string, requests: Recorded[] }>}
+ * @type {(t: Test, options: { server: Server, github: Scenario, merge: MergeScenario, posted?: Comment[], offline?: boolean, partial?: boolean }) => Promise<{ errors: number, stdout: string, requests: Recorded[] }>}
  */
 async function run(t, {
 	server, github, merge, posted = [], offline = false, partial = false,
@@ -182,7 +183,7 @@ function logged(stdout) {
 	return stdout.split('\n').filter((line) => line && !line.startsWith('::add-mask::'));
 }
 
-/** @type {(t: import('tape').Test, files?: Record<string, string>) => Server} */
+/** @type {(t: Test, files?: Record<string, string>) => Server} */
 function setup(t, files = { [pretest]: tapePretest, [aught]: tapeAught, 'README.md': 'readme\n' }) {
 	isolateProcessGit(t);
 	return makeServer(t, repository, files);

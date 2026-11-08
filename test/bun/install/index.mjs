@@ -18,6 +18,8 @@ import {
 	writeExecutable,
 } from './helpers.mjs';
 
+/** @import { Test } from 'tape' */
+
 const script = path.join(actionDir, 'index.mjs');
 const commandSh = path.join(actionDir, 'command.sh');
 
@@ -33,7 +35,7 @@ exit "\${FAKE_BASH_STATUS:-0}"
 `;
 
 /**
- * @param {import('tape').Test} t
+ * @param {Test} t
  * @param {Record<string, string>} [inputs]
  * @param {Record<string, string>} [extraEnv]
  * @param {{ git?: boolean }} [options]

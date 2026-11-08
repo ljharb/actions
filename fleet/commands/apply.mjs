@@ -30,14 +30,14 @@ import {
 	remoteTip,
 } from '../lib/pr.mjs';
 
-/** @import { RepoState } from '../lib/app.mjs' */
+/** @import { RepoState, appAuth } from '../lib/app.mjs' */
 /** @import { Identity } from '../lib/pr.mjs' */
 /** @import { Result } from '../drift/check.mjs' */
 /** @import { Plan, Category } from '../drift/fix.mjs' */
 /** @typedef {{ state: RepoState, result: Result | null, files: Set<string> | undefined }} Candidate */
 /**
  * @typedef {{
- *   auth: ReturnType<typeof import('../lib/app.mjs').appAuth>,
+ *   auth: ReturnType<typeof appAuth>,
  *   identities: Map<number, Promise<Identity>>,
  *   dryRun: boolean,
  *   categories: Set<Category>,

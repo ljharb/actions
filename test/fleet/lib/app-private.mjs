@@ -13,9 +13,10 @@ import {
 import { installedRepo, mockGitHub, privateKey } from './helpers/github.mjs';
 
 /** @import { Recorded, Scenario } from './helpers/github.mjs' */
-/** @import { RepoState } from '../../../fleet/lib/app.mjs' */
+/** @import { RepoState, Octokit } from '../../../fleet/lib/app.mjs' */
+/** @import { Test } from 'tape' */
 
-/** @type {(t: import('tape').Test, scenario: Scenario) => Recorded[]} */
+/** @type {(t: Test, scenario: Scenario) => Recorded[]} */
 function setup(t, scenario) {
 	nock.disableNetConnect();
 	/** @type {Recorded[]} */
@@ -147,7 +148,7 @@ test('octokitFor', async (t) => {
 	t.ok(warnings[0].includes('/repos/acme/visible'), 'a public repository’s Octokit logs its deprecation warning, which quotes the URL');
 	t.notOk(warnings.join('\n').includes('secret'), 'a private repository’s logs nothing');
 
-	/** @type {(octokit: import('../../../fleet/lib/app.mjs').Octokit) => Record<string, unknown>} */
+	/** @type {(octokit: Octokit) => Record<string, unknown>} */
 	const requestDefaults = (octokit) => octokit.request.endpoint.DEFAULTS.request ?? {};
 	const proxy = defaults.request ?? {};
 	const quiet = requestDefaults(octokitFor('token', true));

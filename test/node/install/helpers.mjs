@@ -3,10 +3,12 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
+/** @import { Test } from 'tape' */
+
 export const repoRoot = path.join(import.meta.dirname, '..', '..', '..');
 export const nockSetup = path.join(import.meta.dirname, 'nock-setup.mjs');
 
-/** @type {(t: import('tape').Test, prefix: string) => string} */
+/** @type {(t: Test, prefix: string) => string} */
 export function tmpDir(t, prefix) {
 	const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `node-install-test-${prefix}-`)));
 	t.teardown(() => fs.rmSync(dir, { force: true, recursive: true }));
@@ -96,7 +98,7 @@ export function readJSONLines(file) {
  */
 
 /**
- * @type {(t: import('tape').Test, script: string, options?: {
+ * @type {(t: Test, script: string, options?: {
  *   env?: Record<string, string | undefined>,
  *   cwd?: string,
  *   dir?: string,

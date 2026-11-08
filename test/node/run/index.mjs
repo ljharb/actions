@@ -7,11 +7,13 @@ import test from 'tape';
 
 import { runAction, repoRoot, CACHE_URL } from '../build/helpers/harness.mjs';
 
+/** @import { RunResult } from '../build/helpers/harness.mjs' */
+
 const script = 'node/run/index.mjs';
 const commandSH = path.join(repoRoot, 'node/run/command.sh');
 const setupNodeNVM = fileURLToPath(import.meta.resolve('setup-node-nvm'));
 
-/** @type {(result: import('../build/helpers/harness.mjs').RunResult) => string[]} */
+/** @type {(result: RunResult) => string[]} */
 const requestURLs = (result) => result.report.requests.map(({ method, url }) => `${method} ${url}`);
 
 test('node/run: setup-node-nvm failure exits early with its status', (t) => {

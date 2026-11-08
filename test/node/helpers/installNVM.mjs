@@ -7,6 +7,8 @@ import test from 'tape';
 
 import installNVM from '../../../node/helpers/installNVM.mjs';
 
+/** @import { Test } from 'tape' */
+
 /** @type {(tag: string) => nock.Scope[]} */
 function mockNVM(tag) {
 	return [
@@ -21,7 +23,7 @@ function mockNVM(tag) {
 	];
 }
 
-/** @type {(t: import('tape').Test, name: string, value: string | undefined) => void} */
+/** @type {(t: Test, name: string, value: string | undefined) => void} */
 function setEnv(t, name, value) {
 	const original = process.env[name];
 	const restore = () => {

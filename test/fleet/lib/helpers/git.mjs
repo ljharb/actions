@@ -9,6 +9,8 @@ import {
 import { tmpdir } from 'os';
 import path from 'path';
 
+/** @import { Test } from 'tape' */
+
 /** @typedef {{ name: string, email: string }} Person */
 
 // git, isolated from the user's global and system config (eg commit signing, hooks)
@@ -30,7 +32,7 @@ export const mallory = {
 
 const fixture = { name: 'Fixture', email: 'fixture@example.com' };
 
-/** @type {(t: import('tape').Test, prefix: string) => string} */
+/** @type {(t: Test, prefix: string) => string} */
 export function tempDir(t, prefix) {
 	const dir = realpathSync(mkdtempSync(path.join(tmpdir(), `${prefix}-`)));
 	t.teardown(() => rmSync(dir, { recursive: true, force: true }));
@@ -38,7 +40,7 @@ export function tempDir(t, prefix) {
 }
 
 // the code under test runs git with the process's environment, so isolate that too, for the duration of a test
-/** @type {(t: import('tape').Test) => void} */
+/** @type {(t: Test) => void} */
 export function isolateProcessGit(t) {
 	/** @type {Record<string, string | undefined>} */
 	const saved = {};
@@ -106,7 +108,7 @@ export function writeFiles(dir, files) {
 /**
  * A local "server": `<root>/remotes/<repository>.git`, a bare repository cloned as `${serverURL}/${repository}.git`, whose `main` has `files`.
  * `null` in `files` deletes that file.
- * @type {(t: import('tape').Test, repository: string, files: Record<string, string>) => Server}
+ * @type {(t: Test, repository: string, files: Record<string, string>) => Server}
  */
 export function makeServer(t, repository, files) {
 	const root = tempDir(t, 'fleet-pr-server');

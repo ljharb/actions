@@ -11,8 +11,10 @@ import {
 	runAction,
 } from './helpers.mjs';
 
+/** @import { Test } from 'tape' */
+
 /**
- * @param {import('tape').Test} t
+ * @param {Test} t
  * @param {string} dir
  */
 export function runPostSuite(t, dir) {

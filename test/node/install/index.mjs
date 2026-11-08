@@ -12,6 +12,9 @@ import {
 } from './helpers.mjs';
 import { ARCHIVE_URL, CACHE_URL, NVM_TAG } from './nock-setup.mjs';
 
+/** @import { Test } from 'tape' */
+/** @import { RunResult } from './helpers.mjs' */
+
 const script = path.join(repoRoot, 'node', 'install', 'index.mjs');
 const commandSh = path.join(repoRoot, 'node', 'install', 'command.sh');
 
@@ -25,7 +28,7 @@ function nvmDirIn(dir) {
 	return path.join(dir, 'nvm');
 }
 
-/** @type {(t: import('tape').Test, result: import('./helpers.mjs').RunResult, nvmDir: string) => void} */
+/** @type {(t: Test, result: RunResult, nvmDir: string) => void} */
 function assertNVMInstalled(t, result, nvmDir) {
 	t.equal(fs.readFileSync(path.join(nvmDir, 'nvm.sh'), 'utf8'), '# fake nvm.sh\n', 'nvm.sh is downloaded into NVM_DIR');
 	t.equal(fs.readFileSync(path.join(nvmDir, 'nvm-exec'), 'utf8'), '# fake nvm-exec\n', 'nvm-exec is downloaded into NVM_DIR');

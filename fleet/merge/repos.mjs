@@ -10,8 +10,8 @@ import { botBranches } from '../lib/branches.mjs';
 import { isIgnored } from '../lib/ignored.mjs';
 import { awaitingApproval } from '../lib/installations.mjs';
 
-/** @import { Octokit } from '../lib/app.mjs' */
-/** @typedef {ReturnType<typeof import('../lib/app.mjs').appAuth>} Auth */
+/** @import { Octokit, appAuth } from '../lib/app.mjs' */
+/** @typedef {ReturnType<typeof appAuth>} Auth */
 /** @typedef {{ owner: string, name: string, repository: string, private: boolean, installationId: number }} Repo */
 
 const batchSize = 20;

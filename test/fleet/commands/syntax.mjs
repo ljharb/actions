@@ -2,11 +2,13 @@ import test from 'tape';
 
 import { legend, parseCommand } from '../../../fleet/commands/syntax.mjs';
 
-/** @type {(filters: Partial<Record<'repositories' | 'accounts' | 'files' | 'categories', string[]>>) => import('../../../fleet/commands/syntax.mjs').Filters} */
+/** @import { Filters } from '../../../fleet/commands/syntax.mjs' */
+
+/** @type {(filters: Partial<Record<'repositories' | 'accounts' | 'files' | 'categories', string[]>>) => Filters} */
 function filters({
 	repositories = [], accounts = [], files = [], categories = [],
 }) {
-	return /** @type {import('../../../fleet/commands/syntax.mjs').Filters} */ ({ // eslint-disable-line no-extra-parens
+	return /** @type {Filters} */ ({ // eslint-disable-line no-extra-parens
 		repositories: new Set(repositories),
 		accounts: new Set(accounts),
 		files: new Set(files),

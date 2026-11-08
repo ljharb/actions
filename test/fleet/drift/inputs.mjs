@@ -13,6 +13,8 @@ import {
 } from '../../../fleet/drift/inputs.mjs';
 import { template } from './helpers/states.mjs';
 
+/** @import { Inputs } from '../../../fleet/drift/inputs.mjs' */
+
 const pretestCall = `name: 'Tests: pretest/posttest'
 
 on: [pull_request, push]
@@ -227,7 +229,7 @@ test('inputsOf and removedInputs', (t) => {
 });
 
 test('addInputs', (t) => {
-	/** @type {(text: string, inputs: import('../../../fleet/drift/inputs.mjs').Inputs) => string} */
+	/** @type {(text: string, inputs: Inputs) => string} */
 	const add = (text, inputs) => addInputs(text, inputs).text;
 	const { removed } = removedInputs(tapePretest, pretestCall);
 	t.equal(add(pretestCall, removed), tapePretest, 'restores them exactly, in a new `with:` right after the `uses:`');
@@ -311,9 +313,9 @@ test('keepInputs', (t) => {
 
 test('addInputs: only what’s given is added, as it’s given, or nothing is', (t) => {
 	const nodeCall = pretestCall.replace('pretest.yml', 'node.yml');
-	/** @type {(lines: string[], key?: string, file?: string) => import('../../../fleet/drift/inputs.mjs').Inputs} */
+	/** @type {(lines: string[], key?: string, file?: string) => Inputs} */
 	const given = (lines, key = 'notable', file = 'node.yml') => new Map([passed('tests', file, [[key, lines]])]);
-	/** @type {(text: string, inputs: import('../../../fleet/drift/inputs.mjs').Inputs, why: string, message: string) => void} */
+	/** @type {(text: string, inputs: Inputs, why: string, message: string) => void} */
 	const refused = (text, inputs, why, message) => {
 		t.deepEqual(addInputs(text, inputs), { text, why }, `${message}: refused, with why, leaving the file as it is`);
 	};

@@ -3,8 +3,8 @@ import { getOctokit } from '@actions/github';
 
 import { appOctokit, installationToken } from './app.mjs';
 
-/** @import { Octokit } from './app.mjs' */
-/** @typedef {ReturnType<typeof import('./app.mjs').appAuth>} Auth */
+/** @import { Octokit, appAuth } from './app.mjs' */
+/** @typedef {ReturnType<typeof appAuth>} Auth */
 
 // the report issue was first opened as GitHub Actions' bot; GitHub can't change an issue's author, so the App's bot adopts it
 export const legacyAuthor = 'github-actions[bot]';

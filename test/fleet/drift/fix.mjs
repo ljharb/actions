@@ -15,7 +15,7 @@ import {
 } from './helpers/states.mjs';
 import { versionFixture } from './helpers/versions.mjs';
 
-/** @import { Plan, Category } from '../../../fleet/drift/fix.mjs' */
+/** @import { Plan, Category, Filters } from '../../../fleet/drift/fix.mjs' */
 /** @import { RepoState } from '../../../fleet/lib/app.mjs' */
 /** @import { Config } from '../../../fleet/lib/config.mjs' */
 
@@ -43,7 +43,7 @@ function at(name) {
 	return `.github/workflows/${name}`;
 }
 
-/** @type {(state: RepoState, filters?: import('../../../fleet/drift/fix.mjs').Filters) => Promise<Plan>} */
+/** @type {(state: RepoState, filters?: Filters) => Promise<Plan>} */
 async function plan(state, filters) {
 	return planFixes(state, await checkRepo(state), filters);
 }

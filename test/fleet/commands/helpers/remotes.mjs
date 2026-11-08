@@ -10,6 +10,7 @@ import {
 } from '../../lib/helpers/git.mjs';
 
 /** @import { Person } from '../../lib/helpers/git.mjs' */
+/** @import { Test } from 'tape' */
 
 /**
  * @typedef {{
@@ -23,7 +24,7 @@ import {
 
 /**
  * A local "server" with one bare repository per key of `repos`, each cloned as `${serverURL}/${repository}.git`, whose `main` has those files.
- * @type {(t: import('tape').Test, repos: Record<string, Record<string, string>>) => Remotes}
+ * @type {(t: Test, repos: Record<string, Record<string, string>>) => Remotes}
  */
 export function makeRemotes(t, repos) {
 	const root = tempDir(t, 'fleet-commands-server');

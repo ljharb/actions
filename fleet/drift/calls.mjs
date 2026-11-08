@@ -7,6 +7,8 @@ import {
 	parseDocument,
 } from 'yaml';
 
+/** @import { Document, Scalar, Node } from 'yaml' */
+
 /**
  * The calls a workflow file makes (in its jobs) of this repo's reusable workflows, as YAML's parser finds them.
  * Workflow files are parsed as YAML, and what's read from them is only ever what the parser says is there: a file the parser finds any error or warning in (eg, a key passed twice, a tab in indentation, a tag it can't resolve, an alias of an anchor that isn't there), or that has a character YAML 1.1 (but not 1.2) breaks lines at, isn't understood at all, and has no calls.
@@ -18,7 +20,7 @@ import {
 /** @typedef {{ start: number, end: number, scalar: boolean }} Span */
 /** @typedef {{ line: number, understood: boolean, indent: number, end: number, inputs: Map<string, Span>, comments: number[] }} With */
 /** @typedef {{ job: string, file: string, indent: number, after: number, with: With | null }} Call */
-/** @typedef {{ doc: import('yaml').Document.Parsed, lines: string[], calls: Call[] }} Parsed */
+/** @typedef {{ doc: Document.Parsed, lines: string[], calls: Call[] }} Parsed */
 
 const usesValue = /^ljharb\/actions\/\.github\/workflows\/(?<file>[\w.-]+\.ya?ml)@[^\s'"#]+$/;
 
@@ -54,7 +56,7 @@ export function isComment(line) {
 	return (/^[ \t]*#/).test(line);
 }
 
-/** @type {(node: unknown) => node is import('yaml').Scalar<string>} */
+/** @type {(node: unknown) => node is Scalar<string>} */
 export function isString(node) {
 	return isScalar(node) && typeof node.value === 'string';
 }
@@ -63,7 +65,7 @@ export function isString(node) {
 
 /**
  * Whether `value`, an input's, is a scalar (or empty, or an alias of one): only such an input can be a repository's own choice that isn't drift; a mapping or a sequence might be anything.
- * @type {(value: unknown, doc: import('yaml').Document.Parsed) => boolean}
+ * @type {(value: unknown, doc: Document.Parsed) => boolean}
  */
 function isScalarValue(value, doc) {
 	return value === null || isScalar(value) || (isAlias(value) && isScalar(value.resolve(doc)));
@@ -71,7 +73,7 @@ function isScalarValue(value, doc) {
 
 /**
  * The inputs of `map`, a `with:`'s block mapping (whose key is on line `line` of `lines`), as the parser found them: each one's lines, from the comments on lines of their own before it (if any) to the end of its value (and its trailing comment); every comment on a line of its own before the last one; the last one's last line; and how indented they are. `null` if any of its keys isn't a string, with no anchor or tag, alone on its line before its `:`; or if a line between them (or before the first) isn't blank or a comment (eg, an anchor on a line of its own).
- * @type {(map: import('yaml').YAMLMap, lines: string[], at: { line: number, lineOf: LineOf, doc: import('yaml').Document.Parsed }) => { inputs: Map<string, Span>, comments: number[], last: number, indent: number | null } | null}
+ * @type {(map: YAMLMap, lines: string[], at: { line: number, lineOf: LineOf, doc: Document.Parsed }) => { inputs: Map<string, Span>, comments: number[], last: number, indent: number | null } | null}
  */
 function entries(map, lines, {
 	line, lineOf, doc,
@@ -88,7 +90,7 @@ function entries(map, lines, {
 			return null;
 		}
 		const comments = between.map((_, i) => from + i).filter((j) => isComment(lines[j]));
-		found.last = lineOf(Math.max(Number(key.range?.[1]), Number(/** @type {import('yaml').Node} */ (value).range?.[1])) - 1).line; // eslint-disable-line no-extra-parens
+		found.last = lineOf(Math.max(Number(key.range?.[1]), Number(/** @type {Node} */ (value).range?.[1])) - 1).line; // eslint-disable-line no-extra-parens
 		found.inputs.set(key.value, {
 			start: comments[0] ?? at.line, end: found.last + 1, scalar: isScalarValue(value, doc),
 		});
@@ -102,7 +104,7 @@ function entries(map, lines, {
  * `pair`, a job's `with:` (whose job's keys are indented `indent`), as the parser found it in `lines`; `lineOf` is the line (and column) an offset in them is on.
  * It's understood when its key is alone on its line, and it's empty, or a block mapping (with no anchor or tag) whose inputs are (see `entries`).
  * After its last input, the comments on lines of their own indented more than the `with:` are its last input's; any after one that isn't are about what follows it.
- * @type {(pair: { key: import('yaml').Scalar, value: unknown }, lines: string[], at: { indent: number, lineOf: LineOf, doc: import('yaml').Document.Parsed }) => With}
+ * @type {(pair: { key: Scalar, value: unknown }, lines: string[], at: { indent: number, lineOf: LineOf, doc: Document.Parsed }) => With}
  */
 function withBlock({ key, value }, lines, {
 	indent, lineOf, doc,
@@ -167,8 +169,8 @@ export function read(original) {
 		const uses = isMap(job) ? job.items.find((pair) => isString(pair.key) && pair.key.value === 'uses') : null;
 		const file = isString(uses?.value) ? uses.value.value.match(usesValue)?.groups?.file : null;
 		if (isScalar(key) && uses && isString(uses.value) && file) {
-			const indent = lineOf(Number(/** @type {import('yaml').Scalar} */ (uses.key).range?.[0])).col; // eslint-disable-line no-extra-parens
-			const pair = /** @type {{ key: import('yaml').Scalar, value: unknown } | undefined} */ (/** @type {import('yaml').YAMLMap} */ (job).items.find((p) => isString(p.key) && p.key.value === 'with')); // eslint-disable-line no-extra-parens
+			const indent = lineOf(Number(/** @type {Scalar} */ (uses.key).range?.[0])).col; // eslint-disable-line no-extra-parens
+			const pair = /** @type {{ key: Scalar, value: unknown } | undefined} */ (/** @type {YAMLMap} */ (job).items.find((p) => isString(p.key) && p.key.value === 'with')); // eslint-disable-line no-extra-parens
 			calls.push({
 				job: String(key.value),
 				file,

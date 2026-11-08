@@ -14,6 +14,9 @@ import {
 	presets,
 } from '../../../node/matrix/versions.mjs';
 
+/** @import { Test } from 'tape' */
+/** @import { Type } from '../../../node/matrix/versions.mjs' */
+
 const execFileP = promisify(execFile);
 
 const fixtureDir = new URL('./versions/', import.meta.url);
@@ -50,7 +53,7 @@ const expectedAll = [
 	'v0.6.21',
 ];
 
-/** @param {import('tape').Test} t */
+/** @param {Test} t */
 function blockNetwork(t) {
 	nock.disableNetConnect();
 	t.teardown(() => {
@@ -371,7 +374,7 @@ test('getPreset', async (t) => {
 	blockNetwork(t);
 	await prime();
 
-	/** @type {import('../../../node/matrix/versions.mjs').Type} */
+	/** @type {Type} */
 	// @ts-expect-error the action passes an empty string when no `type` input is given
 	const noType = '';
 

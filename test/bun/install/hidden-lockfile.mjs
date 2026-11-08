@@ -18,6 +18,8 @@ import {
 	writeExecutable,
 } from './helpers.mjs';
 
+/** @import { Test } from 'tape' */
+
 const script = path.join(actionDir, 'hidden-lockfile.js');
 
 // a stand-in for the globally installed npm's `@npmcli/arborist`: the actual tree comes from `$FAKE_ARB_TREE`
@@ -58,7 +60,7 @@ module.exports = function npa(arg) {
 `;
 
 /**
- * @param {import('tape').Test} t
+ * @param {Test} t
  * @param {{ nodeModules?: boolean, hiddenLockfile?: boolean, tree?: object }} options
  */
 function runFake(t, { nodeModules = true, hiddenLockfile = false, tree = { nodes: [] } }) {

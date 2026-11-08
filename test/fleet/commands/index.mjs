@@ -21,6 +21,7 @@ import { makeRemotes } from './helpers/remotes.mjs';
 /** @import { Scenario as GitHubScenario, RepoSpec, Recorded } from '../lib/helpers/github.mjs' */
 /** @import { Scenario, CommandsScenario } from './helpers/preload.mjs' */
 /** @import { ChildResult } from '../drift/helpers/child.mjs' */
+/** @import { Test } from 'tape' */
 /** @typedef {{ name: string, text: string | null }[]} Workflows */
 
 const script = path.join('fleet', 'commands', 'index.mjs');
@@ -80,7 +81,7 @@ function files(workflows) {
 }
 
 /**
- * @type {(t: import('tape').Test, options: {
+ * @type {(t: Test, options: {
  *   event: unknown,
  *   github?: GitHubScenario,
  *   commands?: CommandsScenario,
@@ -127,7 +128,7 @@ const issueToken = 'token ghs_installation_99';
 
 /**
  * The requests after getting the App's token for the report's repository, which must be the first: for only that repository, that can only write issues.
- * @type {(t: import('tape').Test, requests: Recorded[], label: string) => Recorded[]}
+ * @type {(t: Test, requests: Recorded[], label: string) => Recorded[]}
  */
 function asBot(t, requests, label) {
 	t.deepEqual(requests.slice(0, 2).map((r) => [`${r.method} ${r.path}`, r.body]), [
