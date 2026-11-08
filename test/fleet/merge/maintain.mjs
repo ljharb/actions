@@ -207,6 +207,44 @@ function failedIn(head, files) {
 	};
 }
 
+/** @typedef {{ checkRuns: Record<string, unknown>[], runs: ({ id: number, jobs: Record<string, unknown>[] } & Record<string, unknown>)[] }} Runs */
+
+/**
+ * A GitHub Actions run of `file`, with a job (and its check run) for each of `jobs`, each named as its key, where each that's `true` has a step whose failure `continue-on-error` hides, which only its check run's `failure` annotation shows; `id` (and the IDs after it, one per job) is its own. Unless `extra` says otherwise, the run, and each check run, completed as a success.
+ * @type {(id: number, file: string, jobs: Record<string, boolean>, extra?: Record<string, unknown>) => Runs}
+ */
+function maskedRun(id, file, jobs, extra = {}) {
+	const names = Object.keys(jobs);
+	/** @type {(i: number) => string} */
+	const url = (i) => `https://api.github.com/repos/ljharb/r/check-runs/${id + i}`;
+	return {
+		checkRuns: names.map((name, i) => ({
+			id: id + i,
+			name,
+			status: 'completed',
+			conclusion: 'success',
+			app: { slug: 'github-actions' },
+			url: url(i),
+			annotations: jobs[name]
+				? [{ annotation_level: 'failure', message: 'Process completed with exit code 1.' }] // eslint-disable-line camelcase
+				: [],
+		})),
+		runs: [
+			{
+				id,
+				path: file,
+				...extra,
+				jobs: names.map((name, i) => ({ name, check_run_url: url(i), steps: [], run_id: id })), // eslint-disable-line camelcase
+			},
+		],
+	};
+}
+
+/** @type {(...parts: Runs[]) => Runs} */
+function together(...parts) {
+	return { checkRuns: parts.flatMap((p) => p.checkRuns), runs: parts.flatMap((p) => p.runs) };
+}
+
 test('maintain: with no open PRs from the App’s branches, exits fast', async (t) => {
 	const server = setup(t);
 	const none = await run(t, { server, github: {}, merge: {} });
@@ -626,6 +664,104 @@ test('maintain: a `fleet/workflows` PR whose CI failed gets back the inputs it r
 	t.ok(logged(third.stdout).includes(`${prURL(server)}: left as it is: as already said on it, it’s \`stuck\` until its head commit changes`), 'says why');
 	t.deepEqual(comments(third.requests), [], 'and only says so once for that head');
 	t.equal(server.tip(`refs/heads/${fixBranch}`), restored, 'never changing it again');
+	t.end();
+});
+
+test('maintain: a `fleet/workflows` PR whose CI fails only as its base’s tip’s does is never blamed for it', async (t) => {
+	const nonLatest = { 'tests / non-latest - 8.x': true, 'tests / non-latest - 0.9': true, 'tests / latest': false };
+	/** @type {(base: Runs | null, head?: Runs) => Promise<{ server: Server, head: string, mainTip: string, result: Awaited<ReturnType<typeof run>> }>} */
+	const scenario = async (base, head = maskedRun(100, aught, nonLatest)) => {
+		const server = setup(t);
+		// as tape-testing/tape#625 did: its base's tip had the same masked failures, in the same jobs
+		const sha = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), [aught]: fixedAught }, { who: bot, from: 'main', message });
+		const mainTip = server.tip('main');
+		const result = await run(t, {
+			server,
+			github: installed([{ name: 'r' }]),
+			merge: shown(server, [[1, fixBranch, sha]], { ci: { [sha]: head, ...base ? { [mainTip]: base } : {} } }),
+		});
+		return {
+			server,
+			head: sha,
+			mainTip,
+			result,
+		};
+	};
+
+	const same = await scenario(maskedRun(200, aught, nonLatest));
+	t.equal(same.result.errors, 0, 'nothing failed');
+	t.ok(logged(same.result.stdout).includes(`${prURL(same.server)}: its CI failed only as \`main\`’s does; said so on it`), 'with the same failures in the same jobs of the same file on the base’s tip, nothing is restored');
+	t.deepEqual(comments(same.result.requests), [`${marker('stuck', same.head)}\nEvery workflow file that failed on this PR’s head commit (\`.github/workflows/node-aught.yml\`) fails the same way on \`main\`’s head commit (\`${same.mainTip}\`), so the App has nothing to restore: it needs a person to look at it.`], 'saying so on the PR');
+	t.equal(same.server.tip(`refs/heads/${fixBranch}`), same.head, 'pushing nothing');
+	t.ok(same.result.requests.some((r) => r.path.includes(`head_sha=${same.mainTip}`)), 'having read the base’s tip’s CI');
+
+	const regular = await scenario({
+		checkRuns: [{ id: 210, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 600 } }], // eslint-disable-line camelcase
+		runs: [{ id: 211, path: aught, conclusion: 'failure', check_suite_id: 600, jobs: [] }], // eslint-disable-line camelcase
+	}, {
+		checkRuns: [
+			{ id: 110, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 500 } }, // eslint-disable-line camelcase
+			{ id: 112, name: 'elsewhere', status: 'completed', conclusion: 'failure', check_suite: { id: 999 } }, // eslint-disable-line camelcase
+		],
+		runs: [{ id: 111, path: aught, conclusion: 'failure', check_suite_id: 500, jobs: [] }], // eslint-disable-line camelcase
+	});
+	t.deepEqual(comments(regular.result.requests).map((c) => c.split('\n')[1]), [`Every workflow file that failed on this PR’s head commit (\`.github/workflows/node-aught.yml\`) fails the same way on \`main\`’s head commit (\`${regular.mainTip}\`), so the App has nothing to restore: it needs a person to look at it.`], 'as with a failed run, and a failed job in its check suite; a failure in no workflow file isn’t compared');
+	t.equal(regular.server.tip(`refs/heads/${fixBranch}`), regular.head, 'pushing nothing then either');
+
+	/** @type {[string, Runs | null][]} */
+	const blamed = [
+		['the base’s tip’s run of it passed', maskedRun(300, aught, { 'tests / non-latest - 8.x': false, 'tests / non-latest - 0.9': false })],
+		['another job of it failed on the base’s tip', maskedRun(300, aught, { 'tests / non-latest - 0.9': true, 'tests / latest': true })],
+		['the base’s tip has no run of it', maskedRun(300, '.github/workflows/other.yml', { 'tests / non-latest - 8.x': true, 'tests / non-latest - 0.9': true })],
+		['the base’s tip’s run of it is still running', maskedRun(300, aught, nonLatest, { status: 'in_progress', conclusion: null })],
+		['the base’s tip has no CI at all', null],
+	];
+	await blamed.reduce(async (previous, [label, base]) => {
+		await previous;
+		const { server, result } = await scenario(base);
+		t.ok(logged(result.stdout).includes(`${prURL(server)}: its CI failed, so restored \`skip-ls-check\` in \`node-aught.yml\`, and kept them in \`.github/ljharb-actions.json\``), `${label}: the failure is the PR’s, so what it removed is restored`);
+		t.equal(`${server.show(server.tip(`refs/heads/${fixBranch}`), aught)}\n`, tapeAught, `${label}: as it was`);
+	}, Promise.resolve());
+
+	const mixed = await scenario(together(
+		maskedRun(300, aught, nonLatest),
+		maskedRun(310, pretest, { engines: false }),
+	), together(
+		maskedRun(100, aught, nonLatest),
+		maskedRun(110, pretest, { engines: true }),
+	));
+	t.ok(logged(mixed.result.stdout).includes(`${prURL(mixed.server)}: its CI failed, so restored \`skip-engines\` in \`node-pretest.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'with failures of its own in one file, and only its base’s in another, only the first’s inputs are restored');
+	const tip = mixed.server.tip(`refs/heads/${fixBranch}`);
+	t.equal(`${mixed.server.show(tip, pretest)}\n`, tapePretest, 'putting them back');
+	t.equal(`${mixed.server.show(tip, aught)}\n`, fixedAught, 'and leaving the other as the PR has it');
+	t.deepEqual(comments(mixed.result.requests), [], 'saying nothing');
+
+	// a failure in `node-pretest.yml` that the base's tip has too, in the same job, and in the same way
+	/** @type {(id: number, suite: number) => Runs} */
+	const broken = (id, suite) => ({
+		checkRuns: [{ id, name: 'tests / engines', status: 'completed', conclusion: 'failure', check_suite: { id: suite } }], // eslint-disable-line camelcase
+		runs: [{ id: id + 1, path: pretest, conclusion: 'failure', check_suite_id: suite, jobs: [] }], // eslint-disable-line camelcase
+	});
+	const hidden = await scenario(together(broken(400, 600), maskedRun(300, aught, { 'tests / non-latest - 8.x': false })), together(broken(150, 500), maskedRun(100, aught, nonLatest)));
+	t.ok(logged(hidden.result.stdout).includes(`${prURL(hidden.server)}: its CI failed, so restored \`skip-ls-check\` in \`node-aught.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'a masked failure of its own, which what decided its CI failed leaves out once something else failed, is still the PR’s, so what it removed is restored');
+	t.equal(`${hidden.server.show(hidden.server.tip(`refs/heads/${fixBranch}`), aught)}\n`, tapeAught, 'as it was');
+	t.deepEqual(comments(hidden.result.requests), [], 'never saying it fails only as its base does');
+
+	const running = await scenario(broken(400, 600), together(broken(150, 500), maskedRun(100, aught, nonLatest, { status: 'in_progress', conclusion: null })));
+	t.ok(logged(running.result.stdout).includes(`${prURL(running.server)}: up to date; its CI has failed only as \`main\`’s does so far, and is still running`), 'with only its base’s failures so far, and a run still going, it waits');
+	t.equal(running.server.tip(`refs/heads/${fixBranch}`), running.head, 'pushing nothing');
+	t.deepEqual(comments(running.result.requests), [], 'and saying nothing');
+
+	const unstarted = await scenario({
+		checkRuns: [{ id: 210, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 600 } }], // eslint-disable-line camelcase
+		runs: [{ id: 211, path: aught, conclusion: 'failure', check_suite_id: 600, jobs: [] }], // eslint-disable-line camelcase
+	}, { checkRuns: [], runs: [{ id: 111, path: aught, conclusion: 'startup_failure', jobs: [] }] });
+	t.ok(logged(unstarted.result.stdout).includes(`${prURL(unstarted.server)}: its CI failed, so restored \`skip-ls-check\` in \`node-aught.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'a run of its that never got to a job (eg, for a missing required input) isn’t the same failure as one of the base’s that failed in a job, so what it removed is restored');
+	t.deepEqual(comments(unstarted.result.requests), [], 'saying nothing');
+
+	const passed = await scenario(maskedRun(200, aught, nonLatest), maskedRun(100, aught, { 'tests / latest': false }));
+	t.ok(logged(passed.result.stdout).includes(`${prURL(passed.server)}: up to date; its CI passed`), 'a PR whose CI passed is left alone');
+	t.notOk(passed.result.requests.some((r) => r.path.includes(passed.mainTip)), 'without reading the base’s tip’s CI');
 	t.end();
 });
 

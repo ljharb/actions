@@ -36,10 +36,8 @@ import {
 } from '../commands/helpers/merge.mjs';
 import { mockGitHub, privateKey } from './helpers/github.mjs';
 
-/** @typedef {import('./helpers/github.mjs').Recorded} Recorded */
-/** @typedef {import('./helpers/github.mjs').Scenario} Scenario */
-/** @typedef {import('../commands/helpers/merge.mjs').MergeScenario} MergeScenario */
-/** @typedef {import('../commands/helpers/merge.mjs').CI} CI */
+/** @import { Recorded, Scenario } from './helpers/github.mjs' */
+/** @import { MergeScenario, CI } from '../commands/helpers/merge.mjs' */
 
 /** @type {() => void} */
 let current = () => {};
@@ -71,7 +69,7 @@ function setup(t, merge, github = {}) {
 async function captureStdout(fn) {
 	let stdout = '';
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) { // eslint-disable-line no-extra-parens
+	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
 		stdout += String(chunk);
 		return true;
 	});
@@ -128,9 +126,10 @@ test('ciStatus: pending', async (t) => {
 	t.deepEqual(await classify(t, { checkRuns: [checkRun('a', null, { status: 'queued' })] }), { kind: 'pending' }, 'a queued check run');
 	t.deepEqual(await classify(t, { statuses: [{ context: 'ci/x', state: 'pending' }] }), { kind: 'pending' }, 'a pending commit status');
 	t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'success')], statuses: [{ context: 'ci/x', state: 'pending' }] }), { kind: 'pending' }, 'a pending status, with every check run passed');
-	for (const status of ['requested', 'queued', 'pending', 'waiting', 'in_progress']) {
-		t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'success')], runs: [{ id: 7, jobs: [], status, conclusion: null }] }), { kind: 'pending' }, `every check run so far passed, but a workflow run on the commit is \`${status}\`, so jobs waiting on others (which have no check runs yet) may still fail`); // eslint-disable-line no-await-in-loop
-	}
+	await ['requested', 'queued', 'pending', 'waiting', 'in_progress'].reduce(async (previous, status) => {
+		await previous;
+		t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'success')], runs: [{ id: 7, jobs: [], status, conclusion: null }] }), { kind: 'pending' }, `every check run so far passed, but a workflow run on the commit is \`${status}\`, so jobs waiting on others (which have no check runs yet) may still fail`);
+	}, Promise.resolve());
 });
 
 test('ciStatus: passed', async (t) => {
@@ -151,9 +150,10 @@ test('ciStatus: passed', async (t) => {
 });
 
 test('ciStatus: failed', async (t) => {
-	for (const conclusion of ['failure', 'timed_out', 'cancelled', 'action_required', 'stale', 'neutral', 'startup_failure']) {
-		t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'success'), checkRun('b`x', conclusion)] }), { kind: 'failed', failures: [`\`\`b\`x\`\`: ${conclusion}`], files: [] }, `a check run that concluded \`${conclusion}\`, named inertly`); // eslint-disable-line no-await-in-loop
-	}
+	await ['failure', 'timed_out', 'cancelled', 'action_required', 'stale', 'neutral', 'startup_failure'].reduce(async (previous, conclusion) => {
+		await previous;
+		t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'success'), checkRun('b`x', conclusion)] }), { kind: 'failed', failures: [`\`\`b\`x\`\`: ${conclusion}`], files: [] }, `a check run that concluded \`${conclusion}\`, named inertly`);
+	}, Promise.resolve());
 	t.deepEqual(await classify(t, { checkRuns: [checkRun('a', null)] }), { kind: 'failed', failures: ['`a`: no conclusion'], files: [] }, 'a completed check run without a conclusion');
 	t.deepEqual(await classify(t, {
 		checkRuns: [checkRun('a', 'success')],
@@ -171,9 +171,10 @@ test('ciStatus: failed', async (t) => {
 			id: 8, jobs: [], name: '', conclusion: 'action_required',
 		}],
 	}), { kind: 'failed', failures: ['`workflow run 7`: no conclusion', '`workflow run 8`: action_required'], files: [] }, 'a completed workflow run without a conclusion, or that needs approval, named by its ID when it has no name');
-	for (const state of ['error', 'failure']) {
-		t.deepEqual(await classify(t, { statuses: [{ context: 'ci/x', state }] }), { kind: 'failed', failures: [`\`ci/x\`: ${state}`], files: [] }, `a commit status that is \`${state}\``); // eslint-disable-line no-await-in-loop
-	}
+	await ['error', 'failure'].reduce(async (previous, state) => {
+		await previous;
+		t.deepEqual(await classify(t, { statuses: [{ context: 'ci/x', state }] }), { kind: 'failed', failures: [`\`ci/x\`: ${state}`], files: [] }, `a commit status that is \`${state}\``);
+	}, Promise.resolve());
 	t.deepEqual(await classify(t, {
 		checkRuns: [checkRun('a', 'failure'), checkRun('b', null, { status: 'in_progress' })],
 		statuses: [{ context: 'ci/x', state: 'pending' }],
@@ -182,12 +183,14 @@ test('ciStatus: failed', async (t) => {
 
 test('ciStatus: check suites', async (t) => {
 	const runs = [checkRun('a', 'success')];
-	for (const status of ['requested', 'queued', 'in_progress', 'waiting', 'pending']) {
-		t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(1, null, { status, latest_check_runs_count: 0 })] }), { kind: 'pending' }, `every check run passed, but a check suite is \`${status}\` (eg, an app that hasn’t made its check runs yet), so it’s pending`); // eslint-disable-line no-await-in-loop, camelcase
-	}
-	for (const conclusion of ['failure', 'timed_out', 'cancelled', 'action_required', 'stale', 'startup_failure', 'neutral']) {
-		t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(1, 'success'), suite(2, conclusion)] }), { kind: 'failed', failures: [`check suite 2 (\`CI app\`): ${conclusion}`], files: [] }, `a completed check suite with check runs that concluded \`${conclusion}\` fails`); // eslint-disable-line no-await-in-loop
-	}
+	await ['requested', 'queued', 'in_progress', 'waiting', 'pending'].reduce(async (previous, status) => {
+		await previous;
+		t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(1, null, { status, latest_check_runs_count: 0 })] }), { kind: 'pending' }, `every check run passed, but a check suite is \`${status}\` (eg, an app that hasn’t made its check runs yet), so it’s pending`); // eslint-disable-line camelcase
+	}, Promise.resolve());
+	await ['failure', 'timed_out', 'cancelled', 'action_required', 'stale', 'startup_failure', 'neutral'].reduce(async (previous, conclusion) => {
+		await previous;
+		t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(1, 'success'), suite(2, conclusion)] }), { kind: 'failed', failures: [`check suite 2 (\`CI app\`): ${conclusion}`], files: [] }, `a completed check suite with check runs that concluded \`${conclusion}\` fails`);
+	}, Promise.resolve());
 	t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(3, null, { app: null })] }), { kind: 'failed', failures: ['check suite 3: no conclusion'], files: [] }, 'as does one with check runs and no conclusion, named by its ID alone without an app');
 	t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(4, 'failure', { latest_check_runs_count: 0 })] }), { kind: 'failed', failures: ['check suite 4 (`CI app`): failure'], files: [] }, 'and an empty one that failed'); // eslint-disable-line camelcase
 	t.deepEqual(await classify(t, {
@@ -380,6 +383,29 @@ test('ciStatus: the workflow files that failed', async (t) => {
 	}), { kind: 'failed', failures: ['`test`: step `a`: failure'], files: [] }, 'nor one whose job’s run isn’t listed');
 });
 
+test('ciStatus: a failed check run’s workflow file is that of the workflow run in its check suite', async (t) => {
+	t.deepEqual(await classify(t, {
+		checkRuns: [
+			checkRun('engines', 'failure', { check_suite: { id: 500 } }), // eslint-disable-line camelcase
+			checkRun('elsewhere', 'failure', { check_suite: { id: 999 } }), // eslint-disable-line camelcase
+			checkRun('suiteless', 'failure'),
+		],
+		runs: [
+			{
+				id: 8,
+				conclusion: 'success',
+				path: '.github/workflows/node-pretest.yml',
+				check_suite_id: 500, // eslint-disable-line camelcase
+				jobs: [],
+			},
+		],
+	}), {
+		kind: 'failed',
+		failures: ['`engines`: failure', '`elsewhere`: failure', '`suiteless`: failure'],
+		files: ['.github/workflows/node-pretest.yml'],
+	}, 'a check run in a workflow run’s check suite adds that run’s file; one in a check suite no workflow run is of, or in none, adds none');
+});
+
 test('assess', async (t) => {
 	const target = {
 		owner: 'o', name: 'r', number: 1, base: 'main', head: 'h1',
@@ -392,15 +418,16 @@ test('assess', async (t) => {
 		['one merge commit', [prCommit('h1', { parents: ['tip', 'other'] })], { kind: 'behind' }],
 		['two commits, the first on the base’s tip', [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] })], { kind: 'behind' }],
 	];
-	for (const [label, commits, expected] of cases) {
+	await cases.reduce(async (previous, [label, commits, expected]) => {
+		await previous;
 		const requests = setup(t, {
 			refs: { 'o/r': 'tip' }, commits: { 'o/r#1': commits }, ci: passed,
 		});
-		t.deepEqual(await assess(octokit, target, botUser), expected, `${label}: ${expected.kind}`); // eslint-disable-line no-await-in-loop
+		t.deepEqual(await assess(octokit, target, botUser), expected, `${label}: ${expected.kind}`);
 		if (expected.kind === 'behind') {
 			t.notOk(requests.some((r) => r.path.includes('check-runs')), `${label}: CI isn’t even read, since it needs updating first`);
 		}
-	}
+	}, Promise.resolve());
 	const several = setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] })] } });
 	await assess(octokit, target, botUser);
 	t.notOk(several.some((r) => r.path.includes('/git/ref/')), 'with more than one commit, the base’s tip isn’t even read');
@@ -431,13 +458,14 @@ test('assess: only the App’s bot’s own commits', async (t) => {
 		['a last commit that isn’t the head', [prCommit('h1'), prCommit('h2')], { kind: 'refused', reason: 'it changed while it was being checked; run `/merge` again' }],
 		['no commits at all', [], { kind: 'refused', reason: 'it changed while it was being checked; run `/merge` again' }],
 	];
-	for (const [label, commits, expected] of cases) {
+	await cases.reduce(async (previous, [label, commits, expected]) => {
+		await previous;
 		const requests = setup(t, { commits: { 'o/r#1': commits }, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } });
-		t.deepEqual(await assess(octokit, target, botUser), expected, `${label}: ${expected.kind}`); // eslint-disable-line no-await-in-loop
+		t.deepEqual(await assess(octokit, target, botUser), expected, `${label}: ${expected.kind}`);
 		if (expected.kind === 'refused') {
 			t.notOk(requests.some((r) => (/\/(?:compare|check-runs)\b/).test(r.path)), `${label}: nothing else is read`);
 		}
-	}
+	}, Promise.resolve());
 	const unlinked = setup(t, { commits: { 'o/r#1': [prCommit('h0', { author: null, committer: null }), prCommit('h1', { author: null })] }, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } });
 	t.deepEqual(await assess(octokit, target, botUser), { kind: 'behind' }, 'commits GitHub doesn’t link to a user, whose emails are the bot’s noreply email, are its own: so two of them aren’t refused, but need updating into one');
 	t.deepEqual(unlinked.filter((r) => r.path.startsWith('/users/')).map((r) => r.path), ['/users/fleet-bot%5Bbot%5D'], 'looking up the bot’s user ID only once');
@@ -447,15 +475,16 @@ test('assess: only the App’s bot’s own commits', async (t) => {
 	t.deepEqual(linked.filter((r) => r.path.includes('/pulls/1/commits')).map((r) => new URLSearchParams(r.path.split('?')[1]).get('per_page')), ['100'], 'listing the PR’s commits 100 at a time');
 
 	const many = Array.from({ length: 300 }, (_, i) => prCommit(i === 299 ? 'h1' : `c${i}`));
-	for (const [count, expected] of /** @type {[number, string][]} */ ([[249, 'behind'], [250, 'refused'], [300, 'refused']])) { // eslint-disable-line no-extra-parens
-		const requests = setup(t, { commits: { 'o/r#1': [...many.slice(0, count - 1), prCommit('h1')] }, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } });
-		const result = await assess(octokit, target, botUser); // eslint-disable-line no-await-in-loop
+	await /** @type {[number, string][]} */ ([[249, 'behind'], [250, 'refused'], [300, 'refused']]).reduce(async (previous, [count, expected]) => {
+		await previous;
+		const requests = setup(t, { commits: { 'o/r#1': many.slice(0, count - 1).concat(prCommit('h1')) }, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } });
+		const result = await assess(octokit, target, botUser);
 		t.equal(result.kind, expected, `${count} commits: ${expected}`);
 		if (result.kind === 'refused') {
 			t.equal(result.reason, 'it has at least 250 commits, more than GitHub lists, so they can’t all be checked to be the App’s own; review and merge it yourself', `${count} commits: since GitHub lists only 250, they can’t all be checked`);
 		}
 		t.equal(requests.filter((r) => r.path.includes('/pulls/1/commits')).length, 3, `${count} commits: reading every page GitHub lists`);
-	}
+	}, Promise.resolve());
 });
 
 test('fastForward', async (t) => {
@@ -473,7 +502,7 @@ test('fastForward', async (t) => {
 	} catch (error) {
 		t.equal(messageOf(error), 'GitHub refused to fast-forward `main` to it (HTTP 422), eg because of a branch protection rule', 'a refusal says only its HTTP status, not its message');
 	}
-	const failing = /** @type {import('../../../fleet/lib/app.mjs').Octokit} */ (/** @type {unknown} */ ({ rest: { git: { async updateRef() { throw new Error('offline'); } } } })); // eslint-disable-line no-extra-parens
+	const failing = /** @type {import('../../../fleet/lib/app.mjs').Octokit} */ (/** @type {unknown} */ ({ rest: { git: { async updateRef() { throw new Error('offline'); } } } }));
 	await fastForward(failing, target).then(() => t.fail('should have thrown'), (error) => {
 		t.equal(messageOf(error), 'GitHub refused to fast-forward `main` to it, eg because of a branch protection rule', 'or nothing, without one');
 	});

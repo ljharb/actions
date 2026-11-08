@@ -12,13 +12,10 @@ import {
 } from '../drift/inputs.mjs';
 import { installationToken, octokitFor } from '../lib/app.mjs';
 import { fixBranch } from '../lib/branches.mjs';
+import { blame, ciFailures } from '../lib/ci.mjs';
 import { configFile, keptConfig } from '../lib/kept.mjs';
 import { code } from '../lib/markdown.mjs';
-import {
-	candidatePRs,
-	ciStatus,
-	messageOf,
-} from '../lib/merge.mjs';
+import { candidatePRs, messageOf } from '../lib/merge.mjs';
 import { changedReason, commitsRefusal, isSingleOnBase } from '../lib/merge-guards.mjs';
 import {
 	botIdentity,
@@ -34,6 +31,7 @@ import { reposWithAppPRs } from './repos.mjs';
 /** @import { Octokit } from '../lib/app.mjs' */
 /** @typedef {ReturnType<typeof import('../lib/app.mjs').appAuth>} Auth */
 /** @import { PR } from '../lib/merge.mjs' */
+/** @import { CIFailure, Commit } from '../lib/ci.mjs' */
 /** @import { Git, Identity } from '../lib/pr.mjs' */
 /** @import { Repo } from './repos.mjs' */
 /**
@@ -43,9 +41,9 @@ import { reposWithAppPRs } from './repos.mjs';
  * - `rebased`: it was rebuilt as one commit on its base's tip
  * - `conflict`: it can't be, since it conflicts with its base (which it says, once per head and base tip)
  * - `empty`: it can't be, since its base already has everything it changes (which it says, once per head and base tip)
- * - `pending`, `passed`: it's one commit on its base's tip, and its CI is still running, or passed (or, for a relock PR, isn't looked at)
- * - `restored`: its CI failed, and inputs it removed from a failed workflow file were put back, and kept
- * - `stuck`: its CI failed, and there's nothing left to put back (or where to put it back is ambiguous), so it needs a person (which it says, once per head)
+ * - `pending`, `passed`: it's one commit on its base's tip, and its CI is still running (or has failed only as its base's tip's has, so far), or passed (or, for a relock PR, isn't looked at)
+ * - `restored`: its CI failed, and inputs it removed from a workflow file that failed in a way its base's tip doesn't were put back, and kept
+ * - `stuck`: its CI failed, and there's nothing left to put back (or where to put it back is ambiguous, or every workflow file that failed only failed as on its base's tip), so it needs a person (which it says, once per head)
  * Once it's said a PR is `stuck`, that's what it is until its head changes; once it's said it's `conflict` or `empty`, that's what it is until its head, or its base's tip, changes: later runs find what was said on it, and never clone it again to decide it again.
  * @typedef {{ kind: 'changed' | 'foreign' | 'rebased' | 'conflict' | 'empty' | 'pending' | 'passed' | 'restored' | 'stuck', text: string }} Outcome
  */
@@ -320,8 +318,25 @@ async function withClone(target, onBase, act) {
 }
 
 /**
+ * For a PR whose CI failed, restores what it removed from the workflow files whose failures it could have caused (see `restore`), but never for a failure its base branch's tip has too (see `blame`): when that's every one, the PR needs a person, which it says, once for each head commit. While that can't be told yet, nothing's done.
+ * @type {(target: Target, failures: CIFailure[], commits: { headCommit: Commit, baseTip: Commit }) => Promise<Outcome>}
+ */
+async function remediate(target, failures, commits) {
+	const blamed = await blame(target.octokit, failures, commits);
+	const base = target.pr.base.ref;
+	if (blamed.kind === 'running') {
+		return { kind: 'pending', text: `up to date; its CI has failed only as ${code(base)}’s does so far, and is still running` };
+	}
+	if (blamed.kind === 'base') {
+		await say(target, { kind: 'stuck' }, `Every workflow file that failed on this PR’s head commit (${blamed.files.map(code).join(', ')}) fails the same way on ${code(base)}’s head commit (${code(commits.baseTip.head)}), so the App has nothing to restore: it needs a person to look at it.`);
+		return { kind: 'stuck', text: `its CI failed only as ${code(base)}’s does; said so on it` };
+	}
+	return withClone(target, true, (job) => restore(job, blamed.files));
+}
+
+/**
  * Keeps one of the App's open PRs the one commit on its base's tip that it must be (see `rebase`), and, for a `fleet/workflows` PR whose CI failed, puts back what it removed (see `restore`).
- * Everything is decided from the API, exactly as `/merge` decides it (see `commitsRefusal`, `isSingleOnBase`, and `ciStatus`): the repository is only cloned for a PR that has to be rebased or restored, and not even then once it's said, for its head commit (and, for a rebase, its base's tip), that it can't be (see `alreadySaid`).
+ * Everything is decided from the API, exactly as `/merge` decides it (see `commitsRefusal`, `isSingleOnBase`, and `ciStatus`; and, for a PR whose CI failed, its base's tip's CI, see `remediate`): the repository is only cloned for a PR that has to be rebased or restored, and not even then once it's said, for its head commit (and, for a rebase, its base's tip), that it can't be (see `alreadySaid`).
  * Never touches a PR with anyone else's commits on it.
  * @type {(context: Context, target: { repo: Repo, pr: PR, octokit: Octokit, token: string }) => Promise<Outcome>}
  */
@@ -353,11 +368,19 @@ export async function maintainPR(context, {
 	if (pr.head.ref !== fixBranch) {
 		return { kind: 'passed', text: 'up to date' };
 	}
-	const ci = await ciStatus(octokit, {
-		owner: repo.owner, name: repo.name, head: pr.head.sha,
-	});
+	/** @type {Commit} */
+	const headCommit = {
+		owner: repo.owner,
+		name: repo.name,
+		head: pr.head.sha,
+	};
+	const ci = await ciFailures(octokit, headCommit);
 	if (ci.kind === 'failed') {
-		return await alreadySaid(target, ['stuck']) ?? withClone(target, true, (job) => restore(job, ci.files));
+		// its one commit's parent is its base's tip
+		return await alreadySaid(target, ['stuck']) ?? remediate(target, ci.failures, {
+			headCommit,
+			baseTip: { ...headCommit, head: commits.parents[0] },
+		});
 	}
 	return { kind: ci.kind, text: `up to date; its CI ${ci.kind === 'pending' ? 'is still running' : 'passed'}` };
 }

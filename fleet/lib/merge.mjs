@@ -8,20 +8,14 @@ import {
 	octokitFor,
 } from './app.mjs';
 import { botBranches } from './branches.mjs';
-import {
-	checkSuites,
-	commitStatuses,
-	commitsRefusal,
-	excerpt,
-	isSingleOnBase,
-	unreportedPending,
-	workflowFile,
-} from './merge-guards.mjs';
+import { ciStatus } from './ci.mjs';
+import { commitsRefusal, isSingleOnBase } from './merge-guards.mjs';
 import { code } from './markdown.mjs';
 
+export { ciStatus };
 export { behindReason, maxPRCommits } from './merge-guards.mjs';
 
-/** @typedef {import('./app.mjs').Octokit} Octokit */
+/** @import { Octokit } from './app.mjs' */
 /** @typedef {ReturnType<typeof import('./app.mjs').appAuth>} Auth */
 /**
  * A PR waiting for its checks to finish, as the merge queue stores it: `headSha` and `base` are what `/merge` saw, and only that is ever merged. `private` is whether its repository was private when it was queued, and `commandFailed` whether anything else the same command did already failed, so that its reaction says so once its last PR is resolved.
@@ -37,7 +31,7 @@ export { behindReason, maxPRCommits } from './merge-guards.mjs';
  *   commandFailed?: boolean,
  * }} Entry
  */
-// a failure's `files` are the workflow files (eg, `.github/workflows/tests.yml`) whose runs failed, or had a step whose failure `continue-on-error` hides
+// a failure's `files` are the workflow files (eg, `.github/workflows/tests.yml`) whose runs or jobs failed, or had a step whose failure `continue-on-error` hides
 /** @typedef {{ kind: 'ready' } | { kind: 'pending' } | { kind: 'failed', failures: string[], files: string[] } | { kind: 'behind' } | { kind: 'refused', reason: string }} Assessment */
 /** @typedef {{ owner: string, name: string, number: number, base: string, head: string }} Target */
 /** @typedef {{ number: number, head: { sha: string, ref: string, repo: { full_name: string } | null }, base: { ref: string }, user: { login: string } | null }} PR */
@@ -69,11 +63,6 @@ const permissionNames = {
 	statuses: 'Commit statuses',
 	workflows: 'Workflows',
 };
-
-const passing = new Set(['success', 'skipped']);
-const failingSteps = new Set([
-	'failure', 'timed_out', 'cancelled',
-]);
 
 /** @type {(error: unknown) => string} */
 export function messageOf(error) {
@@ -132,140 +121,23 @@ export async function candidatePRs(octokit, {
 }, bot) {
 	/** @type {PR[]} */
 	const found = [];
-	for (const branch of botBranches) {
+	await botBranches.reduce(async (previous, branch) => {
+		await previous;
 		// `head` only narrows by the head repository's owner and branch, so a fork of anything else the owner has can still match
-		const prs = await octokit.paginate(octokit.rest.pulls.list, { // eslint-disable-line no-await-in-loop
-			owner, repo: name, head: `${owner}:${branch}`, state: 'open', per_page: 100, // eslint-disable-line camelcase
+		const prs = await octokit.paginate(octokit.rest.pulls.list, {
+			owner,
+			repo: name,
+			head: `${owner}:${branch}`,
+			state: 'open',
+			per_page: 100, // eslint-disable-line camelcase
 		});
-		found.push(...prs.filter((pr) => pr.head.ref === branch
+		prs.filter((pr) => pr.head.ref === branch
 			&& pr.head.repo?.full_name.toLowerCase() === repository.toLowerCase()
-			&& pr.user?.login.toLowerCase() === bot.toLowerCase()));
-	}
-	return found.sort((a, b) => a.number - b.number);
-}
-
-/** @typedef {{ owner: string, name: string, head: string }} Commit */
-
-/** @typedef {{ id: number, name?: string | null, path?: string | null, status: string | null, conclusion: string | null, updated_at?: string | null }} WorkflowRun */
-/** @typedef {{ id: number, name: string, url: string, output?: { annotations_count?: number } }} CheckRun */
-
-/**
- * The failures of GitHub Actions jobs that their check runs' conclusions don't show: a step with `continue-on-error` that fails leaves its job, and so its check run, successful.
- * GitHub's jobs API reports such a step's own `conclusion` as `success` too, so the step can't show it; but the runner still leaves a `failure` annotation (eg, “Process completed with exit code 1.”) on its job's check run, so any `failure` annotation counts as a failure. That's conservative: an `::error::` a passing step writes counts too.
- * A step whose own `conclusion` (or `outcome`, should the API ever give one) is a failure counts as well; and a check run whose job can't be found can't be shown to have no such step, so it counts as failed.
- * Also returns the workflow files of the runs whose jobs those are (see `workflowFile`).
- * @type {(octokit: Octokit, commit: Commit, ci: { runs: WorkflowRun[], checkRuns: CheckRun[] }) => Promise<{ failures: string[], files: string[] }>}
- */
-async function maskedFailures(octokit, { owner, name }, { runs, checkRuns }) {
-	if (checkRuns.length === 0) {
-		return { failures: [], files: [] };
-	}
-	/** @type {Map<string, { run_id: number, steps?: { name: string, conclusion: string | null }[] }>} */
-	const jobs = new Map();
-	for (const run of runs) {
-		const runJobs = await octokit.paginate(octokit.rest.actions.listJobsForWorkflowRun, { // eslint-disable-line no-await-in-loop
-			owner, repo: name, run_id: run.id, filter: 'latest', per_page: 100, // eslint-disable-line camelcase
+			&& pr.user?.login.toLowerCase() === bot.toLowerCase()).forEach((pr) => {
+			found.push(pr);
 		});
-		for (const job of runJobs) {
-			jobs.set(job.check_run_url, job);
-		}
-	}
-	/** @type {string[]} */
-	const failures = [];
-	/** @type {Set<string>} */
-	const files = new Set();
-	for (const checkRun of checkRuns) {
-		const job = jobs.get(checkRun.url);
-		const before = failures.length;
-		if (!job) {
-			failures.push(`${code(checkRun.name)}: its steps could not be inspected`);
-		}
-		for (const step of job?.steps ?? []) {
-			const failed = [step.conclusion, 'outcome' in step ? step.outcome : null].find((c) => typeof c === 'string' && failingSteps.has(c));
-			if (failed) {
-				failures.push(`${code(checkRun.name)}: step ${code(step.name)}: ${failed}`);
-			}
-		}
-		if ((checkRun.output?.annotations_count ?? 0) > 0) {
-			const annotations = await octokit.paginate(octokit.rest.checks.listAnnotations, { // eslint-disable-line no-await-in-loop
-				owner, repo: name, check_run_id: checkRun.id, per_page: 100, // eslint-disable-line camelcase
-			});
-			for (const annotation of annotations.filter((a) => a.annotation_level === 'failure')) {
-				failures.push(`${code(checkRun.name)}: a step failed: ${code(excerpt(annotation.message ?? ''))}`);
-			}
-		}
-		if (failures.length > before) {
-			workflowFile(runs.find((run) => run.id === job?.run_id)).forEach((file) => files.add(file));
-		}
-	}
-	return { failures, files: [...files] };
-}
-
-/**
- * Whether CI has fully finished, successfully, on `sha`: every workflow run on it completed as a success or skipped, every check suite completed (as `suiteState` and `unreportedPending` count it), every check run (of every check suite) completed as a success or skipped, every commit status a success, and no step of a GitHub Actions job failed, even one whose failure `continue-on-error` hides.
- * With no check runs and no statuses at all, CI hasn't even started, so it's pending. A failure says which workflow files failed, as far as that can be told.
- * @type {(octokit: Octokit, commit: Commit) => Promise<Extract<Assessment, { kind: 'pending' | 'failed' }> | { kind: 'passed' }>}
- */
-export async function ciStatus(octokit, commit) {
-	const {
-		owner, name, head: sha,
-	} = commit;
-	// a job that only starts once others finish (by `needs`, or in a matrix an earlier job outputs) has no check run until then, so only its workflow run shows that CI isn't done; a run's conclusion also covers any check run that `latest` leaves out
-	/** @type {WorkflowRun[]} */
-	const runs = await octokit.paginate(octokit.rest.actions.listWorkflowRunsForRepo, {
-		owner, repo: name, head_sha: sha, per_page: 100, // eslint-disable-line camelcase
-	});
-	// `latest` (the default), so a check that was re-run counts only as it last ran
-	const checkRuns = await octokit.paginate(octokit.rest.checks.listForRef, {
-		owner, repo: name, ref: sha, filter: 'latest', per_page: 100, // eslint-disable-line camelcase
-	});
-	// a suite an app has registered, but made no check run in yet, shows only there
-	const suites = await checkSuites(octokit, commit);
-	const statuses = await commitStatuses(octokit, commit);
-	const failures = [...suites.failures];
-	/** @type {Set<string>} */
-	const files = new Set();
-	let pending = suites.pending || (checkRuns.length === 0 && statuses.length === 0);
-	for (const run of runs) {
-		if (run.status !== 'completed') {
-			pending = true;
-		} else if (!passing.has(String(run.conclusion))) {
-			failures.push(`${code(run.name || `workflow run ${run.id}`)}: ${run.conclusion ?? 'no conclusion'}`);
-			workflowFile(run).forEach((file) => files.add(file));
-		}
-	}
-	for (const run of checkRuns) {
-		if (run.status !== 'completed') {
-			pending = true;
-		} else if (!passing.has(String(run.conclusion))) {
-			failures.push(`${code(run.name)}: ${run.conclusion ?? 'no conclusion'}`);
-		}
-	}
-	for (const status of statuses) {
-		if (status.state === 'pending') {
-			pending = true;
-		} else if (status.state !== 'success') {
-			failures.push(`${code(status.context)}: ${status.state}`);
-		}
-	}
-	if (failures.length === 0 && !pending) {
-		pending = unreportedPending(suites.unreported, [
-			...runs.map((run) => run.updated_at),
-			...checkRuns.map((run) => run.completed_at),
-			...statuses.map((status) => status.updated_at),
-		]);
-	}
-	if (failures.length === 0 && !pending) {
-		const masked = await maskedFailures(octokit, commit, { runs, checkRuns: checkRuns.filter((run) => run.app?.slug === 'github-actions') });
-		failures.push(...masked.failures);
-		masked.files.forEach((file) => files.add(file));
-	}
-	if (failures.length > 0) {
-		return {
-			kind: 'failed', failures, files: [...files],
-		};
-	}
-	return pending ? { kind: 'pending' } : { kind: 'passed' };
+	}, Promise.resolve());
+	return found.sort((a, b) => a.number - b.number);
 }
 
 /**
@@ -306,7 +178,7 @@ function isEntry(value) {
 	if (!value || typeof value !== 'object') {
 		return false;
 	}
-	const e = /** @type {Record<string, unknown>} */ (value); // eslint-disable-line no-extra-parens
+	const e = /** @type {Record<string, unknown>} */ (value);
 	return typeof e.repository === 'string'
 		&& typeof e.number === 'number'
 		&& typeof e.headSha === 'string'
@@ -398,11 +270,15 @@ export async function finishQueued({
 		const reactions = await octokit.paginate(octokit.rest.reactions.listForIssueComment, {
 			owner, repo, comment_id: commentId, content: 'eyes', per_page: 100, // eslint-disable-line camelcase
 		});
-		for (const reaction of reactions.filter((r) => r.user?.login.toLowerCase() === bot.toLowerCase())) {
-			await octokit.rest.reactions.deleteForIssueComment({ // eslint-disable-line no-await-in-loop
-				owner, repo, comment_id: commentId, reaction_id: reaction.id, // eslint-disable-line camelcase
+		await reactions.filter((r) => r.user?.login.toLowerCase() === bot.toLowerCase()).reduce(async (previous, reaction) => {
+			await previous;
+			await octokit.rest.reactions.deleteForIssueComment({
+				owner,
+				repo,
+				comment_id: commentId, // eslint-disable-line camelcase
+				reaction_id: reaction.id, // eslint-disable-line camelcase
 			});
-		}
+		}, Promise.resolve());
 		await octokit.rest.reactions.createForIssueComment({
 			owner, repo, comment_id: commentId, content: ok ? 'rocket' : 'confused', // eslint-disable-line camelcase
 		});
