@@ -15,10 +15,9 @@ import {
 } from './helpers/states.mjs';
 import { versionFixture } from './helpers/versions.mjs';
 
-/** @typedef {import('../../../fleet/drift/fix.mjs').Plan} Plan */
-/** @typedef {import('../../../fleet/drift/fix.mjs').Category} Category */
-/** @typedef {import('../../../fleet/lib/app.mjs').RepoState} RepoState */
-/** @typedef {import('../../../fleet/lib/config.mjs').Config} Config */
+/** @import { Plan, Category } from '../../../fleet/drift/fix.mjs' */
+/** @import { RepoState } from '../../../fleet/lib/app.mjs' */
+/** @import { Config } from '../../../fleet/lib/config.mjs' */
 
 // every drifted file makes a temp dir for its diff; keep them all under one dir that is removed when this file's tests finish
 const fileTemp = mkdtempSync(path.join(tmpdir(), 'fleet-fix-test-'));

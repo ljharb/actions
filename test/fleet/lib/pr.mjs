@@ -37,8 +37,8 @@ import {
 	writeFiles,
 } from './helpers/git.mjs';
 
-/** @typedef {import('../../../fleet/lib/pr.mjs').PRState} PRState */
-/** @typedef {import('./helpers/git.mjs').Server} Server */
+/** @import { PRState } from '../../../fleet/lib/pr.mjs' */
+/** @import { Server } from './helpers/git.mjs' */
 /** @typedef {{ method: string, path: string, body: any, authorization: string }} Recorded */
 /** @typedef {(request: { path: string, body: any }) => [number, unknown]} Handler */
 

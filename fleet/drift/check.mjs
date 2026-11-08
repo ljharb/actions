@@ -8,7 +8,8 @@ import { exec } from '../lib/exec.mjs';
 import { keepInputs, stripKnownInputs } from './inputs.mjs';
 import { expectedShards, isShard } from './shards.mjs';
 
-/** @typedef {import('../lib/app.mjs').RepoState} RepoState */
+/** @import { RepoState } from '../lib/app.mjs' */
+/** @import { Type } from '../../node/matrix/versions.mjs' */
 /** @typedef {{ name: string, diff: string }} Drift */
 /** @typedef {{ repository: string, missing: string[], unexpected: string[], drifted: Drift[], unreadable: string[], error: string | null }} Result */
 /** @typedef {{ template: string, required: boolean | null }} Expectation */
@@ -129,7 +130,7 @@ export function nodeEngines(packageJson) {
 }
 
 // the matrix type decides how many jobs, so how many files, a range needs
-/** @type {(files: Map<string, string | null>) => import('./shards.mjs').Type} */
+/** @type {(files: Map<string, string | null>) => Type} */
 export function nodeType(files) {
 	const types = [...files]
 		.filter(([name, text]) => isShard(name) && typeof text === 'string')

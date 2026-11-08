@@ -30,11 +30,10 @@ import {
 	remoteTip,
 } from '../lib/pr.mjs';
 
-/** @typedef {import('../lib/app.mjs').RepoState} RepoState */
-/** @typedef {import('../lib/pr.mjs').Identity} Identity */
-/** @typedef {import('../drift/check.mjs').Result} Result */
-/** @typedef {import('../drift/fix.mjs').Plan} Plan */
-/** @typedef {import('../drift/fix.mjs').Category} Category */
+/** @import { RepoState } from '../lib/app.mjs' */
+/** @import { Identity } from '../lib/pr.mjs' */
+/** @import { Result } from '../drift/check.mjs' */
+/** @import { Plan, Category } from '../drift/fix.mjs' */
 /** @typedef {{ state: RepoState, result: Result | null, files: Set<string> | undefined }} Candidate */
 /**
  * @typedef {{
@@ -46,7 +45,7 @@ import {
  * }} Context
  */
 /** @typedef {{ context: Context, state: RepoState, plan: Plan, base: string, files: Set<string> | undefined }} Job */
-/** @typedef {import('../lib/pr.mjs').Git} Git */
+/** @import { Git } from '../lib/pr.mjs' */
 
 export const branch = fixBranch;
 const title = '[actions] update workflow files to match the shared templates';

@@ -12,9 +12,8 @@ import {
 } from '../../../fleet/lib/app.mjs';
 import { installedRepo, mockGitHub, privateKey } from './helpers/github.mjs';
 
-/** @typedef {import('./helpers/github.mjs').Recorded} Recorded */
-/** @typedef {import('./helpers/github.mjs').Scenario} Scenario */
-/** @typedef {import('../../../fleet/lib/app.mjs').RepoState} RepoState */
+/** @import { Recorded, Scenario } from './helpers/github.mjs' */
+/** @import { RepoState } from '../../../fleet/lib/app.mjs' */
 
 /** @type {(t: import('tape').Test, scenario: Scenario) => Recorded[]} */
 function setup(t, scenario) {

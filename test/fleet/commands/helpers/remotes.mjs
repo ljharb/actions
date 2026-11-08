@@ -9,7 +9,7 @@ import {
 	writeFiles,
 } from '../../lib/helpers/git.mjs';
 
-/** @typedef {import('../../lib/helpers/git.mjs').Person} Person */
+/** @import { Person } from '../../lib/helpers/git.mjs' */
 
 /**
  * @typedef {{

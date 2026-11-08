@@ -1,7 +1,7 @@
 import { code } from './markdown.mjs';
 
-/** @typedef {import('./app.mjs').Octokit} Octokit */
-/** @typedef {import('./merge.mjs').Target} Target */
+/** @import { Octokit } from './app.mjs' */
+/** @import { Target } from './merge.mjs' */
 /** @typedef {{ id: number, status: string | null, conclusion: string | null, created_at?: string | null, latest_check_runs_count?: number, app?: { name?: string | null } | null }} CheckSuite */
 
 const passing = new Set(['success', 'skipped']);

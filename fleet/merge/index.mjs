@@ -21,7 +21,7 @@ import {
 } from '../lib/merge.mjs';
 import { maintain } from './maintain.mjs';
 
-/** @typedef {import('../lib/merge.mjs').Entry} Entry */
+/** @import { Entry } from '../lib/merge.mjs' */
 /** @typedef {{ auth: ReturnType<typeof appAuth>, bot: () => Promise<string> }} App */
 /**
  * What checking one queued PR came to: kept, to check again next time, or dropped, with whether it was merged (`ok`), and what to say about it (`null`: nothing, since it's private, or can't be shown to be public).

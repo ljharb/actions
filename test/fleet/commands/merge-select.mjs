@@ -9,7 +9,7 @@ import { mockGitHub, privateKey } from '../lib/helpers/github.mjs';
 import { mockMerge } from './helpers/merge.mjs';
 import { passing, pr } from './helpers/merge-run.mjs';
 
-/** @typedef {import('../lib/helpers/github.mjs').Recorded} Recorded */
+/** @import { Recorded } from '../lib/helpers/github.mjs' */
 
 test('runMerge: never a repository the App isn’t installed on, nor an archived one', async (t) => {
 	nock.disableNetConnect();

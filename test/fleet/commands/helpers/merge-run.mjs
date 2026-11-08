@@ -8,13 +8,10 @@ import { standardWorkflows } from '../../drift/helpers/states.mjs';
 import { gitIsolation, tempDir } from '../../lib/helpers/git.mjs';
 import { privateKey } from '../../lib/helpers/github.mjs';
 
-/** @typedef {import('../../lib/helpers/github.mjs').Scenario} GitHubScenario */
-/** @typedef {import('../../lib/helpers/github.mjs').RepoSpec} RepoSpec */
-/** @typedef {import('../../lib/helpers/github.mjs').Recorded} Recorded */
-/** @typedef {import('./preload.mjs').Scenario} Scenario */
-/** @typedef {import('./preload.mjs').CommandsScenario} CommandsScenario */
-/** @typedef {import('./merge.mjs').MergeScenario} MergeScenario */
-/** @typedef {import('../../drift/helpers/child.mjs').ChildResult} ChildResult */
+/** @import { Scenario as GitHubScenario, RepoSpec, Recorded } from '../../lib/helpers/github.mjs' */
+/** @import { Scenario, CommandsScenario } from './preload.mjs' */
+/** @import { MergeScenario } from './merge.mjs' */
+/** @import { ChildResult } from '../../drift/helpers/child.mjs' */
 
 const preload = pathToFileURL(path.join(import.meta.dirname, 'preload.mjs')).href;
 

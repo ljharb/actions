@@ -7,7 +7,7 @@ import nock from 'nock';
 import '../../drift/helpers/preload.mjs';
 import { mockMerge } from './merge.mjs';
 
-/** @typedef {import('../../lib/helpers/github.mjs').ErrorReply} ErrorReply */
+/** @import { ErrorReply } from '../../lib/helpers/github.mjs' */
 /**
  * The parts of the GitHub API only the commands use, each keyed by `owner/name` (or, for `permissions`, a login):
  * - `permissions`: a commenter's permission on the repository running the commands (unspecified, `none`)
@@ -21,7 +21,9 @@ import { mockMerge } from './merge.mjs';
  *   reactions?: { remove?: number, finish?: number },
  * }} CommandsScenario
  */
-/** @typedef {import('../../drift/helpers/preload.mjs').ChildScenario & { commands?: CommandsScenario, merge?: import('./merge.mjs').MergeScenario }} Scenario */
+/** @import { ChildScenario } from '../../drift/helpers/preload.mjs' */
+/** @import { MergeScenario } from './merge.mjs' */
+/** @typedef {ChildScenario & { commands?: CommandsScenario, merge?: MergeScenario }} Scenario */
 
 const { FLEET_TEST_SCENARIO } = process.env;
 

@@ -1,6 +1,6 @@
 import { parseConfig } from './config.mjs';
 
-/** @typedef {import('./pr.mjs').Git} Git */
+/** @import { Git } from './pr.mjs' */
 
 // a repository's own config, whose `keep` names the inputs `/fix` keeps
 export const configFile = '.github/ljharb-actions.json';

@@ -20,8 +20,8 @@ import {
 	writtenQueue,
 } from '../commands/helpers/merge-run.mjs';
 
-/** @typedef {import('../commands/helpers/merge-run.mjs').GitHubScenario} GitHubScenario */
-/** @typedef {import('../commands/helpers/merge-run.mjs').MergeScenario} MergeScenario */
+/** @import { Scenario as GitHubScenario } from '../lib/helpers/github.mjs' */
+/** @import { MergeScenario } from '../commands/helpers/merge.mjs' */
 
 const script = path.join('fleet', 'merge', 'index.mjs');
 // recently enough that nothing queued has been waiting too long

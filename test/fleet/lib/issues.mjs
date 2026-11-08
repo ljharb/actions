@@ -5,8 +5,7 @@ import { appAuth } from '../../../fleet/lib/app.mjs';
 import { isReportAuthor, issueOctokit, legacyAuthor } from '../../../fleet/lib/issues.mjs';
 import { mockGitHub, privateKey } from './helpers/github.mjs';
 
-/** @typedef {import('./helpers/github.mjs').Recorded} Recorded */
-/** @typedef {import('./helpers/github.mjs').Scenario} Scenario */
+/** @import { Recorded, Scenario } from './helpers/github.mjs' */
 
 /** @type {(t: import('tape').Test, scenario: Scenario) => Recorded[]} */
 function setup(t, scenario) {

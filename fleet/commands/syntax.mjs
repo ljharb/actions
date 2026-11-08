@@ -1,7 +1,7 @@
 import { fixBranch, relockBranch } from '../lib/branches.mjs';
 import { code } from '../lib/markdown.mjs';
 
-/** @typedef {import('../drift/fix.mjs').Category} Category */
+/** @import { Category } from '../drift/fix.mjs' */
 /** @typedef {{ repositories: Set<string>, accounts: Set<string>, files: Set<string>, categories: Set<Category> }} Filters */
 /** @typedef {'fix' | 'merge'} Verb */
 /** @typedef {{ dryRun: boolean, line: string, filters: Filters }} Invocation */

@@ -27,9 +27,8 @@ import {
 } from './helpers/merge-run.mjs';
 import { botEmail, prCommit } from './helpers/merge.mjs';
 
-/** @typedef {import('./helpers/merge-run.mjs').GitHubScenario} GitHubScenario */
-/** @typedef {import('./helpers/merge-run.mjs').MergeScenario} MergeScenario */
-/** @typedef {import('./helpers/merge-run.mjs').Recorded} Recorded */
+/** @import { Scenario as GitHubScenario, Recorded } from '../lib/helpers/github.mjs' */
+/** @import { MergeScenario } from './helpers/merge.mjs' */
 
 const script = path.join('fleet', 'commands', 'index.mjs');
 

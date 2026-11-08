@@ -2,7 +2,7 @@ import semver from 'semver';
 
 import { allVersions, getPreset, presets } from '../../node/matrix/versions.mjs';
 
-/** @typedef {import('../../node/matrix/versions.mjs').Type} Type */
+/** @import { Type } from '../../node/matrix/versions.mjs' */
 
 const maxJobs = 256; // GitHub's limit for a single job's matrix
 

@@ -9,8 +9,7 @@ import {
 	presets,
 } from './versions.mjs';
 
-/** @typedef {import('./versions.mjs').nvmVersionish} nvmVersionish */
-/** @typedef {import('./versions.mjs').Type} Type */
+/** @import { nvmVersionish, Type } from './versions.mjs' */
 
 /* eslint no-extra-parens: 0 */
 

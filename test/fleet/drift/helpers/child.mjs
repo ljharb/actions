@@ -10,8 +10,8 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
-/** @typedef {import('./preload.mjs').ChildScenario} ChildScenario */
-/** @typedef {import('../../lib/helpers/github.mjs').Recorded} Recorded */
+/** @import { ChildScenario } from './preload.mjs' */
+/** @import { Recorded } from '../../lib/helpers/github.mjs' */
 
 export const root = path.join(import.meta.dirname, '..', '..', '..', '..');
 

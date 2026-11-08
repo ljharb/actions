@@ -1,7 +1,6 @@
 import nock from 'nock';
 
-/** @typedef {import('../../lib/helpers/github.mjs').ErrorReply} ErrorReply */
-/** @typedef {import('../../lib/helpers/github.mjs').Recorded} Recorded */
+/** @import { ErrorReply, Recorded } from '../../lib/helpers/github.mjs' */
 /**
  * What GitHub says about CI on one commit: its check runs, each with its annotations (from which its `output.annotations_count` is filled in, unless it has one), its check suites, its commit statuses, and the workflow runs on it (unless they say otherwise, completed as a success), each with its jobs; or `error`, for every request about it.
  * @typedef {{

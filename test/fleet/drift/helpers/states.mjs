@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 
-/** @typedef {import('../../../../fleet/lib/app.mjs').RepoState} RepoState */
+/** @import { RepoState } from '../../../../fleet/lib/app.mjs' */
 
 const templateDir = path.join(import.meta.dirname, '..', '..', '..', '..', 'fleet', 'drift', 'templates');
 

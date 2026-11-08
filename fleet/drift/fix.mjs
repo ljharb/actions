@@ -14,8 +14,8 @@ import {
 import { keepInputs } from './inputs.mjs';
 import { expectedShards, shardDecade } from './shards.mjs';
 
-/** @typedef {import('../lib/app.mjs').RepoState} RepoState */
-/** @typedef {import('./check.mjs').Result} Result */
+/** @import { RepoState } from '../lib/app.mjs' */
+/** @import { Result } from './check.mjs' */
 /** @typedef {'missing' | 'drifted' | 'unexpected'} Category */
 // `kept` is only ever `/fix`'s own, for the config that keeps what its PR put back
 /** @typedef {{ path: string, content: string, reason: Category | 'range' | 'kept' }} Write */

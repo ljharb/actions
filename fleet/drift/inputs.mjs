@@ -18,8 +18,7 @@ import {
  * A call in one file is the call in another of the job with the same id that calls the same reusable workflow; failing that (eg, a job that's been renamed), the one other call of that workflow, when each file has exactly one such call left. Any other is ambiguous, and what it passes is never moved to a call that might not be its counterpart.
  */
 
-/** @typedef {import('./calls.mjs').Call} Call */
-/** @typedef {import('./calls.mjs').Parsed} Parsed */
+/** @import { Call, Parsed } from './calls.mjs' */
 /** @typedef {Map<string, { file: string, inputs: Map<string, string[]> }>} Inputs */
 /** @typedef {{ moved: Inputs, ambiguous: Inputs }} Moved */
 

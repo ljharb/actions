@@ -4,7 +4,7 @@ import { botLogin, installationToken, octokitFor } from './app.mjs';
 import { isBotBranch } from './branches.mjs';
 import { exec, gitAuthEnv } from './exec.mjs';
 
-/** @typedef {import('./app.mjs').Octokit} Octokit */
+/** @import { Octokit } from './app.mjs' */
 /** @typedef {{ name: string, email: string }} Identity */
 /** @typedef {{ mode: 'create' } | { mode: 'update' | 'reopen', number: number, head: string }} PRState */
 /** @typedef {(args: string[], options?: { allowFailure?: boolean, input?: string }) => import('./exec.mjs').ExecResult} Git */

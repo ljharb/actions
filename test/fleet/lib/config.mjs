@@ -2,7 +2,7 @@ import test from 'tape';
 
 import { mergeConfig, parseConfig } from '../../../fleet/lib/config.mjs';
 
-/** @typedef {import('../../../fleet/lib/config.mjs').Config} Config */
+/** @import { Config } from '../../../fleet/lib/config.mjs' */
 
 const file = '`some/file.json`';
 

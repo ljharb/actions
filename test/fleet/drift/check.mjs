@@ -24,9 +24,9 @@ import {
 } from './helpers/states.mjs';
 import { versionFixture } from './helpers/versions.mjs';
 
-/** @typedef {import('../../../fleet/drift/check.mjs').Result} Result */
-/** @typedef {import('../../../fleet/lib/app.mjs').RepoState} RepoState */
-/** @typedef {import('../../../fleet/lib/config.mjs').Config} Config */
+/** @import { Result } from '../../../fleet/drift/check.mjs' */
+/** @import { RepoState } from '../../../fleet/lib/app.mjs' */
+/** @import { Config } from '../../../fleet/lib/config.mjs' */
 
 /** @type {(names: string[]) => () => void} */
 function overrideEnv(names) {
