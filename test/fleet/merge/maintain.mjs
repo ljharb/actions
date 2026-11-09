@@ -1135,6 +1135,41 @@ test('maintain: failures', async (t) => {
 	t.end();
 });
 
+// GitHub's runners always set `RUNNER_TEMP`, so each of its cases is set here, rather than left to where the tests run
+test('maintain: clones into `RUNNER_TEMP`, or, without it, the system’s temp directory', async (t) => {
+	const had = Object.hasOwn(process.env, 'RUNNER_TEMP');
+	const before = process.env.RUNNER_TEMP;
+	t.teardown(() => {
+		if (had) {
+			process.env.RUNNER_TEMP = before;
+		} else {
+			delete process.env.RUNNER_TEMP;
+		}
+	});
+	const server = setup(t);
+	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
+	server.commit('main', { 'README.md': 'moved\n' });
+
+	process.env.RUNNER_TEMP = path.join(tempDir(t, 'fleet-maintain-runner-temp'), 'missing');
+	const missing = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+	});
+	t.equal(missing.errors, 1, 'a `RUNNER_TEMP` that doesn’t exist can’t be cloned into, so it’s what’s used');
+	t.equal(server.tip(`refs/heads/${fixBranch}`), head, 'pushing nothing');
+
+	process.env.RUNNER_TEMP = '';
+	const unset = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+	});
+	t.equal(unset.errors, 0, 'without it, nothing fails');
+	t.ok(logged(unset.stdout).includes(`${prURL(server)}: rebased onto \`main\`’s tip`), 'since the system’s temp directory is used instead');
+	t.end();
+});
+
 test('maintain: a private repository’s PRs are kept up to date, but nothing about them is shown', async (t) => {
 	const server = setup(t);
 	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
