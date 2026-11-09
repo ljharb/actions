@@ -29,7 +29,7 @@ import { installedRepo, mockGitHub, privateKey } from '../lib/helpers/github.mjs
 /** @import { MergeScenario } from '../commands/helpers/merge.mjs' */
 /** @import { Server } from '../lib/helpers/git.mjs' */
 /** @import { Test } from 'tape' */
-/** @typedef {{ key: string, user: { login: string }, body: string }} Comment */
+/** @typedef {{ key: string, user: { login: string }, body: string, node_id?: string }} Comment */
 
 const repository = 'ljharb/r';
 const message = '[actions] update workflow files to match ljharb/actions’ templates';
@@ -1155,5 +1155,90 @@ test('maintain: a private repository’s PRs are kept up to date, but nothing ab
 	});
 	t.equal(failed.errors, 0, 'its failure doesn’t count');
 	t.notOk(failed.stdout.includes('ljharb/r'), 'nor is it shown');
+	t.end();
+});
+
+/** @type {(requests: Recorded[]) => [string, string][]} */
+function hiddenComments(requests) {
+	return requests.filter((r) => r.path === '/graphql' && r.body.variables.classifier).map((r) => [r.body.variables.id, r.body.variables.classifier]);
+}
+
+test('maintain: once it rebases a PR, hides what it said on it that no longer applies', async (t) => {
+	const server = setup(t);
+	const oldTip = server.tip('main');
+	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
+	const mainTip = server.commit('main', { 'README.md': 'moved\n' });
+	const old = 'e'.repeat(40);
+	const key = '/repos/ljharb/r/issues/1';
+	/** @type {(github?: Partial<Scenario>, isPrivate?: boolean) => ReturnType<typeof run>} */
+	const once = (github = {}, isPrivate = false) => run(t, {
+		server,
+		github: installed([{ name: 'r', private: isPrivate }], github),
+		merge: shown(server, [[1, fixBranch, server.tip(`refs/heads/${fixBranch}`)]]),
+		posted: [
+			{ key, node_id: 'C_conflict', user: { login: bot.name }, body: `${marker('conflict', head, oldTip)}\nconflicted, with an earlier base tip` }, // eslint-disable-line camelcase
+			{ key, node_id: 'C_empty', user: { login: bot.name }, body: `${marker('empty', old, mainTip)}\nwas empty, at an earlier head` }, // eslint-disable-line camelcase
+			{ key, node_id: 'C_stuck', user: { login: bot.name }, body: `${marker('stuck', head)}\nwas stuck` }, // eslint-disable-line camelcase
+			{ key, node_id: 'C_minimized', user: { login: bot.name }, body: `${marker('foreign', old)}\nalready hidden` }, // eslint-disable-line camelcase
+			{ key, node_id: 'C_theirs', user: { login: mallory.name }, body: `${marker('stuck', head)}\nnot the bot` }, // eslint-disable-line camelcase
+			{ key, node_id: 'C_plain', user: { login: bot.name }, body: 'no marker' }, // eslint-disable-line camelcase
+		],
+	});
+
+	const { errors, stdout, requests } = await once({ minimized: ['C_minimized'] });
+	t.equal(errors, 0, 'nothing failed');
+	t.ok(logged(stdout).includes(`${prURL(server)}: rebased onto \`main\`’s tip; hid 3 of its earlier comments that no longer apply`), 'rebases it, and says what it hid');
+	t.deepEqual(
+		hiddenComments(requests),
+		[
+			['C_conflict', 'RESOLVED'],
+			['C_empty', 'OUTDATED'],
+			['C_stuck', 'OUTDATED'],
+		],
+		'a conflict about the head a clean rebase replaced is resolved; its having been empty at an even earlier head, or stuck, is only outdated; anyone else’s, one without a marker, and one already hidden are left alone',
+	);
+	t.deepEqual(requests.filter((r) => r.path === '/graphql' && r.body.variables.ids).map((r) => r.authorization), ['token ghs_installation_1'], 'looking them up with the PR’s repository’s token');
+
+	server.commit('main', { 'other.md': 'moved again\n' });
+	const failed = await once({ minimized: ['C_minimized'], minimizeFails: ['C_conflict', 'C_empty', 'C_stuck'] }, true);
+	t.equal(failed.errors, 0, 'a failure to hide them never fails the run');
+	t.equal(server.tip(`refs/heads/${fixBranch}^`), server.tip('main'), 'nor the update');
+	t.deepEqual(
+		hiddenComments(failed.requests),
+		[
+			['C_conflict', 'OUTDATED'],
+			['C_empty', 'OUTDATED'],
+			['C_stuck', 'OUTDATED'],
+		],
+		'it tries to hide them',
+	);
+	t.deepEqual(logged(failed.stdout), ['Open PRs in private repositories, if any, were also kept up to date; nothing about them is shown here.'], 'and, for a private repository, its failing to isn’t logged at all');
+	t.end();
+});
+
+test('maintain: once it restores what a PR removed, hides what it said on it that no longer applies', async (t) => {
+	const server = setup(t);
+	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), [aught]: fixedAught }, { who: bot, from: 'main', message });
+	const old = 'e'.repeat(40);
+	const key = '/repos/ljharb/r/issues/1';
+	const { errors, stdout, requests } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		posted: [
+			{ key, node_id: 'C_stuck', user: { login: bot.name }, body: `${marker('stuck', old)}\nwas stuck, at an earlier head` }, // eslint-disable-line camelcase
+			{ key, node_id: 'C_foreign', user: { login: bot.name }, body: `${marker('foreign', head)}\nhad someone else’s commits` }, // eslint-disable-line camelcase
+		],
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.ok(logged(stdout).includes(`${prURL(server)}: its CI failed, so restored \`skip-engines\` in \`node-pretest.yml\`, and kept them in \`.github/ljharb-actions.json\`; hid 2 of its earlier comments that no longer apply`), 'restores what it removed, and says what it hid');
+	t.deepEqual(
+		hiddenComments(requests),
+		[
+			['C_stuck', 'OUTDATED'],
+			['C_foreign', 'RESOLVED'],
+		],
+		'its having had someone else’s commits, at the head it replaced, is resolved; its having been stuck, at an earlier head, is only outdated',
+	);
 	t.end();
 });

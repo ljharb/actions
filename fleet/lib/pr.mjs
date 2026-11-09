@@ -3,6 +3,7 @@ import * as core from '@actions/core';
 import { botLogin, installationToken, octokitFor } from './app.mjs';
 import { isBotBranch } from './branches.mjs';
 import { exec, gitAuthEnv } from './exec.mjs';
+import { hideStale } from './said.mjs';
 
 /** @import { Octokit, appAuth } from './app.mjs' */
 /** @import { ExecResult } from './exec.mjs' */
@@ -54,20 +55,40 @@ export function checkout({
 		GIT_COMMITTER_NAME: identity.name,
 		GIT_COMMITTER_EMAIL: identity.email,
 	};
-	exec('git', [
-		'clone', '--quiet', '--no-tags', ...partial ? ['--single-branch', '--filter=blob:none'] : [], ...partial?.depth ? [`--depth=${partial.depth}`] : [], '--branch', base, `${server}/${repository}.git`, dir,
-	], { env });
+	exec(
+		'git',
+		[
+			'clone',
+			'--quiet',
+			'--no-tags',
+			...partial ? ['--single-branch', '--filter=blob:none'] : [],
+			...partial?.depth ? [`--depth=${partial.depth}`] : [],
+			'--branch',
+			base,
+			`${server}/${repository}.git`,
+			dir,
+		],
+		{ env },
+	);
 	/** @type {Git} */
 	const git = (args, options) => exec('git', args, {
-		cwd: dir, env, ...options,
+		cwd: dir,
+		env,
+		...options,
 	});
 	return { git, env };
 }
 
 /** @type {(octokit: Octokit, target: { owner: string, name: string, base: string, branch: string }) => Promise<PRState>} */
-export async function findPR(octokit, {
-	owner, name, base, branch,
-}) {
+export async function findPR(
+	octokit,
+	{
+		owner,
+		name,
+		base,
+		branch,
+	},
+) {
 	const { data: [pr] } = await octokit.rest.pulls.list({
 		owner,
 		repo: name,
@@ -99,7 +120,10 @@ function assertBotBranch(branch) {
 /** @type {(git: Git, branch: string) => string | null} */
 function lsRemote(git, branch) {
 	return git([
-		'ls-remote', '--heads', 'origin', `refs/heads/${branch}`,
+		'ls-remote',
+		'--heads',
+		'origin',
+		`refs/heads/${branch}`,
 	]).stdout.split(/\s/)[0] || null;
 }
 
@@ -112,7 +136,12 @@ export function remoteTip(git, branch, { depth } = {}) {
 		return null;
 	}
 	git([
-		'fetch', '--no-tags', '--quiet', ...depth ? [`--depth=${depth}`] : [], 'origin', `refs/heads/${branch}`,
+		'fetch',
+		'--no-tags',
+		'--quiet',
+		...depth ? [`--depth=${depth}`] : [],
+		'origin',
+		`refs/heads/${branch}`,
 	]);
 	return git(['rev-parse', 'FETCH_HEAD']).stdout.trim();
 }
@@ -128,7 +157,10 @@ function revParse(git, rev) {
  */
 export function ownCommits(git, { base, tip }) {
 	return git([
-		'rev-list', tip, '--not', `origin/${base}`,
+		'rev-list',
+		tip,
+		'--not',
+		`origin/${base}`,
 	]).stdout.split('\n').filter(Boolean);
 }
 
@@ -137,12 +169,21 @@ export function ownCommits(git, { base, tip }) {
  * This guards against accidents, not adversaries: authorship is unverified git metadata, which anyone who can push to the branch can set to the bot's.
  * @type {(git: Git, options: { base: string, tip: string, identity: Identity }) => number}
  */
-export function foreignCommits(git, {
-	base, tip, identity,
-}) {
+export function foreignCommits(
+	git,
+	{
+		base,
+		tip,
+		identity,
+	},
+) {
 	const email = identity.email.toLowerCase();
 	return git([
-		'log', '--format=%ae%x09%ce', tip, '--not', `origin/${base}`,
+		'log',
+		'--format=%ae%x09%ce',
+		tip,
+		'--not',
+		`origin/${base}`,
 	]).stdout.split('\n').filter(Boolean).filter((line) => line.split('\t').some((e) => e.toLowerCase() !== email)).length;
 }
 
@@ -150,11 +191,19 @@ export function foreignCommits(git, {
  * Refuses to overwrite `branch` at `tip` when it has anyone else's commits, so that nobody's work is ever lost.
  * @type {(git: Git, options: { base: string, branch: string, tip: string, identity: Identity }) => void}
  */
-export function assertBotOwned(git, {
-	base, branch, tip, identity,
-}) {
+export function assertBotOwned(
+	git,
+	{
+		base,
+		branch,
+		tip,
+		identity,
+	},
+) {
 	const foreign = foreignCommits(git, {
-		base, tip, identity,
+		base,
+		tip,
+		identity,
 	});
 	if (foreign > 0) {
 		throw new Error(`\`${branch}\` has ${foreign} commit(s) by someone else, so it is never overwritten; remove them from the branch, or delete the branch, so the next run can rebuild it`);
@@ -175,17 +224,29 @@ export function isSingleOnBase(git, { base, tip }) {
  * Returns whether it committed.
  * @type {(git: Git, options: { base: string, message: string, paths: string[], allowed: PathFilter }) => boolean}
  */
-export function commitChanges(git, {
-	base, message, paths: staged, allowed,
-}) {
+export function commitChanges(
+	git,
+	{
+		base,
+		message,
+		paths: staged,
+		allowed,
+	},
+) {
 	if (revParse(git, 'HEAD') !== revParse(git, `origin/${base}`)) {
 		throw new Error(`the clone is not at \`${base}\`’s tip, so nothing is committed`);
 	}
 	git([
-		'add', '--all', '--', ...staged,
+		'add',
+		'--all',
+		'--',
+		...staged,
 	]);
 	const files = paths(git([
-		'diff', '--cached', '--name-only', '-z',
+		'diff',
+		'--cached',
+		'--name-only',
+		'-z',
 	]).stdout);
 	const outside = files.filter((file) => !allowed(file));
 	if (outside.length > 0) {
@@ -195,15 +256,23 @@ export function commitChanges(git, {
 		return false;
 	}
 	git([
-		'commit', '--quiet', '--message', message,
+		'commit',
+		'--quiet',
+		'--message',
+		message,
 	]);
 	return true;
 }
 
 /** @type {(git: Git, options: { base: string, branch: string, commit: string }) => void} */
-function assertOnBase(git, {
-	base, branch, commit,
-}) {
+function assertOnBase(
+	git,
+	{
+		base,
+		branch,
+		commit,
+	},
+) {
 	if (git(['rev-parse', `${commit}^@`]).stdout.trim() !== revParse(git, `origin/${base}`)) {
 		throw new Error(`refusing to push \`${branch}\`: it must be one commit on top of \`${base}\`’s tip`);
 	}
@@ -220,24 +289,43 @@ function leaseError(branch) {
  * Returns whether it pushed.
  * @type {(git: Git, options: { base: string, branch: string, tip: string | null, identity: Identity, commit?: string }) => 'pushed' | 'unchanged'}
  */
-export function pushBranch(git, {
-	base, branch, tip, identity, commit = 'HEAD',
-}) {
+export function pushBranch(
+	git,
+	{
+		base,
+		branch,
+		tip,
+		identity,
+		commit = 'HEAD',
+	},
+) {
 	assertBotBranch(branch);
 	assertOnBase(git, {
-		base, branch, commit,
+		base,
+		branch,
+		commit,
 	});
 	if (tip) {
 		assertBotOwned(git, {
-			base, branch, tip, identity,
+			base,
+			branch,
+			tip,
+			identity,
 		});
 		if (isSingleOnBase(git, { base, tip }) && revParse(git, `${tip}^{tree}`) === revParse(git, `${commit}^{tree}`)) {
 			return 'unchanged';
 		}
 	}
-	const pushed = git([
-		'push', '--quiet', ...tip ? [`--force-with-lease=refs/heads/${branch}:${tip}`] : [], 'origin', `${commit}:refs/heads/${branch}`,
-	], { allowFailure: true });
+	const pushed = git(
+		[
+			'push',
+			'--quiet',
+			...tip ? [`--force-with-lease=refs/heads/${branch}:${tip}`] : [],
+			'origin',
+			`${commit}:refs/heads/${branch}`,
+		],
+		{ allowFailure: true },
+	);
 	if (pushed.status !== 0) {
 		throw leaseError(branch);
 	}
@@ -248,6 +336,7 @@ export function pushBranch(git, {
  * Makes `branch` HEAD (one commit on `base`'s tip; see `pushBranch`), and opens, reopens, or updates its PR; returns what it did.
  * `tip` is where the branch was observed on the remote (`null`: it wasn't there). A closed PR whose branch is gone has the branch restored at the PR's head (a plain push) before it's reopened, since GitHub only reopens a PR whose branch is at its head; only then is the branch overwritten.
  * Before anything is pushed or any PR touched, it refuses (via `assertBotOwned`) a branch with anyone else's commits on it; and before a closed PR is reopened, anything else that would refuse its update: HEAD that isn't one commit on `base`'s tip, or a branch that's no longer where it was observed (which would fail the update's lease), so that it's never reopened only to be left as it was.
+ * Once an existing PR is updated, what the App said on it that no longer applies is hidden (see `hideStale`), which, for a private repository (`isPrivate`), never warns.
  * @type {(options: {
  *   octokit: Octokit,
  *   git: Git,
@@ -260,6 +349,7 @@ export function pushBranch(git, {
  *   identity: Identity,
  *   title: string,
  *   body: string,
+ *   isPrivate: boolean,
  * }) => Promise<string>}
  */
 export async function publish({
@@ -274,51 +364,100 @@ export async function publish({
 	identity,
 	title,
 	body,
+	isPrivate,
 }) {
 	assertBotBranch(branch);
 	let observed = tip;
 	if (state.mode === 'reopen' && !observed) {
 		git([
-			'fetch', '--no-tags', '--quiet', 'origin', `refs/pull/${state.number}/head`,
+			'fetch',
+			'--no-tags',
+			'--quiet',
+			'origin',
+			`refs/pull/${state.number}/head`,
 		]);
 		observed = state.head;
 	}
 	if (observed) {
 		assertBotOwned(git, {
-			base, branch, tip: observed, identity,
+			base,
+			branch,
+			tip: observed,
+			identity,
 		});
 	}
 	if (state.mode === 'reopen') {
 		assertOnBase(git, {
-			base, branch, commit: 'HEAD',
+			base,
+			branch,
+			commit: 'HEAD',
 		});
 		if (lsRemote(git, branch) !== tip) {
 			throw leaseError(branch);
 		}
 		if (!tip) {
 			git([
-				'push', '--quiet', 'origin', `${state.head}:refs/heads/${branch}`,
+				'push',
+				'--quiet',
+				'origin',
+				`${state.head}:refs/heads/${branch}`,
 			]);
 		}
 		await octokit.rest.pulls.update({
-			owner, repo: name, pull_number: state.number, state: 'open', // eslint-disable-line camelcase
+			owner,
+			repo: name,
+			pull_number: state.number, // eslint-disable-line camelcase
+			state: 'open',
 		});
 	}
 	const pushed = pushBranch(git, {
-		base, branch, tip: observed, identity,
+		base,
+		branch,
+		tip: observed,
+		identity,
 	});
 
 	const { data: pr } = state.mode === 'create'
 		? await octokit.rest.pulls.create({
-			owner, repo: name, base, head: branch, title, body,
+			owner,
+			repo: name,
+			base,
+			head: branch,
+			title,
+			body,
 		})
 		: await octokit.rest.pulls.update({
-			owner, repo: name, pull_number: state.number, title, body, // eslint-disable-line camelcase
+			owner,
+			repo: name,
+			pull_number: state.number, // eslint-disable-line camelcase
+			title,
+			body,
 		});
 	const done = {
-		create: 'created', update: pushed === 'pushed' ? 'updated' : 'already up to date:', reopen: 'reopened and updated',
+		create: 'created',
+		update: pushed === 'pushed' ? 'updated' : 'already up to date:',
+		reopen: 'reopened and updated',
 	}[state.mode];
-	return `${done} ${pr.html_url}`;
+	// it's now one commit, of only the App's, that changes something on its base's tip: so the head it replaced no longer conflicts, isn't empty, and has nobody else's commits
+	const hidden = state.mode === 'create' ? 0 : await hideStale({
+		octokit,
+		owner,
+		name,
+		number: state.number,
+		author: identity.name,
+		isPrivate,
+		current: {
+			previous: observed,
+			head: pushed === 'pushed' ? revParse(git, 'HEAD') : String(observed),
+			base: revParse(git, `origin/${base}`),
+			resolved: [
+				'foreign',
+				'conflict',
+				'empty',
+			],
+		},
+	});
+	return `${done} ${pr.html_url}${hidden > 0 ? `; hid ${hidden} of the App’s earlier comments on it that no longer apply` : ''}`;
 }
 
 /**
@@ -326,10 +465,18 @@ export async function publish({
  * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, markers: string[] }) => Promise<string | null>}
  */
 export async function findMarked({
-	octokit, owner, name, number, author, markers,
+	octokit,
+	owner,
+	name,
+	number,
+	author,
+	markers,
 }) {
 	const comments = (await octokit.paginate(octokit.rest.issues.listComments, {
-		owner, repo: name, issue_number: number, per_page: 100, // eslint-disable-line camelcase
+		owner,
+		repo: name,
+		issue_number: number, // eslint-disable-line camelcase
+		per_page: 100, // eslint-disable-line camelcase
 	})).filter((c) => c.user?.login === author);
 	return markers.find((m) => comments.some((c) => c.body?.startsWith(`${m}\n`))) ?? null;
 }
@@ -340,15 +487,29 @@ export async function findMarked({
  * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, marker: string, body: string }) => Promise<boolean>}
  */
 export async function commentOnce({
-	octokit, owner, name, number, author, marker, body,
+	octokit,
+	owner,
+	name,
+	number,
+	author,
+	marker,
+	body,
 }) {
 	if (await findMarked({
-		octokit, owner, name, number, author, markers: [marker],
+		octokit,
+		owner,
+		name,
+		number,
+		author,
+		markers: [marker],
 	})) {
 		return false;
 	}
 	await octokit.rest.issues.createComment({
-		owner, repo: name, issue_number: number, body: `${marker}\n${body}`, // eslint-disable-line camelcase
+		owner,
+		repo: name,
+		issue_number: number, // eslint-disable-line camelcase
+		body: `${marker}\n${body}`,
 	});
 	return true;
 }
@@ -356,14 +517,24 @@ export async function commentOnce({
 // a closed (not deleted) branch and PR are what a later run reopens, so the history and discussion stay in one place
 /** @type {(options: { octokit: Octokit, owner: string, name: string, number: number, comment?: string }) => Promise<void>} */
 export async function closePR({
-	octokit, owner, name, number, comment,
+	octokit,
+	owner,
+	name,
+	number,
+	comment,
 }) {
 	if (comment) {
 		await octokit.rest.issues.createComment({
-			owner, repo: name, issue_number: number, body: comment, // eslint-disable-line camelcase
+			owner,
+			repo: name,
+			issue_number: number, // eslint-disable-line camelcase
+			body: comment,
 		});
 	}
 	await octokit.rest.pulls.update({
-		owner, repo: name, pull_number: number, state: 'closed', // eslint-disable-line camelcase
+		owner,
+		repo: name,
+		pull_number: number, // eslint-disable-line camelcase
+		state: 'closed',
 	});
 }

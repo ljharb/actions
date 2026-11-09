@@ -71,17 +71,20 @@ function ignore() {}
  */
 export function octokitFor(token, isPrivate) {
 	const log = {
-		debug: ignore, info: ignore, warn: ignore, error: ignore,
+		debug: ignore,
+		info: ignore,
+		warn: ignore,
+		error: ignore,
 	};
 	// Octokit's own log, and the one its requests use (which is otherwise `console`); `request` replaces the default one rather than merging with it, so the default's proxy-aware `agent` and `fetch` are kept explicitly
 	return isPrivate ? getOctokit(token, { log, request: { ...defaults.request, log } }) : getOctokit(token);
 }
 
 /**
- * A failure's message for public output: an API error's text can quote what it couldn't read (eg, an organization's restrictions, or a private repository's name), so only its HTTP status and GraphQL error types are kept.
- * @type {(error: unknown) => string}
+ * What of a failure is safe for public output: an API error's text can quote what it couldn't read (eg, an organization's restrictions, or a private repository's name), so only its HTTP status and GraphQL error types are kept.
+ * @type {(error: unknown) => string[]}
  */
-export function failureMessage(error) {
+export function failureDetails(error) {
 	/** @type {string[]} */
 	const details = [];
 	if (error && typeof error === 'object') {
@@ -92,6 +95,15 @@ export function failureMessage(error) {
 			details.push(...new Set(error.errors.map((e) => e?.type).filter((type) => typeof type === 'string' && (/^[A-Z_]+$/).test(type))));
 		}
 	}
+	return details;
+}
+
+/**
+ * A failure's message for public output (see `failureDetails`).
+ * @type {(error: unknown) => string}
+ */
+export function failureMessage(error) {
+	const details = failureDetails(error);
 	return `could not be read${details.length > 0 ? ` (${details.join(', ')})` : ''}`;
 }
 
@@ -155,14 +167,22 @@ function forkSource(repo) {
 		root = root.parent;
 	}
 	return root ? {
-		repository: root.nameWithOwner, archived: Boolean(root.isArchived), private: Boolean(root.isPrivate),
+		repository: root.nameWithOwner,
+		archived: Boolean(root.isArchived),
+		private: Boolean(root.isPrivate),
 	} : null;
 }
 
 /** @type {(context: Context, r: InstalledRepo, repo: Record<string, any> | null | undefined) => RepoState} */
-function toState({
-	installationId, account, external,
-}, r, repo) {
+function toState(
+	{
+		installationId,
+		account,
+		external,
+	},
+	r,
+	repo,
+) {
 	const own = parseConfig(repo?.config?.text, '`.github/ljharb-actions.json`');
 	const isPrivate = Boolean(r.private || repo?.isPrivate);
 	// a private `.github` repository's defaults (and their errors) apply only to private repositories: any effect on a public one's public report, or fixing, would show what's in a private file
@@ -233,12 +253,15 @@ function onlyNotFound(error) {
 // an account without a readable `.github` repository just has no defaults
 /** @type {(octokit: Octokit, owner: string) => Promise<AccountDefaults>} */
 async function accountDefaults(octokit, owner) {
-	const data = await octokit.graphql(`query($owner: String!) {
+	const data = await octokit.graphql(
+		`query($owner: String!) {
 		repository(owner: $owner, name: ".github") {
 			isPrivate
 			defaults: object(expression: "HEAD:ljharb-actions.json") { ... on Blob { text } }
 		}
-	}`, { owner }).catch((error) => {
+	}`,
+		{ owner },
+	).catch((error) => {
 		// a blocked read (eg, SSO or an IP allow list) must not silently drop the account's opt-outs
 		if (onlyNotFound(error)) {
 			return partialData(error);
@@ -251,7 +274,9 @@ async function accountDefaults(octokit, owner) {
 	}
 	// only the account's private repositories use these defaults, and none of their errors are shown, but a private file's is still never more specific than this
 	return {
-		config: parsed.config, error: parsed.error && 'the account’s defaults are invalid', private: true,
+		config: parsed.config,
+		error: parsed.error && 'the account’s defaults are invalid',
+		private: true,
 	};
 }
 
@@ -271,7 +296,9 @@ async function installationStates(auth, installation) {
 		return [];
 	}
 	const context = {
-		installationId: installation.id, account: await accountDefaults(octokit, accountLogin(installation)), external: false,
+		installationId: installation.id,
+		account: await accountDefaults(octokit, accountLogin(installation)),
+		external: false,
 	};
 	const states = [];
 	// one batch at a time per installation, to stay well clear of GraphQL rate and resource limits
@@ -287,7 +314,10 @@ async function hasCommitted(octokit, repository, committer) {
 	const [owner, repo] = repository.split('/');
 	try {
 		const { data } = await octokit.rest.repos.listCommits({
-			owner, repo, committer, per_page: 1, // eslint-disable-line camelcase
+			owner,
+			repo,
+			committer,
+			per_page: 1, // eslint-disable-line camelcase
 		});
 		return data.length > 0;
 	} catch (error) {
@@ -323,28 +353,37 @@ function sourceCandidates(installed, sourceAccounts, installedAccounts) {
 
 // forks are never checked themselves; their sources are, when `committer` has committed to them
 /** @type {(auth: ReturnType<typeof createAppAuth>, installed: RepoState[], options: Required<Options> & { installedAccounts: Set<string> }) => Promise<{ states: RepoState[], failures: Failure[] }>} */
-async function sourceStates(auth, installed, {
-	sourceAccounts, committer, installedAccounts,
-}) {
+async function sourceStates(
+	auth,
+	installed,
+	{
+		sourceAccounts,
+		committer,
+		installedAccounts,
+	},
+) {
 	const candidates = committer ? sourceCandidates(installed, sourceAccounts, installedAccounts) : [];
 	/** @type {Failure[]} */
 	const failures = [];
 	/** @type {Candidate[]} */
 	const committed = [];
 	// one at a time, to stay clear of secondary rate limits
-	await candidates.reduce(async (previous, candidate) => {
-		await previous;
-		try {
-			if (await hasCommitted(await readOctokit(auth, candidate.installationId), candidate.repository, committer)) {
-				committed.push(candidate);
+	await candidates.reduce(
+		async (previous, candidate) => {
+			await previous;
+			try {
+				if (await hasCommitted(await readOctokit(auth, candidate.installationId), candidate.repository, committer)) {
+					committed.push(candidate);
+				}
+			} catch (error) {
+				failures.push({
+					scope: `source ${candidate.repository}`,
+					message: error instanceof Error ? error.message : String(error),
+				});
 			}
-		} catch (error) {
-			failures.push({
-				scope: `source ${candidate.repository}`,
-				message: error instanceof Error ? error.message : String(error),
-			});
-		}
-	}, Promise.resolve());
+		},
+		Promise.resolve(),
+	);
 
 	const account = parseConfig(null, '');
 	const states = [];
@@ -355,11 +394,17 @@ async function sourceStates(auth, installed, {
 		const repos = batch.map(({ repository }) => {
 			const [owner, name] = repository.split('/');
 			return {
-				name, full_name: repository, private: false, fork: false, owner: { login: owner }, // eslint-disable-line camelcase
+				name,
+				full_name: repository, // eslint-disable-line camelcase
+				private: false,
+				fork: false,
+				owner: { login: owner },
 			};
 		});
 		const context = {
-			installationId: batch[0].installationId, account, external: true,
+			installationId: batch[0].installationId,
+			account,
+			external: true,
 		};
 		const batchResults = await batchStates(octokit, context, repos); // eslint-disable-line no-await-in-loop
 		states.push(...batchResults.map((state, j) => ({ ...state, installationId: batch[j].installationId })));
@@ -419,7 +464,9 @@ export async function discover(auth, accounts, { sourceAccounts = new Set(), com
 	const installed = states.flat();
 	const installedAccounts = new Set(installations.map((i) => accountLogin(i).toLowerCase()));
 	const sources = await sourceStates(auth, installed, {
-		sourceAccounts, committer, installedAccounts,
+		sourceAccounts,
+		committer,
+		installedAccounts,
 	});
 
 	return {

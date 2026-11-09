@@ -69,7 +69,7 @@ function mockAPI(t, handlers) {
 	const requests = [];
 	const scope = nock('https://api.github.com').persist();
 	for (const [method, pattern, handler] of handlers) {
-		scope.intercept(pattern, method).reply(/** @type {any} */ (async (/** @type {Request} */ req) => { // eslint-disable-line no-extra-parens
+		scope.intercept(pattern, method).reply(/** @type {any} */ (async (/** @type {Request} */ req) => {
 			const url = new URL(req.url);
 			const text = await req.text();
 			const body = text ? JSON.parse(text) : null;
@@ -102,7 +102,7 @@ function captureMasks(fn) {
 	/** @type {string[]} */
 	const masks = [];
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk, /** @type {any[]} */ ...rest) { // eslint-disable-line no-extra-parens
+	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk, /** @type {any[]} */ ...rest) {
 		const match = String(chunk).match(/^::add-mask::(?<value>.*)$/m);
 		if (match?.groups) {
 			masks.push(match.groups.value);
@@ -174,11 +174,15 @@ test('botIdentity', async (t) => {
 		const identity = await botIdentity(appAuth('1', privateKey()), 5);
 
 		st.deepEqual(identity, bot, 'the bot’s login and noreply email');
-		st.deepEqual(requests.map((r) => `${r.method} ${r.path}`), [
-			'GET /app',
-			'POST /app/installations/5/access_tokens',
-			'GET /users/fleet-bot%5Bbot%5D',
-		], 'reads the App, then a token, then the bot user');
+		st.deepEqual(
+			requests.map((r) => `${r.method} ${r.path}`),
+			[
+				'GET /app',
+				'POST /app/installations/5/access_tokens',
+				'GET /users/fleet-bot%5Bbot%5D',
+			],
+			'reads the App, then a token, then the bot user',
+		);
 		st.deepEqual(requests[1].body, { permissions: { metadata: 'read' } }, 'the token only needs to read metadata');
 		st.equal(requests[2].authorization, 'token ghs_identity', 'the bot user is read with the installation token');
 		st.end();
@@ -233,16 +237,20 @@ test('checkout', (t) => {
 	t.equal(git(['config', '--get', 'remote.origin.tagOpt']).stdout.trim(), '--no-tags', 'without tags');
 	t.equal(git(['config', '--get', `http.${server.serverURL}/.extraheader`]).stdout.trim(), `AUTHORIZATION: basic ${Buffer.from('x-access-token:ghs_test').toString('base64')}`, 'authenticated to the server');
 	t.equal(git(['config', '--local', '--get-regexp', 'extraheader'], { allowFailure: true }).status, 1, 'without the token in `.git/config`');
-	t.deepEqual(env, {
-		GIT_CONFIG_COUNT: '1',
-		GIT_CONFIG_KEY_0: `http.${server.serverURL}/.extraheader`,
-		GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from('x-access-token:ghs_test').toString('base64')}`,
-		GIT_TERMINAL_PROMPT: '0',
-		GIT_AUTHOR_NAME: bot.name,
-		GIT_AUTHOR_EMAIL: bot.email,
-		GIT_COMMITTER_NAME: bot.name,
-		GIT_COMMITTER_EMAIL: bot.email,
-	}, 'returns the environment it runs git with');
+	t.deepEqual(
+		env,
+		{
+			GIT_CONFIG_COUNT: '1',
+			GIT_CONFIG_KEY_0: `http.${server.serverURL}/.extraheader`,
+			GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${Buffer.from('x-access-token:ghs_test').toString('base64')}`,
+			GIT_TERMINAL_PROMPT: '0',
+			GIT_AUTHOR_NAME: bot.name,
+			GIT_AUTHOR_EMAIL: bot.email,
+			GIT_COMMITTER_NAME: bot.name,
+			GIT_COMMITTER_EMAIL: bot.email,
+		},
+		'returns the environment it runs git with',
+	);
 
 	writeFiles(dir, { 'new.txt': 'new\n' });
 	git(['add', 'new.txt']);
@@ -265,7 +273,13 @@ test('checkout: partial', (t) => {
 	const dir = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
 	// a `file://` URL, since a local clone ignores `--depth` and `--filter`
 	const { git } = captureMasks(() => checkout({
-		serverURL: `file://${server.serverURL}`, repository, base, token: 'ghs_test', identity: bot, dir, partial: { depth: 1 },
+		serverURL: `file://${server.serverURL}`,
+		repository,
+		base,
+		token: 'ghs_test',
+		identity: bot,
+		dir,
+		partial: { depth: 1 },
 	})).result;
 
 	t.equal(git(['rev-parse', '--is-shallow-repository']).stdout.trim(), 'true', 'only as many commits as asked for');
@@ -280,7 +294,13 @@ test('checkout: partial', (t) => {
 
 	const whole = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
 	const { git: deep } = captureMasks(() => checkout({
-		serverURL: `file://${server.serverURL}`, repository, base, token: 'ghs_test', identity: bot, dir: whole, partial: {},
+		serverURL: `file://${server.serverURL}`,
+		repository,
+		base,
+		token: 'ghs_test',
+		identity: bot,
+		dir: whole,
+		partial: {},
 	})).result;
 	t.equal(deep(['rev-parse', '--is-shallow-repository']).stdout.trim(), 'false', 'without a depth, every commit');
 	t.equal(deep(['config', '--get', 'remote.origin.partialclonefilter']).stdout.trim(), 'blob:none', 'still without any file’s contents');
@@ -292,7 +312,12 @@ test('checkout: masks the token, and the header that encodes it', (t) => {
 	const dir = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
 
 	const { masks } = captureMasks(() => checkout({
-		serverURL: server.serverURL, repository, base, token: 'ghs_masked', identity: bot, dir,
+		serverURL: server.serverURL,
+		repository,
+		base,
+		token: 'ghs_masked',
+		identity: bot,
+		dir,
 	}));
 
 	t.deepEqual(masks, ['ghs_masked', Buffer.from('x-access-token:ghs_masked').toString('base64')], 'both are masked');
@@ -304,7 +329,12 @@ test('checkout: a server URL with trailing slashes', (t) => {
 	const dir = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
 
 	const { git, env } = captureMasks(() => checkout({
-		serverURL: `${server.serverURL}//`, repository, base, token: 'ghs_test', identity: bot, dir,
+		serverURL: `${server.serverURL}//`,
+		repository,
+		base,
+		token: 'ghs_test',
+		identity: bot,
+		dir,
 	})).result;
 
 	t.equal(git(['config', '--get', 'remote.origin.url']).stdout.trim(), `${server.serverURL}/o/r.git`, 'clones without doubled slashes');
@@ -318,7 +348,11 @@ test('checkout: the workflow’s server', (t) => {
 	const dir = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
 
 	const { git, env } = captureMasks(() => checkout({
-		repository, base, token: 'ghs_test', identity: bot, dir,
+		repository,
+		base,
+		token: 'ghs_test',
+		identity: bot,
+		dir,
 	})).result;
 
 	t.equal(git(['config', '--get', 'remote.origin.url']).stdout.trim(), `${server.serverURL}/o/r.git`, 'clones from `GITHUB_SERVER_URL`');
@@ -336,7 +370,11 @@ test('checkout: the default server', (t) => {
 	const dir = path.join(tempDir(t, 'fleet-pr-clone'), 'repo');
 
 	const { git, env } = captureMasks(() => checkout({
-		repository, base, token: 'ghs_test', identity: bot, dir,
+		repository,
+		base,
+		token: 'ghs_test',
+		identity: bot,
+		dir,
 	})).result;
 
 	t.equal(git(['config', '--get', 'remote.origin.url']).stdout.trim(), 'https://github.com/o/r.git', 'clones from github.com');
@@ -349,32 +387,64 @@ test('findPR', async (t) => {
 	/** @type {[string, unknown[], PRState][]} */
 	const cases = [
 		['none', [], { mode: 'create' }],
-		['merged', [{
-			number: 3, state: 'closed', merged_at: '2026-01-01T00:00:00Z', head: { sha: 'abc' }, // eslint-disable-line camelcase
-		}], { mode: 'create' }],
-		['open', [{
-			number: 4, state: 'open', merged_at: null, head: { sha: 'def' }, // eslint-disable-line camelcase
-		}], { mode: 'update', number: 4, head: 'def' }],
-		['closed', [{
-			number: 5, state: 'closed', merged_at: null, head: { sha: '123' }, // eslint-disable-line camelcase
-		}], { mode: 'reopen', number: 5, head: '123' }],
+		[
+			'merged',
+			[{
+				number: 3,
+				state: 'closed',
+				merged_at: '2026-01-01T00:00:00Z', // eslint-disable-line camelcase
+				head: { sha: 'abc' },
+			}],
+			{ mode: 'create' },
+		],
+		[
+			'open',
+			[{
+				number: 4,
+				state: 'open',
+				merged_at: null, // eslint-disable-line camelcase
+				head: { sha: 'def' },
+			}],
+			{ mode: 'update', number: 4, head: 'def' },
+		],
+		[
+			'closed',
+			[{
+				number: 5,
+				state: 'closed',
+				merged_at: null, // eslint-disable-line camelcase
+				head: { sha: '123' },
+			}],
+			{ mode: 'reopen', number: 5, head: '123' },
+		],
 	];
 	for (const [label, prs, expected] of cases) {
-		t.test(label, async (st) => { // eslint-disable-line no-await-in-loop
+		t.test(label, async (st) => {
 			const requests = mockAPI(st, [['GET', /^\/repos\/o\/r\/pulls/, () => [200, prs]]]);
 
-			st.deepEqual(await findPR(getOctokit('ghs_test'), {
-				owner, name, base, branch,
-			}), expected, `${label}: ${expected.mode}`);
+			st.deepEqual(
+				await findPR(getOctokit('ghs_test'), {
+					owner,
+					name,
+					base,
+					branch,
+				}),
+				expected,
+				`${label}: ${expected.mode}`,
+			);
 			const { searchParams } = new URL(requests[0].path, 'https://api.github.com');
-			st.deepEqual(Object.fromEntries(searchParams), {
-				head: `o:${branch}`,
-				base,
-				state: 'all',
-				sort: 'created',
-				direction: 'desc',
-				per_page: '1', // eslint-disable-line camelcase
-			}, 'asks for the newest PR from the owner’s branch into the base');
+			st.deepEqual(
+				Object.fromEntries(searchParams),
+				{
+					head: `o:${branch}`,
+					base,
+					state: 'all',
+					sort: 'created',
+					direction: 'desc',
+					per_page: '1', // eslint-disable-line camelcase
+				},
+				'asks for the newest PR from the owner’s branch into the base',
+			);
 			st.end();
 		});
 	}
@@ -405,7 +475,9 @@ test('ownCommits, foreignCommits, and isSingleOnBase', (t) => {
 	const one = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
 	const { git } = clone(t, server);
 	const at = (/** @type {string} */ tip) => ({
-		base, tip, identity: bot,
+		base,
+		tip,
+		identity: bot,
 	});
 
 	t.deepEqual(ownCommits(git, at(one)), [one], 'one commit of its own');
@@ -433,9 +505,15 @@ test('ownCommits, foreignCommits, and isSingleOnBase', (t) => {
 	const { git: other, dir } = clone(t, server);
 	commitAs(dir, 'committed by someone else', { [lockfile]: 'x\n' }, mallory);
 	const head = other(['rev-parse', 'HEAD']).stdout.trim();
-	t.equal(foreignCommits(other, {
-		base, tip: head, identity: bot,
-	}), 1, 'the bot’s authorship, committed by someone else, is someone else’s');
+	t.equal(
+		foreignCommits(other, {
+			base,
+			tip: head,
+			identity: bot,
+		}),
+		1,
+		'the bot’s authorship, committed by someone else, is someone else’s',
+	);
 	t.end();
 });
 
@@ -446,12 +524,25 @@ test('assertBotOwned', (t) => {
 	const { git } = clone(t, server);
 	remoteTip(git, branch);
 
-	t.doesNotThrow(() => assertBotOwned(git, {
-		base, branch, tip: mine, identity: bot,
-	}), 'only the bot’s commits');
-	t.throws(() => assertBotOwned(git, {
-		base, branch, tip: theirs, identity: bot,
-	}), new Error('`fleet/workflows` has 1 commit(s) by someone else, so it is never overwritten; remove them from the branch, or delete the branch, so the next run can rebuild it'), 'refuses anyone else’s');
+	t.doesNotThrow(
+		() => assertBotOwned(git, {
+			base,
+			branch,
+			tip: mine,
+			identity: bot,
+		}),
+		'only the bot’s commits',
+	);
+	t.throws(
+		() => assertBotOwned(git, {
+			base,
+			branch,
+			tip: theirs,
+			identity: bot,
+		}),
+		new Error('`fleet/workflows` has 1 commit(s) by someone else, so it is never overwritten; remove them from the branch, or delete the branch, so the next run can rebuild it'),
+		'refuses anyone else’s',
+	);
 	t.end();
 });
 
@@ -459,9 +550,16 @@ test('commitChanges', (t) => {
 	t.test('nothing to commit', (st) => {
 		const server = setup(st);
 		const { git } = clone(st, server);
-		st.equal(commitChanges(git, {
-			base, message: 'm', paths: ['.github/workflows'], allowed: isWorkflow,
-		}), false, 'commits nothing');
+		st.equal(
+			commitChanges(git, {
+				base,
+				message: 'm',
+				paths: ['.github/workflows'],
+				allowed: isWorkflow,
+			}),
+			false,
+			'commits nothing',
+		);
 		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), server.tip('main'), 'still at the base');
 		st.end();
 	});
@@ -470,9 +568,16 @@ test('commitChanges', (t) => {
 		const server = setup(st);
 		const { git, dir } = clone(st, server);
 		writeFiles(dir, { [lockfile]: 'new lock\n', '.github/workflows/new.yml': 'on: pull_request\n', 'README.md': 'not staged\n' });
-		st.equal(commitChanges(git, {
-			base, message: 'the message', paths: ['.github/workflows'], allowed: isWorkflow,
-		}), true, 'commits');
+		st.equal(
+			commitChanges(git, {
+				base,
+				message: 'the message',
+				paths: ['.github/workflows'],
+				allowed: isWorkflow,
+			}),
+			true,
+			'commits',
+		);
 		st.equal(git(['rev-parse', 'HEAD^']).stdout.trim(), server.tip('main'), 'on the base’s tip');
 		st.equal(git(['log', '-1', '--format=%s|%ae|%ce']).stdout.trim(), `the message|${bot.email}|${bot.email}`, 'as the bot');
 		st.deepEqual(git(['diff', '--name-only', 'HEAD^', 'HEAD']).stdout.trim().split('\n'), ['.github/workflows/actions.lock', '.github/workflows/new.yml'], 'only what’s under the paths');
@@ -483,9 +588,16 @@ test('commitChanges', (t) => {
 		const server = setup(st);
 		const { git, dir } = clone(st, server);
 		writeFiles(dir, { [lockfile]: 'new lock\n', '.github/workflows/ci.yml': null });
-		st.throws(() => commitChanges(git, {
-			base, message: 'm', paths: ['.github/workflows'], allowed: isLockfile,
-		}), new Error('refusing to commit changes to files this job doesn’t write: `.github/workflows/ci.yml`'), 'names what isn’t allowed');
+		st.throws(
+			() => commitChanges(git, {
+				base,
+				message: 'm',
+				paths: ['.github/workflows'],
+				allowed: isLockfile,
+			}),
+			new Error('refusing to commit changes to files this job doesn’t write: `.github/workflows/ci.yml`'),
+			'names what isn’t allowed',
+		);
 		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), server.tip('main'), 'commits nothing');
 		st.end();
 	});
@@ -495,9 +607,16 @@ test('commitChanges', (t) => {
 		const { git, dir } = clone(st, server);
 		botCommit(dir, 'already', { [lockfile]: 'x\n' });
 		writeFiles(dir, { [lockfile]: 'y\n' });
-		st.throws(() => commitChanges(git, {
-			base, message: 'm', paths: ['.github/workflows'], allowed: isWorkflow,
-		}), new Error('the clone is not at `main`’s tip, so nothing is committed'), 'so the commit is always one on the base');
+		st.throws(
+			() => commitChanges(git, {
+				base,
+				message: 'm',
+				paths: ['.github/workflows'],
+				allowed: isWorkflow,
+			}),
+			new Error('the clone is not at `main`’s tip, so nothing is committed'),
+			'so the commit is always one on the base',
+		);
 		st.end();
 	});
 
@@ -510,9 +629,16 @@ test('pushBranch', (t) => {
 		const before = server.tip('main');
 		const { git, dir } = clone(st, server);
 		botCommit(dir, 'm', { [lockfile]: 'x\n' });
-		st.throws(() => pushBranch(git, {
-			base, branch: 'main', tip: null, identity: bot,
-		}), new Error('`main` is not one of the App’s own branches, so it is never overwritten'), 'refuses any other branch');
+		st.throws(
+			() => pushBranch(git, {
+				base,
+				branch: 'main',
+				tip: null,
+				identity: bot,
+			}),
+			new Error('`main` is not one of the App’s own branches, so it is never overwritten'),
+			'refuses any other branch',
+		);
 		st.equal(server.tip('main'), before, 'pushes nothing');
 		st.end();
 	});
@@ -520,14 +646,28 @@ test('pushBranch', (t) => {
 	t.test('only one commit, on the base’s tip', (st) => {
 		const server = setup(st);
 		const { git, dir } = clone(st, server);
-		st.throws(() => pushBranch(git, {
-			base, branch, tip: null, identity: bot,
-		}), new Error('refusing to push `fleet/workflows`: it must be one commit on top of `main`’s tip'), 'refuses the base itself');
+		st.throws(
+			() => pushBranch(git, {
+				base,
+				branch,
+				tip: null,
+				identity: bot,
+			}),
+			new Error('refusing to push `fleet/workflows`: it must be one commit on top of `main`’s tip'),
+			'refuses the base itself',
+		);
 		botCommit(dir, 'one', { [lockfile]: 'x\n' });
 		botCommit(dir, 'two', { [lockfile]: 'y\n' });
-		st.throws(() => pushBranch(git, {
-			base, branch, tip: null, identity: bot,
-		}), /must be one commit/, 'refuses two commits');
+		st.throws(
+			() => pushBranch(git, {
+				base,
+				branch,
+				tip: null,
+				identity: bot,
+			}),
+			/must be one commit/,
+			'refuses two commits',
+		);
 		st.equal(server.tip(`refs/heads/${branch}`), '', 'pushes nothing');
 		st.end();
 	});
@@ -536,9 +676,16 @@ test('pushBranch', (t) => {
 		const server = setup(st);
 		const { git, dir } = clone(st, server);
 		botCommit(dir, 'm', { [lockfile]: 'x\n' });
-		st.equal(pushBranch(git, {
-			base, branch, tip: null, identity: bot,
-		}), 'pushed', 'pushes');
+		st.equal(
+			pushBranch(git, {
+				base,
+				branch,
+				tip: null,
+				identity: bot,
+			}),
+			'pushed',
+			'pushes',
+		);
 		st.equal(server.tip(`refs/heads/${branch}`), git(['rev-parse', 'HEAD']).stdout.trim(), 'the commit');
 		st.end();
 	});
@@ -550,9 +697,16 @@ test('pushBranch', (t) => {
 		const tip = remoteTip(git, branch);
 		botCommit(dir, 'rebuilt', { [lockfile]: 'x\n' });
 		st.notEqual(git(['rev-parse', 'HEAD']).stdout.trim(), head, 'a new commit');
-		st.equal(pushBranch(git, {
-			base, branch, tip, identity: bot,
-		}), 'unchanged', 'pushes nothing');
+		st.equal(
+			pushBranch(git, {
+				base,
+				branch,
+				tip,
+				identity: bot,
+			}),
+			'unchanged',
+			'pushes nothing',
+		);
 		st.equal(server.tip(`refs/heads/${branch}`), head, 'the branch is as it was');
 		st.end();
 	});
@@ -564,18 +718,32 @@ test('pushBranch', (t) => {
 		const { git, dir } = clone(st, server);
 		const tip = remoteTip(git, branch);
 		botCommit(dir, 'rebuilt', { [lockfile]: 'y\n' });
-		st.equal(pushBranch(git, {
-			base, branch, tip, identity: bot,
-		}), 'pushed', 'two commits with the same tree are replaced by one');
+		st.equal(
+			pushBranch(git, {
+				base,
+				branch,
+				tip,
+				identity: bot,
+			}),
+			'pushed',
+			'two commits with the same tree are replaced by one',
+		);
 		st.deepEqual(server.log(`main..${branch}`).map((line) => line.split('|')[2]), ['rebuilt'], 'which is all the branch has');
 
 		server.commit('main', { 'README.md': 'moved\n' });
 		const { git: again, dir: againDir } = clone(st, server);
 		const before = remoteTip(again, branch);
 		botCommit(againDir, 'rebuilt again', { [lockfile]: 'y\n' });
-		st.equal(pushBranch(again, {
-			base, branch, tip: before, identity: bot,
-		}), 'pushed', 'the same tree on an older base commit is rebuilt on the new one');
+		st.equal(
+			pushBranch(again, {
+				base,
+				branch,
+				tip: before,
+				identity: bot,
+			}),
+			'pushed',
+			'the same tree on an older base commit is rebuilt on the new one',
+		);
 		st.equal(server.log(`${branch}`)[0].split('|')[3], server.tip('main'), 'whose only parent is the base’s tip');
 		st.end();
 	});
@@ -587,9 +755,16 @@ test('pushBranch', (t) => {
 		const { git, dir } = clone(st, server);
 		const tip = remoteTip(git, branch);
 		botCommit(dir, 'rebuilt', { [lockfile]: 'z\n' });
-		st.throws(() => pushBranch(git, {
-			base, branch, tip, identity: bot,
-		}), /has 1 commit\(s\) by someone else, so it is never overwritten/, 'refuses');
+		st.throws(
+			() => pushBranch(git, {
+				base,
+				branch,
+				tip,
+				identity: bot,
+			}),
+			/has 1 commit\(s\) by someone else, so it is never overwritten/,
+			'refuses',
+		);
 		st.equal(server.tip(`refs/heads/${branch}`), theirs, 'their work survives');
 		st.end();
 	});
@@ -601,9 +776,16 @@ test('pushBranch', (t) => {
 		const tip = remoteTip(git, branch);
 		const moved = server.commit(branch, { [lockfile]: 'pushed meanwhile\n' }, { who: bot });
 		botCommit(dir, 'rebuilt', { [lockfile]: 'z\n' });
-		st.throws(() => pushBranch(git, {
-			base, branch, tip, identity: bot,
-		}), new Error('`fleet/workflows` changed after it was read, so it was not overwritten (its push was rejected); the next run rebuilds it from what it is now'), 'refuses, without retrying');
+		st.throws(
+			() => pushBranch(git, {
+				base,
+				branch,
+				tip,
+				identity: bot,
+			}),
+			new Error('`fleet/workflows` changed after it was read, so it was not overwritten (its push was rejected); the next run rebuilds it from what it is now'),
+			'refuses, without retrying',
+		);
 		st.equal(server.tip(`refs/heads/${branch}`), moved, 'the other push survives');
 		st.end();
 	});
@@ -616,7 +798,14 @@ const writes = (requests) => requests.map((r) => [`${r.method} ${r.path}`, r.bod
 
 test('publish', (t) => {
 	const common = {
-		owner, name, base, branch, identity: bot, title: 'the title', body: 'the body',
+		owner,
+		name,
+		base,
+		branch,
+		identity: bot,
+		title: 'the title',
+		body: 'the body',
+		isPrivate: false,
 	};
 
 	t.test('a branch that isn’t the App’s: refused before anything', async (st) => {
@@ -625,7 +814,12 @@ test('publish', (t) => {
 		const { git, dir } = clone(st, server);
 		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
 		await publish({
-			...common, branch: 'feature', octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head: 'abc' }, tip: null,
+			...common,
+			branch: 'feature',
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'reopen', number: 5, head: 'abc' },
+			tip: null,
 		}).then(
 			() => st.fail('should reject'),
 			(e) => st.equal(e.message, '`feature` is not one of the App’s own branches, so it is never overwritten', 'rejects'),
@@ -645,7 +839,11 @@ test('publish', (t) => {
 		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
 
 		await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head }, tip: null,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'reopen', number: 5, head },
+			tip: null,
 		}).then(
 			() => st.fail('should reject'),
 			(e) => st.match(e.message, /has 1 commit\(s\) by someone else, so it is never overwritten/, 'rejects via `assertBotOwned`'),
@@ -662,14 +860,28 @@ test('publish', (t) => {
 		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'create' }, tip: null,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'create' },
+			tip: null,
 		});
 
 		st.equal(outcome, 'created https://github.com/o/r/pull/9', 'reports the new PR');
 		st.equal(server.tip(`refs/heads/${branch}`), git(['rev-parse', 'HEAD']).stdout.trim(), 'pushes the branch');
-		st.deepEqual(writes(requests), [['POST /repos/o/r/pulls', {
-			base, head: branch, title: 'the title', body: 'the body',
-		}]], 'opens the PR');
+		st.deepEqual(
+			writes(requests),
+			[[
+				'POST /repos/o/r/pulls',
+				{
+					base,
+					head: branch,
+					title: 'the title',
+					body: 'the body',
+				},
+			]],
+			'opens the PR',
+		);
 		st.end();
 	});
 
@@ -682,7 +894,11 @@ test('publish', (t) => {
 		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'update', number: 4, head }, tip,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'update', number: 4, head },
+			tip,
 		});
 
 		st.equal(outcome, 'updated https://github.com/o/r/pull/4', 'reports the PR');
@@ -701,7 +917,11 @@ test('publish', (t) => {
 		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'update', number: 4, head }, tip,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'update', number: 4, head },
+			tip,
 		});
 
 		st.equal(outcome, 'already up to date: https://github.com/o/r/pull/4', 'says so');
@@ -719,15 +939,23 @@ test('publish', (t) => {
 		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head }, tip,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'reopen', number: 5, head },
+			tip,
 		});
 
 		st.equal(outcome, 'reopened and updated https://github.com/o/r/pull/5', 'reports the PR');
 		st.equal(server.show(branch, lockfile), 'newer lock', 'pushes the branch');
-		st.deepEqual(writes(requests), [
-			['PATCH /repos/o/r/pulls/5', { state: 'open' }],
-			['PATCH /repos/o/r/pulls/5', { title: 'the title', body: 'the body' }],
-		], 'reopens, then updates, the PR');
+		st.deepEqual(
+			writes(requests),
+			[
+				['PATCH /repos/o/r/pulls/5', { state: 'open' }],
+				['PATCH /repos/o/r/pulls/5', { title: 'the title', body: 'the body' }],
+			],
+			'reopens, then updates, the PR',
+		);
 		st.end();
 	});
 
@@ -741,7 +969,11 @@ test('publish', (t) => {
 		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
 
 		await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head: String(tip) }, tip,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'reopen', number: 5, head: String(tip) },
+			tip,
 		}).then(
 			() => st.fail('should reject'),
 			(e) => st.equal(e.message, '`fleet/workflows` changed after it was read, so it was not overwritten (its push was rejected); the next run rebuilds it from what it is now', 'a branch that moved since it was read would fail the lease'),
@@ -750,7 +982,11 @@ test('publish', (t) => {
 
 		server.setRef('refs/pull/5/head', moved);
 		await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head: moved }, tip: null,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'reopen', number: 5, head: moved },
+			tip: null,
 		}).then(
 			() => st.fail('should reject'),
 			(e) => st.match(e.message, /changed after it was read/, 'as would a branch that’s there, when it wasn’t'),
@@ -761,7 +997,11 @@ test('publish', (t) => {
 		botCommit(twoDir, 'one', { [lockfile]: 'one\n' });
 		botCommit(twoDir, 'two', { [lockfile]: 'two\n' });
 		await publish({
-			...common, octokit: getOctokit('ghs_test'), git: two, state: { mode: 'reopen', number: 5, head: String(twoTip) }, tip: twoTip,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git: two,
+			state: { mode: 'reopen', number: 5, head: String(twoTip) },
+			tip: twoTip,
 		}).then(
 			() => st.fail('should reject'),
 			(e) => st.equal(e.message, 'refusing to push `fleet/workflows`: it must be one commit on top of `main`’s tip', 'as would anything but one commit on the base’s tip'),
@@ -778,25 +1018,150 @@ test('publish', (t) => {
 		server.deleteRef(`refs/heads/${branch}`);
 		/** @type {string[]} */
 		const tipsAtReopen = [];
-		const requests = mockAPI(st, [['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, (request) => {
-			tipsAtReopen.push(server.tip(`refs/heads/${branch}`));
-			return updated(request);
-		}]]);
+		const requests = mockAPI(st, [[
+			'PATCH',
+			/^\/repos\/o\/r\/pulls\/\d+$/,
+			(request) => {
+				tipsAtReopen.push(server.tip(`refs/heads/${branch}`));
+				return updated(request);
+			},
+		]]);
 		const { git, dir } = clone(st, server);
 		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
 		const final = git(['rev-parse', 'HEAD']).stdout.trim();
 
 		const outcome = await publish({
-			...common, octokit: getOctokit('ghs_test'), git, state: { mode: 'reopen', number: 5, head }, tip: null,
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'reopen', number: 5, head },
+			tip: null,
 		});
 
 		st.equal(outcome, 'reopened and updated https://github.com/o/r/pull/5', 'reports the PR');
 		st.deepEqual(tipsAtReopen, [head, final], 'restores the branch at the PR’s head before reopening, then replaces it');
 		st.deepEqual(server.log(`main..${branch}`).length, 1, 'with one commit');
-		st.deepEqual(writes(requests), [
-			['PATCH /repos/o/r/pulls/5', { state: 'open' }],
-			['PATCH /repos/o/r/pulls/5', { title: 'the title', body: 'the body' }],
-		], 'reopens, then updates, the PR');
+		st.deepEqual(
+			writes(requests),
+			[
+				['PATCH /repos/o/r/pulls/5', { state: 'open' }],
+				['PATCH /repos/o/r/pulls/5', { title: 'the title', body: 'the body' }],
+			],
+			'reopens, then updates, the PR',
+		);
+		st.end();
+	});
+
+	t.test('update: hides what the App said on it that no longer applies', async (st) => {
+		const server = setup(st);
+		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
+		const { git, dir } = clone(st, server);
+		const tip = remoteTip(git, branch);
+		botCommit(dir, 'the title', { [lockfile]: 'newer lock\n' });
+		const final = git(['rev-parse', 'HEAD']).stdout.trim();
+		const requests = mockAPI(st, [
+			['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated],
+			[
+				'GET',
+				/^\/repos\/o\/r\/issues\/4\/comments\?/,
+				() => [
+					200,
+					[
+						{ node_id: 'C_conflict', user: { login: bot.name }, body: `<!-- fleet:conflict:${head}:${'d'.repeat(40)} -->\nconflicts` }, // eslint-disable-line camelcase
+						{ node_id: 'C_stuck', user: { login: bot.name }, body: `<!-- fleet:stuck:${head} -->\nstuck` }, // eslint-disable-line camelcase
+						{ node_id: 'C_current', user: { login: bot.name }, body: `<!-- fleet:stuck:${final} -->\nabout the new head` }, // eslint-disable-line camelcase
+						{ node_id: 'C_theirs', user: { login: mallory.name }, body: `<!-- fleet:stuck:${head} -->\nnot the bot` }, // eslint-disable-line camelcase
+					],
+				],
+			],
+			['POST', /^\/graphql$/, ({ body }) => [200, { data: body.variables.ids ? { nodes: body.variables.ids.map((/** @type {string} */ id) => ({ id, isMinimized: false })) } : { minimizeComment: { minimizedComment: { isMinimized: true } } } }]],
+		]);
+
+		const outcome = await publish({
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'update', number: 4, head },
+			tip,
+		});
+
+		st.equal(outcome, 'updated https://github.com/o/r/pull/4; hid 2 of the App’s earlier comments on it that no longer apply', 'reports the PR, and what it hid');
+		st.deepEqual(
+			requests.filter((r) => r.path === '/graphql' && r.body.variables.classifier).map((r) => [r.body.variables.id, r.body.variables.classifier]),
+			[
+				['C_conflict', 'RESOLVED'],
+				['C_stuck', 'OUTDATED'],
+			],
+			'once it’s one commit on its base’s tip, a conflict it reported is resolved, and that it was stuck is outdated; what’s about its new head, and anyone else’s, are left alone',
+		);
+		st.end();
+	});
+
+	t.test('update: failing to hide what the App said only warns, and, in a private repository, not even that', async (st) => {
+		const server = setup(st);
+		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
+		mockAPI(st, [
+			['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated],
+			['GET', /^\/repos\/o\/r\/issues\/4\/comments\?/, () => [200, [{ node_id: 'C_stuck', user: { login: bot.name }, body: `<!-- fleet:stuck:${head} -->\nstuck` }]]], // eslint-disable-line camelcase
+			['POST', /^\/graphql$/, ({ body }) => [200, body.variables.ids ? { data: { nodes: body.variables.ids.map((/** @type {string} */ id) => ({ id, isMinimized: false })) } } : { data: { minimizeComment: null }, errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible by integration: o/r' }] }]],
+		]);
+		/** @type {(isPrivate: boolean, contents: string) => Promise<{ outcome: string, stdout: string }>} */
+		const update = async (isPrivate, contents) => {
+			const { git, dir } = clone(st, server);
+			const tip = remoteTip(git, branch);
+			botCommit(dir, 'the title', { [lockfile]: contents });
+			let stdout = '';
+			const { write } = process.stdout;
+			process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+				stdout += String(chunk);
+				return true;
+			});
+			try {
+				const outcome = await publish({
+					...common,
+					octokit: getOctokit('ghs_test'),
+					git,
+					state: { mode: 'update', number: 4, head },
+					tip,
+					isPrivate,
+				});
+				return { outcome, stdout };
+			} finally {
+				process.stdout.write = write;
+			}
+		};
+
+		const shown = await update(false, 'newer lock\n');
+		st.equal(shown.outcome, 'updated https://github.com/o/r/pull/4', 'a public repository’s PR is still updated');
+		st.equal(shown.stdout, '::warning::could not hide 1 of the App’s earlier comments on one of its PRs that no longer apply (FORBIDDEN)\n', 'warning, without saying where');
+
+		const hidden = await update(true, 'newest lock\n');
+		st.equal(hidden.outcome, 'updated https://github.com/o/r/pull/4', 'a private repository’s PR is still updated');
+		st.equal(hidden.stdout, '', 'logging nothing');
+		st.end();
+	});
+
+	t.test('update, with nothing new: what’s about its head still applies', async (st) => {
+		const server = setup(st);
+		const head = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
+		const requests = mockAPI(st, [
+			['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated],
+			['GET', /^\/repos\/o\/r\/issues\/4\/comments\?/, () => [200, [{ node_id: 'C_current', user: { login: bot.name }, body: `<!-- fleet:stuck:${head} -->\nstuck` }]]], // eslint-disable-line camelcase
+		]);
+		const { git, dir } = clone(st, server);
+		const tip = remoteTip(git, branch);
+		botCommit(dir, 'the title', { [lockfile]: 'bot lock\n' });
+
+		const outcome = await publish({
+			...common,
+			octokit: getOctokit('ghs_test'),
+			git,
+			state: { mode: 'update', number: 4, head },
+			tip,
+		});
+
+		st.equal(outcome, 'already up to date: https://github.com/o/r/pull/4', 'hides nothing');
+		st.deepEqual(requests.filter((r) => r.path === '/graphql'), [], 'not even looking anything up');
 		st.end();
 	});
 
@@ -820,7 +1185,13 @@ test('commentOnce', async (t) => {
 			['POST', /^\/repos\/o\/r\/issues\/3\/comments$/, () => [201, {}]],
 		]);
 		const commented = await commentOnce({ // eslint-disable-line no-await-in-loop
-			octokit: getOctokit('ghs_test'), owner, name, number: 3, author: bot.name, marker, body: 'the body',
+			octokit: getOctokit('ghs_test'),
+			owner,
+			name,
+			number: 3,
+			author: bot.name,
+			marker,
+			body: 'the body',
 		});
 		t.equal(commented, expected, `${label}: ${expected ? 'comments' : 'says nothing'}`);
 		t.deepEqual(requests.filter((r) => r.method === 'POST').map((r) => r.body), expected ? [{ body: `${marker}\nthe body` }] : [], `${label}: with the marker`);
@@ -830,22 +1201,44 @@ test('commentOnce', async (t) => {
 });
 
 test('findMarked', async (t) => {
-	mockAPI(t, [['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [
-		200,
-		[
-			{ id: 1, user: { login: 'mallory' }, body: '<!-- a -->\nhi' },
-			{ id: 2, user: { login: bot.name }, body: '<!-- c -->\nsaid' },
-			{ id: 3, user: { login: bot.name }, body: '<!-- b -->\nsaid' },
+	mockAPI(t, [[
+		'GET',
+		/^\/repos\/o\/r\/issues\/3\/comments\?/,
+		() => [
+			200,
+			[
+				{ id: 1, user: { login: 'mallory' }, body: '<!-- a -->\nhi' },
+				{ id: 2, user: { login: bot.name }, body: '<!-- c -->\nsaid' },
+				{ id: 3, user: { login: bot.name }, body: '<!-- b -->\nsaid' },
+			],
 		],
-	]]]);
-	t.equal(await findMarked({
-		octokit: getOctokit('ghs_test'), owner, name, number: 3, author: bot.name, markers: ['<!-- a -->', '<!-- b -->', '<!-- c -->'],
-	}), '<!-- b -->', 'the first of the markers that a comment of the author’s starts with');
+	]]);
+	t.equal(
+		await findMarked({
+			octokit: getOctokit('ghs_test'),
+			owner,
+			name,
+			number: 3,
+			author: bot.name,
+			markers: ['<!-- a -->', '<!-- b -->', '<!-- c -->'],
+		}),
+		'<!-- b -->',
+		'the first of the markers that a comment of the author’s starts with',
+	);
 	nock.cleanAll();
 	mockAPI(t, [['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [200, [{ id: 1, user: { login: 'mallory' }, body: '<!-- a -->\nhi' }]]]]);
-	t.equal(await findMarked({
-		octokit: getOctokit('ghs_test'), owner, name, number: 3, author: bot.name, markers: ['<!-- a -->'],
-	}), null, 'or none');
+	t.equal(
+		await findMarked({
+			octokit: getOctokit('ghs_test'),
+			owner,
+			name,
+			number: 3,
+			author: bot.name,
+			markers: ['<!-- a -->'],
+		}),
+		null,
+		'or none',
+	);
 	nock.cleanAll();
 	t.end();
 });
@@ -858,13 +1251,21 @@ test('closePR', (t) => {
 		]);
 
 		await closePR({
-			octokit: getOctokit('ghs_test'), owner, name, number: 4, comment: 'nothing left',
+			octokit: getOctokit('ghs_test'),
+			owner,
+			name,
+			number: 4,
+			comment: 'nothing left',
 		});
 
-		st.deepEqual(writes(requests), [
-			['POST /repos/o/r/issues/4/comments', { body: 'nothing left' }],
-			['PATCH /repos/o/r/pulls/4', { state: 'closed' }],
-		], 'explains, then closes');
+		st.deepEqual(
+			writes(requests),
+			[
+				['POST /repos/o/r/issues/4/comments', { body: 'nothing left' }],
+				['PATCH /repos/o/r/pulls/4', { state: 'closed' }],
+			],
+			'explains, then closes',
+		);
 		st.end();
 	});
 
@@ -872,7 +1273,10 @@ test('closePR', (t) => {
 		const requests = mockAPI(st, [['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated]]);
 
 		await closePR({
-			octokit: getOctokit('ghs_test'), owner, name, number: 4,
+			octokit: getOctokit('ghs_test'),
+			owner,
+			name,
+			number: 4,
 		});
 
 		st.deepEqual(writes(requests), [['PATCH /repos/o/r/pulls/4', { state: 'closed' }]], 'just closes');

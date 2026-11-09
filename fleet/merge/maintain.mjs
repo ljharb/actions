@@ -32,6 +32,7 @@ import {
 	pushBranch,
 	remoteTip,
 } from '../lib/pr.mjs';
+import { hideStale, marker } from '../lib/said.mjs';
 import { reposWithAppPRs } from './repos.mjs';
 
 /** @import { Octokit, appAuth } from '../lib/app.mjs' */
@@ -41,6 +42,7 @@ import { reposWithAppPRs } from './repos.mjs';
 /** @import { Git, Identity } from '../lib/pr.mjs' */
 /** @import { Repo } from './repos.mjs' */
 /** @import { Inputs } from '../drift/inputs.mjs' */
+/** @import { Current, Said } from '../lib/said.mjs' */
 /**
  * What keeping one PR up to date came to:
  * - `changed`: its branch moved while it was being looked at, so it's left for the next run
@@ -67,13 +69,7 @@ export const permissions = {
 	statuses: 'read',
 };
 
-// hidden in each comment, so that each is only ever made once for each head commit (and, when it's about the PR's base too, for each of its base's tips)
-/** @typedef {'foreign' | 'conflict' | 'empty' | 'stuck'} Said */
-
-/** @type {(kind: Said, head: string, base?: string) => string} */
-export function marker(kind, head, base) {
-	return `<!-- fleet:${kind}:${head}${base ? `:${base}` : ''} -->`;
-}
+export { marker };
 
 /** @type {(git: Git, rev: string) => string | null} */
 function show(git, rev) {
@@ -115,6 +111,31 @@ function commitOnBase(
 
 /** @typedef {{ context: Context, repo: Repo, pr: PR, octokit: Octokit, token: string }} Target */
 /** @typedef {Target & { git: Git, tip: string, identity: Identity }} Job */
+
+/**
+ * Once the App has pushed `head` to the PR's branch, in place of `previous`, on `base`'s tip, hides what it said on the PR that no longer applies (see `hideStale`; for a private repository, never warning); `resolved` is what that push resolved. Returns how that's said in the PR's outcome.
+ * @type {(job: Job, current: Current) => Promise<string>}
+ */
+async function hideSaid(
+	{
+		context,
+		repo,
+		pr,
+		octokit,
+	},
+	current,
+) {
+	const hidden = await hideStale({
+		octokit,
+		owner: repo.owner,
+		name: repo.name,
+		number: pr.number,
+		author: context.bot,
+		current,
+		isPrivate: repo.private,
+	});
+	return hidden > 0 ? `; hid ${hidden} of its earlier comments that no longer apply` : '';
+}
 
 // about the PR's head commit, which is what it was looked at as (and, with `base`, its base's tip, which it was looked at on)
 /** @type {(target: Target, about: { kind: Said, base?: string }, body: string) => Promise<boolean>} */
@@ -246,7 +267,18 @@ async function rebase(job) {
 		ignored: `, and added ${code(configFile)}, which it now has, to ${code(packageJson)}’s \`publishConfig.ignore\``,
 		unignored: `, and removed ${code(configFile)}, which it no longer has, from ${code(packageJson)}’s \`publishConfig.ignore\``,
 	};
-	return { kind: 'rebased', text: `rebased onto ${code(base)}’s tip${synced === null ? '' : resynced[synced.reason]}` };
+	// it's now one commit, of only the App's, that changes something on its base's tip: so the head it replaced no longer conflicts, isn't empty, and has nobody else's commits
+	const hid = await hideSaid(job, {
+		previous: tip,
+		head: commit,
+		base: onto,
+		resolved: [
+			'foreign',
+			'conflict',
+			'empty',
+		],
+	});
+	return { kind: 'rebased', text: `rebased onto ${code(base)}’s tip${synced === null ? '' : resynced[synced.reason]}${hid}` };
 }
 
 /**
@@ -373,7 +405,18 @@ async function restore(job, failed) {
 		identity: job.identity,
 		commit,
 	});
-	return { kind: 'restored', text: `its CI failed, so restored ${[...kept].map(([file, inputs]) => `${inputs.map(code).join(', ')} in ${code(file)}`).join('; ')}, and kept them in ${code(configFile)}${ignored === null ? '' : `, which it added to ${code(packageJson)}’s \`publishConfig.ignore\``}` };
+	// as for a rebase; it was never said to be stuck about the head it replaced, since it would then not have been restored
+	const hid = await hideSaid(job, {
+		previous: tip,
+		head: commit,
+		base: git(['rev-parse', `origin/${base}`]).stdout.trim(),
+		resolved: [
+			'foreign',
+			'conflict',
+			'empty',
+		],
+	});
+	return { kind: 'restored', text: `its CI failed, so restored ${[...kept].map(([file, inputs]) => `${inputs.map(code).join(', ')} in ${code(file)}`).join('; ')}, and kept them in ${code(configFile)}${ignored === null ? '' : `, which it added to ${code(packageJson)}’s \`publishConfig.ignore\``}${hid}` };
 }
 
 /** @type {(context: Context, installationId: number) => Promise<Identity>} */

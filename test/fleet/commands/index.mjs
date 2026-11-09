@@ -6,6 +6,7 @@ import test from 'tape';
 
 import { legend } from '../../../fleet/commands/syntax.mjs';
 import { marker } from '../../../fleet/drift/marker.mjs';
+import { marker as saidMarker } from '../../../fleet/lib/said.mjs';
 import { runChild } from '../drift/helpers/child.mjs';
 import { nodeWorkflow, standardWorkflows, template } from '../drift/helpers/states.mjs';
 import { versionFixture } from '../drift/helpers/versions.mjs';
@@ -40,7 +41,10 @@ const report = {
 /** @type {(body: string, login?: string) => Record<string, unknown>} */
 function comment(body, login = 'maintainer') {
 	return {
-		id: 77, body, user: { login }, html_url: commentURL, // eslint-disable-line camelcase
+		id: 77,
+		body,
+		user: { login },
+		html_url: commentURL, // eslint-disable-line camelcase
 	};
 }
 
@@ -55,7 +59,12 @@ function comment(body, login = 'maintainer') {
  * }) => RepoSpec}
  */
 function repo({
-	workflows = standardWorkflows(), config, isPrivate = false, defaultBranch = 'main', packageJson, packageJsonMode = 0o100644,
+	workflows = standardWorkflows(),
+	config,
+	isPrivate = false,
+	defaultBranch = 'main',
+	packageJson,
+	packageJsonMode = 0o100644,
 } = {}) {
 	return {
 		data: {
@@ -92,9 +101,17 @@ function files(workflows) {
  *   versions?: boolean,
  * }) => ChildResult}
  */
-function run(t, {
-	event, github = {}, commands = { permissions: { maintainer: 'write' } }, env = {}, throwStringOnSplit, versions = false,
-}) {
+function run(
+	t,
+	{
+		event,
+		github = {},
+		commands = { permissions: { maintainer: 'write' } },
+		env = {},
+		throwStringOnSplit,
+		versions = false,
+	},
+) {
 	const eventPath = path.join(tempDir(t, 'fleet-commands-event'), 'event.json');
 	writeFileSync(eventPath, JSON.stringify(event));
 	/** @type {Scenario} */
@@ -133,10 +150,14 @@ const issueToken = 'token ghs_installation_99';
  * @type {(t: Test, requests: Recorded[], label: string) => Recorded[]}
  */
 function asBot(t, requests, label) {
-	t.deepEqual(requests.slice(0, 2).map((r) => [`${r.method} ${r.path}`, r.body]), [
-		['GET /repos/ljharb/actions/installation', null],
-		['POST /app/installations/99/access_tokens', { repositories: ['actions'], permissions: { issues: 'write', metadata: 'read' } }],
-	], `${label}: first gets the App’s token for only this repository, that can only write issues`);
+	t.deepEqual(
+		requests.slice(0, 2).map((r) => [`${r.method} ${r.path}`, r.body]),
+		[
+			['GET /repos/ljharb/actions/installation', null],
+			['POST /app/installations/99/access_tokens', { repositories: ['actions'], permissions: { issues: 'write', metadata: 'read' } }],
+		],
+		`${label}: first gets the App’s token for only this repository, that can only write issues`,
+	);
 	return requests.slice(2);
 }
 
@@ -221,10 +242,14 @@ test('fleet/commands: only people with write access can run commands', (t) => {
 		const { status, stdout, requests } = run(t, { event: { issue: report, comment: comment('/fix ljharb') }, commands: { permissions } });
 		t.equal(status, 0, `${label}: exits successfully`);
 		const rest = asBot(t, requests, label);
-		t.deepEqual(rest.map((r) => `${r.method} ${r.path}`), [
-			'GET /repos/ljharb/actions/collaborators/maintainer/permission',
-			'POST /repos/ljharb/actions/issues/9/comments',
-		], `${label}: asks for the commenter’s permission, then only replies: no reaction, and no discovery`);
+		t.deepEqual(
+			rest.map((r) => `${r.method} ${r.path}`),
+			[
+				'GET /repos/ljharb/actions/collaborators/maintainer/permission',
+				'POST /repos/ljharb/actions/issues/9/comments',
+			],
+			`${label}: asks for the commenter’s permission, then only replies: no reaction, and no discovery`,
+		);
 		t.deepEqual(rest.map((r) => r.authorization), [issueToken, issueToken], `${label}: both as the App’s bot`);
 		t.deepEqual(replies(requests), ['Only people with write access to this repository can run fleet commands, so nothing was done.'], `${label}: says they’re not allowed`);
 		t.match(stdout, new RegExp(`^the commenter’s permission is \`${permissions.maintainer ?? 'none'}\`; nothing done$`, 'm'), `${label}: logs why`);
@@ -244,13 +269,17 @@ test('fleet/commands: replies with the legend to anything it can’t run', (t) =
 		const { status, stdout, requests } = run(t, { event: { issue: report, comment: comment(body, 'admin-person') }, commands: { permissions: { 'admin-person': 'admin' } } });
 		t.equal(status, 0, `${body}: exits successfully`);
 		const rest = asBot(t, requests, body);
-		t.deepEqual(rest.map((r) => `${r.method} ${r.path}`), [
-			'GET /repos/ljharb/actions/collaborators/admin-person/permission',
-			'POST /repos/ljharb/actions/issues/comments/77/reactions',
-			'POST /repos/ljharb/actions/issues/9/comments',
-			'DELETE /repos/ljharb/actions/issues/comments/77/reactions/501',
-			'POST /repos/ljharb/actions/issues/comments/77/reactions',
-		], `${body}: reacts, replies, then swaps its reaction, and does nothing else`);
+		t.deepEqual(
+			rest.map((r) => `${r.method} ${r.path}`),
+			[
+				'GET /repos/ljharb/actions/collaborators/admin-person/permission',
+				'POST /repos/ljharb/actions/issues/comments/77/reactions',
+				'POST /repos/ljharb/actions/issues/9/comments',
+				'DELETE /repos/ljharb/actions/issues/comments/77/reactions/501',
+				'POST /repos/ljharb/actions/issues/comments/77/reactions',
+			],
+			`${body}: reacts, replies, then swaps its reaction, and does nothing else`,
+		);
 		t.deepEqual(rest[1].body, { content: 'eyes' }, `${body}: reacts with 👀`);
 		t.deepEqual(rest[4].body, { content: 'confused' }, `${body}: then, since it isn’t a valid command, swaps the 👀 for 😕`);
 		t.deepEqual(rest.map((r) => r.authorization), [issueToken, issueToken, issueToken, issueToken, issueToken], `${body}: all as the App’s bot`);
@@ -320,10 +349,16 @@ test('fleet/commands: dry run', (t) => {
 			permissions: { maintainer: 'write' },
 			pulls: {
 				'ljharb/drifted': [{
-					number: 4, state: 'open', merged_at: null, head: { sha: 'abc' }, // eslint-disable-line camelcase
+					number: 4,
+					state: 'open',
+					merged_at: null, // eslint-disable-line camelcase
+					head: { sha: 'abc' },
 				}],
 				'ljharb/missing': [{
-					number: 5, state: 'closed', merged_at: null, head: { sha: 'def' }, // eslint-disable-line camelcase
+					number: 5,
+					state: 'closed',
+					merged_at: null, // eslint-disable-line camelcase
+					head: { sha: 'def' },
 				}],
 			},
 		},
@@ -335,15 +370,20 @@ test('fleet/commands: dry run', (t) => {
 	t.notOk(stdout.includes('stranger'), 'never naming an account that isn’t allowed');
 	t.match(stdout, /^::warning::installation 3: /m, 'including an installation that can’t be read');
 	const missing = ['node-pretest.yml', 'rebase.yml', 'require-allow-edits.yml'].map((name) => `\`.github/workflows/${name}\`: added, since it’s missing`);
-	const body = expectedReply('/dry-run fix ljharb', [
-		'| `ljharb/drifted` | would update https://github.com/ljharb/drifted/pull/4<br>`.github/workflows/rebase.yml`: rewritten from its template, since it has drifted |',
-		'| `ljharb/fresh` | would create a PR<br>`.github/workflows/node-pretest.yml`: rewritten from its template, since it has drifted |',
-		`| \`ljharb/missing\` | would reopen and update https://github.com/ljharb/missing/pull/5<br>${missing.join('<br>')} |`,
-		'| `ljharb/untemplated` | nothing to fix<br>left as it is: `.github/workflows/custom.yml`: `there is no template for it` |',
-	], [
-		'',
-		'⚠️ Some repositories could not be read, so they were not considered; see [the run](https://github.com/ljharb/actions/actions/runs/42).',
-	], true);
+	const body = expectedReply(
+		'/dry-run fix ljharb',
+		[
+			'| `ljharb/drifted` | would update https://github.com/ljharb/drifted/pull/4<br>`.github/workflows/rebase.yml`: rewritten from its template, since it has drifted |',
+			'| `ljharb/fresh` | would create a PR<br>`.github/workflows/node-pretest.yml`: rewritten from its template, since it has drifted |',
+			`| \`ljharb/missing\` | would reopen and update https://github.com/ljharb/missing/pull/5<br>${missing.join('<br>')} |`,
+			'| `ljharb/untemplated` | nothing to fix<br>left as it is: `.github/workflows/custom.yml`: `there is no template for it` |',
+		],
+		[
+			'',
+			'⚠️ Some repositories could not be read, so they were not considered; see [the run](https://github.com/ljharb/actions/actions/runs/42).',
+		],
+		true,
+	);
 	t.deepEqual(replies(requests), [body], 'replies with what it would do, in each public repository with discrepancies, by name; a clean one isn’t listed, and a private one isn’t mentioned');
 	t.equal(summary, body, 'the run summary has the same');
 	t.notOk(summary.includes('secret'), 'never naming a private repository');
@@ -379,13 +419,22 @@ test('fleet/commands: an account whose installation is waiting on it to approve 
 
 	t.equal(status, 0, 'exits successfully');
 	t.notOk((/^::warning::/m).test(stdout), 'without a warning');
-	t.deepEqual(replies(requests), [
-		expectedReply('/dry-run fix es-shims', [], [
-			'No repository matches those filters.',
-			'',
-			'⏳ Waiting on permission approval: `es-shims`; until each of these accounts approves the App’s permissions, its repositories are not considered.',
-		], true),
-	], 'the reply says its repositories weren’t considered, rather than only that nothing matched');
+	t.deepEqual(
+		replies(requests),
+		[
+			expectedReply(
+				'/dry-run fix es-shims',
+				[],
+				[
+					'No repository matches those filters.',
+					'',
+					'⏳ Waiting on permission approval: `es-shims`; until each of these accounts approves the App’s permissions, its repositories are not considered.',
+				],
+				true,
+			),
+		],
+		'the reply says its repositories weren’t considered, rather than only that nothing matched',
+	);
 	t.deepEqual(matching(requests, 'POST', /^\/app\/installations\/2\/access_tokens$/), [], 'no token is asked for for the waiting installation');
 
 	t.end();
@@ -427,47 +476,71 @@ test('fleet/commands: filters', (t) => {
 	const create = (...parts) => ['would create a PR', ...parts].join('<br>');
 	/** @type {[string, string[], string[]?][]} */
 	const cases = [
-		['/dry-run fix es-shims inspect-js', [
-			`| \`es-shims/c\` | ${create(add('node-pretest.yml'), rewrite('rebase.yml'))} |`,
-			`| \`inspect-js/d\` | ${create('`.github/workflows/node-tens.yml`: deleted, since it’s unexpected')} |`,
-		]],
+		[
+			'/dry-run fix es-shims inspect-js',
+			[
+				`| \`es-shims/c\` | ${create(add('node-pretest.yml'), rewrite('rebase.yml'))} |`,
+				`| \`inspect-js/d\` | ${create('`.github/workflows/node-tens.yml`: deleted, since it’s unexpected')} |`,
+			],
+		],
 		// a private repository matches like any other, but is never mentioned
-		['/dry-run fix REBASE.yml ljharb', [
-			`| \`ljharb/a\` | ${create(add('rebase.yml'))} |`,
-			`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
-		]],
-		['/dry-run fix rebase.yml drifted', [
-			`| \`es-shims/c\` | ${create(rewrite('rebase.yml'))} |`,
-			`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
-		]],
-		['/dry-run fix ljharb/A es-shims/c missing', [
-			`| \`es-shims/c\` | ${create(add('node-pretest.yml'))} |`,
-			`| \`ljharb/a\` | ${create(add('node-pretest.yml'), add('rebase.yml'), add('require-allow-edits.yml'))} |`,
-		]],
-		['/dry-run fix ljharb/clean ljharb/b inspect-js/d ljharb', [
-			`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
-			'| `ljharb/clean` | nothing to fix |',
-		]],
+		[
+			'/dry-run fix REBASE.yml ljharb',
+			[
+				`| \`ljharb/a\` | ${create(add('rebase.yml'))} |`,
+				`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
+			],
+		],
+		[
+			'/dry-run fix rebase.yml drifted',
+			[
+				`| \`es-shims/c\` | ${create(rewrite('rebase.yml'))} |`,
+				`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
+			],
+		],
+		[
+			'/dry-run fix ljharb/A es-shims/c missing',
+			[
+				`| \`es-shims/c\` | ${create(add('node-pretest.yml'))} |`,
+				`| \`ljharb/a\` | ${create(add('node-pretest.yml'), add('rebase.yml'), add('require-allow-edits.yml'))} |`,
+			],
+		],
+		[
+			'/dry-run fix ljharb/clean ljharb/b inspect-js/d ljharb',
+			[
+				`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
+				'| `ljharb/clean` | nothing to fix |',
+			],
+		],
 		['/dry-run fix ljharb/clean missing', ['| `ljharb/clean` | nothing to fix |']],
 		['/dry-run fix ljharb/gone rebase.yml', ['| `ljharb/gone` | failed: `could not read the repository’s state` |']],
 		['/dry-run fix ljharb/nope', [], ['No repository matches those filters.']],
 		['/dry-run fix ljharb/secret ljharb/secret', [], ['No repository matches those filters.']],
-		['/dry-run fix ljharb missing', [
-			`| \`ljharb/a\` | ${create(add('node-pretest.yml'), add('rebase.yml'), add('require-allow-edits.yml'))} |`,
-		]],
-		['/dry-run fix ljharb', [
-			`| \`ljharb/a\` | ${create(add('node-pretest.yml'), add('rebase.yml'), add('require-allow-edits.yml'))} |`,
-			`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
-			'| `ljharb/gone` | failed: `could not read the repository’s state` |',
-		]],
+		[
+			'/dry-run fix ljharb missing',
+			[
+				`| \`ljharb/a\` | ${create(add('node-pretest.yml'), add('rebase.yml'), add('require-allow-edits.yml'))} |`,
+			],
+		],
+		[
+			'/dry-run fix ljharb',
+			[
+				`| \`ljharb/a\` | ${create(add('node-pretest.yml'), add('rebase.yml'), add('require-allow-edits.yml'))} |`,
+				`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
+				'| `ljharb/gone` | failed: `could not read the repository’s state` |',
+			],
+		],
 		// naming every allowed account narrows nothing
-		['/dry-run fix inspect-js ljharb es-shims', [
-			`| \`es-shims/c\` | ${create(add('node-pretest.yml'), rewrite('rebase.yml'))} |`,
-			`| \`inspect-js/d\` | ${create('`.github/workflows/node-tens.yml`: deleted, since it’s unexpected')} |`,
-			`| \`ljharb/a\` | ${create(add('node-pretest.yml'), add('rebase.yml'), add('require-allow-edits.yml'))} |`,
-			`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
-			'| `ljharb/gone` | failed: `could not read the repository’s state` |',
-		]],
+		[
+			'/dry-run fix inspect-js ljharb es-shims',
+			[
+				`| \`es-shims/c\` | ${create(add('node-pretest.yml'), rewrite('rebase.yml'))} |`,
+				`| \`inspect-js/d\` | ${create('`.github/workflows/node-tens.yml`: deleted, since it’s unexpected')} |`,
+				`| \`ljharb/a\` | ${create(add('node-pretest.yml'), add('rebase.yml'), add('require-allow-edits.yml'))} |`,
+				`| \`ljharb/b\` | ${create(rewrite('rebase.yml'))} |`,
+				'| `ljharb/gone` | failed: `could not read the repository’s state` |',
+			],
+		],
 		['/dry-run fix ljharb missing es-shims/c', [], ['No repository matches those filters.']],
 	];
 	// which of them match `ljharb/secret`, which has every standard file missing
@@ -480,7 +553,10 @@ test('fleet/commands: filters', (t) => {
 	]);
 	cases.forEach(([line, rows, extra = []]) => {
 		const { status, stdout, requests } = run(t, {
-			event: { issue: report, comment: comment(line) }, github, env: { INPUT_ACCOUNTS: 'ljharb es-shims inspect-js' }, versions: true,
+			event: { issue: report, comment: comment(line) },
+			github,
+			env: { INPUT_ACCOUNTS: 'ljharb es-shims inspect-js' },
+			versions: true,
 		});
 		const failing = rows.some((row) => row.includes('| failed: '));
 		t.equal(status, Number(failing), `${line}: ${failing ? 'fails, since a repository failed' : 'exits successfully'}`);
@@ -586,7 +662,10 @@ test('fleet/commands: fixes each repository in a PR from its `fleet/workflows` b
 			serverURL: remotes.serverURL,
 			pulls: {
 				'ljharb/existing': [{
-					number: 3, state: 'open', merged_at: null, head: { sha: earlier }, // eslint-disable-line camelcase
+					number: 3,
+					state: 'open',
+					merged_at: null, // eslint-disable-line camelcase
+					head: { sha: earlier },
 				}],
 			},
 		},
@@ -599,27 +678,42 @@ test('fleet/commands: fixes each repository in a PR from its `fleet/workflows` b
 	t.notOk(stdout.includes('secret') || stdout.includes('private repositor'), 'a private repository a filter names is fixed too, but nothing is logged about it, nor about its failure');
 
 	const all = ['node-pretest.yml', 'rebase.yml', 'require-allow-edits.yml'];
-	t.deepEqual(changes(requests), [
-		'PATCH /repos/ljharb/existing/pulls/3',
-		'POST /repos/ljharb/new/pulls',
-		'POST /repos/ljharb/secret/pulls',
-	], 'updates the existing PR, and creates the others, a private one’s last; nothing else');
+	t.deepEqual(
+		changes(requests),
+		[
+			'PATCH /repos/ljharb/existing/pulls/3',
+			'POST /repos/ljharb/new/pulls',
+			'POST /repos/ljharb/secret/pulls',
+		],
+		'updates the existing PR, and creates the others, a private one’s last; nothing else',
+	);
 	t.equal(remotes.show('ljharb/secret', 'fleet/workflows', '.github/workflows/rebase.yml'), template('rebase.yml'), 'the private one is fixed from its template too');
 
 	const created = matching(requests, 'POST', /^\/repos\/ljharb\/new\/pulls$/)[0];
 	t.equal(created.authorization, 'token ghs_installation_1', 'with the installation’s token');
-	t.deepEqual({ ...created.body, body: undefined }, {
-		base: 'main', head: 'fleet/workflows', title, body: undefined,
-	}, 'from `fleet/workflows`, into the default branch, titled');
-	t.equal(created.body.body, [
-		`This makes these workflow files match the templates in [\`ljharb/actions\`’s \`fleet/drift/templates\`](${remotes.serverURL}/ljharb/actions/tree/HEAD/fleet/drift/templates), as asked in [this comment](${commentURL}):`,
-		'',
-		...all.map((name) => `- \`.github/workflows/${name}\`: added, since it’s missing`),
-		'',
-		'These are left as they are:',
-		'',
-		'- `.github/workflows/node-twenties.yml`: ``there is no valid `engines.node` in `package.json` to derive its node version range from``',
-	].join('\n'), 'with a body listing each change and why, and what it left alone, linking the comment');
+	t.deepEqual(
+		{ ...created.body, body: undefined },
+		{
+			base: 'main',
+			head: 'fleet/workflows',
+			title,
+			body: undefined,
+		},
+		'from `fleet/workflows`, into the default branch, titled',
+	);
+	t.equal(
+		created.body.body,
+		[
+			`This makes these workflow files match the templates in [\`ljharb/actions\`’s \`fleet/drift/templates\`](${remotes.serverURL}/ljharb/actions/tree/HEAD/fleet/drift/templates), as asked in [this comment](${commentURL}):`,
+			'',
+			...all.map((name) => `- \`.github/workflows/${name}\`: added, since it’s missing`),
+			'',
+			'These are left as they are:',
+			'',
+			'- `.github/workflows/node-twenties.yml`: ``there is no valid `engines.node` in `package.json` to derive its node version range from``',
+		].join('\n'),
+		'with a body listing each change and why, and what it left alone, linking the comment',
+	);
 	t.deepEqual(remotes.log('ljharb/new', 'main..fleet/workflows'), [`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${message}`], 'one commit, by the bot');
 	all.forEach((name) => {
 		t.equal(remotes.show('ljharb/new', 'fleet/workflows', `.github/workflows/${name}`), template(name), `\`${name}\` is written from its template`);
@@ -628,9 +722,13 @@ test('fleet/commands: fixes each repository in a PR from its `fleet/workflows` b
 	const updated = matching(requests, 'PATCH', /^\/repos\/ljharb\/existing\/pulls\/3$/)[0];
 	t.equal(updated.body.title, title, 'the existing PR is retitled');
 	t.ok(updated.body.body.includes('- `.github/workflows/node-pretest.yml`: rewritten from its template, since it has drifted\n- `.github/workflows/rebase.yml`: rewritten'), 'and its body lists every file');
-	t.deepEqual(remotes.log('ljharb/existing', 'main..fleet/workflows'), [
-		`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${message}`,
-	], 'the branch is rebuilt as one commit, replacing what it had');
+	t.deepEqual(
+		remotes.log('ljharb/existing', 'main..fleet/workflows'),
+		[
+			`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${message}`,
+		],
+		'the branch is rebuilt as one commit, replacing what it had',
+	);
 	t.equal(remotes.show('ljharb/existing', 'fleet/workflows', '.github/workflows/node-pretest.yml'), template('node-pretest.yml'), 'fixing the rest');
 
 	t.equal(remotes.tip('ljharb/current', 'refs/heads/fleet/workflows'), '', 'nothing is pushed when the default branch already matches');
@@ -638,25 +736,33 @@ test('fleet/commands: fixes each repository in a PR from its `fleet/workflows` b
 	t.equal(remotes.show('ljharb/foreign', 'fleet/workflows', '.github/workflows/rebase.yml'), 'nope\n', 'unfixed');
 
 	const tokens = matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).filter((r) => r.body?.repositories);
-	t.deepEqual(tokens.map((r) => r.body), ['current', 'existing', 'foreign', 'new', 'secret', 'secret-broken'].map((name) => ({
-		repositories: [name],
-		permissions: {
-			contents: 'write',
-			pull_requests: 'write', // eslint-disable-line camelcase
-			workflows: 'write',
-		},
-	})), 'each with its own token, for only that repository, that can push workflow files and open PRs');
+	t.deepEqual(
+		tokens.map((r) => r.body),
+		['current', 'existing', 'foreign', 'new', 'secret', 'secret-broken'].map((name) => ({
+			repositories: [name],
+			permissions: {
+				contents: 'write',
+				pull_requests: 'write', // eslint-disable-line camelcase
+				workflows: 'write',
+			},
+		})),
+		'each with its own token, for only that repository, that can push workflow files and open PRs',
+	);
 	t.equal(matching(requests, 'GET', /^\/app$/).length, 1, 'the bot user is looked up once per installation');
 
 	const [reply] = replies(requests);
 	const rows = reply.split('\n').filter((line) => line.startsWith('| `'));
 	t.deepEqual(rows.map((r) => r.split(' | ')[0]), ['| `ljharb/clean`', '| `ljharb/current`', '| `ljharb/empty`', '| `ljharb/existing`', '| `ljharb/foreign`', '| `ljharb/new`'], 'a row for each public repository, by name');
-	t.deepEqual(rows.slice(0, 4), [
-		'| `ljharb/clean` | nothing to fix |',
-		'| `ljharb/current` | nothing to fix: `main` already matches |',
-		'| `ljharb/empty` | failed: `the repository has no default branch` |',
-		`| \`ljharb/existing\` | updated ${remotes.serverURL}/ljharb/existing/pull/3 |`,
-	], 'saying what happened to each');
+	t.deepEqual(
+		rows.slice(0, 4),
+		[
+			'| `ljharb/clean` | nothing to fix |',
+			'| `ljharb/current` | nothing to fix: `main` already matches |',
+			'| `ljharb/empty` | failed: `the repository has no default branch` |',
+			`| \`ljharb/existing\` | updated ${remotes.serverURL}/ljharb/existing/pull/3 |`,
+		],
+		'saying what happened to each',
+	);
 	t.match(rows[4], /^\| `ljharb\/foreign` \| failed: `.*has 1 commit\(s\) by someone else, so it is never overwritten.*` \|$/, 'including why one failed');
 	t.equal(rows[5], `| \`ljharb/new\` | created ${remotes.serverURL}/ljharb/new/pull/1<br>left as it is: \`.github/workflows/node-twenties.yml\`: \`\`there is no valid \`engines.node\` in \`package.json\` to derive its node version range from\`\` |`, 'and what it left alone');
 	t.notOk(rows.some((r) => r.includes('secret')), 'and not one for a private repository');
@@ -677,10 +783,15 @@ test('fleet/commands: rebuilding the App’s PR keeps what it put back when its 
 	});
 	// as `fleet-merge.yml` leaves it, after its CI failed: the input put back, and kept, alongside what the config already kept
 	const restoredConfig = `${JSON.stringify({ relock: false, keep: { 'node-pretest.yml': ['skip-pack', 'skip-engines'], 'node-tens.yml': ['skip-ls-check'], 'node-twenties.yml': ['coverage'] } }, null, 2)}\n`;
-	const restored = remotes.commit('ljharb/kept', 'fleet/workflows', {
-		'.github/workflows/node-pretest.yml': `${template('node-pretest.yml')}    with:\n${why}`,
-		'.github/ljharb-actions.json': restoredConfig,
-	}, { who: bot, from: 'main' });
+	const restored = remotes.commit(
+		'ljharb/kept',
+		'fleet/workflows',
+		{
+			'.github/workflows/node-pretest.yml': `${template('node-pretest.yml')}    with:\n${why}`,
+			'.github/ljharb-actions.json': restoredConfig,
+		},
+		{ who: bot, from: 'main' },
+	);
 	// and then `rebase.yml` drifted on the base
 	remotes.commit('ljharb/kept', 'main', { '.github/workflows/rebase.yml': 'nope\n' });
 	const workflows = replacing('rebase.yml', 'nope\n', replacing('node-pretest.yml', drifted));
@@ -698,7 +809,10 @@ test('fleet/commands: rebuilding the App’s PR keeps what it put back when its 
 			serverURL: remotes.serverURL,
 			pulls: {
 				'ljharb/kept': [{
-					number: 3, state: 'open', merged_at: null, head: { sha: restored }, // eslint-disable-line camelcase
+					number: 3,
+					state: 'open',
+					merged_at: null, // eslint-disable-line camelcase
+					head: { sha: restored },
 				}],
 			},
 		},
@@ -735,7 +849,11 @@ test('fleet/commands: a private repository’s outcome is never output, and is a
 	const names = ['alpha', 'beta-secret', 'empty', 'gamma-secret', 'mid-secret', 'zulu'];
 
 	const {
-		status, stdout, stderr, requests, summary,
+		status,
+		stdout,
+		stderr,
+		requests,
+		summary,
 	} = run(t, {
 		event: { issue: report, comment: comment('/fix ljharb') },
 		github: {
@@ -757,10 +875,14 @@ test('fleet/commands: a private repository’s outcome is never output, and is a
 
 	t.equal(status, 1, 'fails, since a public repository could not be fixed');
 	t.match(stdout, /^::error::1 repository could not be fixed$/m, 'not counting the private ones that failed');
-	t.deepEqual(stdout.split('\n').filter((l) => (/^::(?:warning|error|notice)/).test(l)), [
-		'::warning::ljharb/empty: the repository has no default branch',
-		'::error::1 repository could not be fixed',
-	], 'warns about each public failure, and nothing about the private ones');
+	t.deepEqual(
+		stdout.split('\n').filter((l) => (/^::(?:warning|error|notice)/).test(l)),
+		[
+			'::warning::ljharb/empty: the repository has no default branch',
+			'::error::1 repository could not be fixed',
+		],
+		'warns about each public failure, and nothing about the private ones',
+	);
 	t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), ['eyes', 'confused'], 'a public failure swaps the 👀 for 😕');
 
 	const tokens = matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).filter((r) => r.body?.repositories);
@@ -772,11 +894,15 @@ test('fleet/commands: a private repository’s outcome is never output, and is a
 	[['the log', stdout], ['stderr', stderr], ['the summary', summary], ['the reply', reply]].forEach(([where, text]) => {
 		t.deepEqual(secrets.filter((secret) => text.includes(secret)), [], `${where} reveals nothing about a private repository`);
 	});
-	t.deepEqual(reply.split('\n').filter((l) => l.startsWith('| `')), [
-		`| \`ljharb/alpha\` | created ${remotes.serverURL}/ljharb/alpha/pull/1 |`,
-		'| `ljharb/empty` | failed: `the repository has no default branch` |',
-		`| \`ljharb/zulu\` | created ${remotes.serverURL}/ljharb/zulu/pull/1 |`,
-	], 'the reply lists only the public repositories');
+	t.deepEqual(
+		reply.split('\n').filter((l) => l.startsWith('| `')),
+		[
+			`| \`ljharb/alpha\` | created ${remotes.serverURL}/ljharb/alpha/pull/1 |`,
+			'| `ljharb/empty` | failed: `the repository has no default branch` |',
+			`| \`ljharb/zulu\` | created ${remotes.serverURL}/ljharb/zulu/pull/1 |`,
+		],
+		'the reply lists only the public repositories',
+	);
 	t.ok(reply.endsWith(`\n\n${privateNote(false)}`), 'and ends by saying only that any private repositories matching were processed too');
 	t.end();
 });
@@ -819,12 +945,16 @@ test('fleet/commands: never writes through a symbolic link', (t) => {
 test('fleet/commands: the App’s PR keeps `.github/ljharb-actions.json` out of the published package, when it uses `npmignore`', (t) => {
 	const configFile = '.github/ljharb-actions.json';
 	/** @type {(ignore: string[], indent?: string | number) => string} */
-	const pkg = (ignore, indent = '\t') => `${JSON.stringify({
-		name: 'pkg',
-		scripts: { prepack: 'npmignore --auto --commentLines=autogenerated' },
-		publishConfig: { ignore },
-		version: '1.0.0',
-	}, null, indent)}\n`;
+	const pkg = (ignore, indent = '\t') => `${JSON.stringify(
+		{
+			name: 'pkg',
+			scripts: { prepack: 'npmignore --auto --commentLines=autogenerated' },
+			publishConfig: { ignore },
+			version: '1.0.0',
+		},
+		null,
+		indent,
+	)}\n`;
 	const before = pkg(['.github/workflows', 'test']);
 	const after = pkg(['.github/workflows', configFile, 'test']);
 	const crlf = pkg(['test'], 2).replace(/\n/g, '\r\n');
@@ -857,10 +987,15 @@ test('fleet/commands: the App’s PR keeps `.github/ljharb-actions.json` out of 
 	])));
 	remotes.commit('ljharb/link', 'main', {}, { links: { 'package.json': 'real.json' } });
 	// as `fleet-merge.yml` leaves it, after its CI failed, in a repository with no config of its own: so `/fix` writes one
-	const restored = remotes.commit('ljharb/kept', 'fleet/workflows', {
-		'.github/workflows/node-pretest.yml': `${template('node-pretest.yml')}    with:\n      skip-engines: true\n`,
-		[configFile]: keepConfig,
-	}, { who: bot, from: 'main' });
+	const restored = remotes.commit(
+		'ljharb/kept',
+		'fleet/workflows',
+		{
+			'.github/workflows/node-pretest.yml': `${template('node-pretest.yml')}    with:\n      skip-engines: true\n`,
+			[configFile]: keepConfig,
+		},
+		{ who: bot, from: 'main' },
+	);
 
 	/** @type {(line: string, only?: string[]) => ChildResult} */
 	const fix = (line, only = names) => run(t, {
@@ -870,9 +1005,15 @@ test('fleet/commands: the App’s PR keeps `.github/ljharb-actions.json` out of 
 			installationRepos: { 1: only.map((n) => installedRepo('ljharb', n)) },
 			repos: Object.fromEntries(only.map((n) => {
 				const { [configFile]: config, 'package.json': packageJson } = specs[n].files;
-				return [`ljharb/${n}`, repo({
-					workflows: drifted, config, packageJson, packageJsonMode: n === 'executable' ? 0o100755 : undefined,
-				})];
+				return [
+					`ljharb/${n}`,
+					repo({
+						workflows: drifted,
+						config,
+						packageJson,
+						packageJsonMode: n === 'executable' ? 0o100755 : undefined,
+					}),
+				];
 			})),
 		},
 		commands: {
@@ -880,7 +1021,10 @@ test('fleet/commands: the App’s PR keeps `.github/ljharb-actions.json` out of 
 			serverURL: remotes.serverURL,
 			pulls: {
 				'ljharb/kept': [{
-					number: 3, state: 'open', merged_at: null, head: { sha: restored }, // eslint-disable-line camelcase
+					number: 3,
+					state: 'open',
+					merged_at: null, // eslint-disable-line camelcase
+					head: { sha: restored },
 				}],
 			},
 		},
@@ -897,12 +1041,16 @@ test('fleet/commands: the App’s PR keeps `.github/ljharb-actions.json` out of 
 	]);
 	t.equal(dry.status, 0, 'a dry run succeeds');
 	const dryRows = replies(dry.requests)[0].split('\n').filter((l) => l.startsWith('| `'));
-	t.deepEqual(dryRows, [
-		`| \`ljharb/adds\` | would create a PR<br>\`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted<br>${ignoredLine.slice(2)} |`,
-		'| `ljharb/executable` | would create a PR<br>`.github/workflows/rebase.yml`: rewritten from its template, since it has drifted |',
-		'| `ljharb/noconfig` | would create a PR<br>`.github/workflows/rebase.yml`: rewritten from its template, since it has drifted |',
-		`| \`ljharb/stale\` | would create a PR<br>\`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted<br>${unignoredLine.slice(2)} |`,
-	], 'and says it would add it, only where the config file exists, and `package.json` is a regular file, and remove it where there’s no config file, as `/fix` would');
+	t.deepEqual(
+		dryRows,
+		[
+			`| \`ljharb/adds\` | would create a PR<br>\`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted<br>${ignoredLine.slice(2)} |`,
+			'| `ljharb/executable` | would create a PR<br>`.github/workflows/rebase.yml`: rewritten from its template, since it has drifted |',
+			'| `ljharb/noconfig` | would create a PR<br>`.github/workflows/rebase.yml`: rewritten from its template, since it has drifted |',
+			`| \`ljharb/stale\` | would create a PR<br>\`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted<br>${unignoredLine.slice(2)} |`,
+		],
+		'and says it would add it, only where the config file exists, and `package.json` is a regular file, and remove it where there’s no config file, as `/fix` would',
+	);
 
 	const { status, stdout, requests } = fix(`/fix ${names.map((n) => `ljharb/${n}`).join(' ')}`);
 	t.equal(status, 0, 'nothing failed, not even a `package.json` that isn’t JSON, or is missing, or is a symbolic link');
@@ -1155,5 +1303,73 @@ test('fleet/commands: a command that worked gets 🚀, and saying so failing onl
 		t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), ['eyes', 'rocket'], `${label}: swaps the 👀 for 🚀`);
 		t.deepEqual(stdout.split('\n').filter((l) => l.startsWith('::warning::could not mark')), finish ? ['::warning::could not mark the command as done: could not be read (HTTP 500)'] : [], `${label}: ${finish ? 'warns' : 'without a warning'}`);
 	});
+	t.end();
+});
+
+test('fleet/commands: updating the App’s PR hides what it said on it that no longer applies', (t) => {
+	const drifted = replacing('rebase.yml', 'nope\n');
+	const remotes = makeRemotes(t, { 'ljharb/said': files(drifted) });
+	const oldTip = remotes.tip('ljharb/said', 'main');
+	const earlier = remotes.commit('ljharb/said', 'fleet/workflows', { 'README.md': 'stale\n' }, { who: bot, from: 'main' });
+	remotes.commit('ljharb/said', 'main', { 'README.md': 'moved\n' });
+	/** @type {(github?: GitHubScenario) => ChildResult} */
+	const fix = (github = {}) => run(t, {
+		event: { issue: report, comment: comment('/fix ljharb/said') },
+		github: {
+			installations: [{ id: 1, account: { login: 'ljharb' } }],
+			installationRepos: { 1: [installedRepo('ljharb', 'said')] },
+			repos: { 'ljharb/said': repo({ workflows: drifted }) },
+			...github,
+		},
+		commands: {
+			permissions: { maintainer: 'write' },
+			serverURL: remotes.serverURL,
+			pulls: {
+				'ljharb/said': [{
+					number: 3,
+					state: 'open',
+					merged_at: null, // eslint-disable-line camelcase
+					head: { sha: earlier },
+				}],
+			},
+			comments: {
+				'ljharb/said#3': [
+					{ node_id: 'C_conflict', user: { login: bot.name }, body: `${saidMarker('conflict', earlier, oldTip)}\nconflicts` }, // eslint-disable-line camelcase
+					{ node_id: 'C_stuck', user: { login: bot.name }, body: `${saidMarker('stuck', earlier)}\nstuck` }, // eslint-disable-line camelcase
+					{ node_id: 'C_theirs', user: { login: mallory.name }, body: `${saidMarker('stuck', earlier)}\nnot the bot` }, // eslint-disable-line camelcase
+				],
+			},
+		},
+		env: { GITHUB_SERVER_URL: remotes.serverURL },
+	});
+
+	const { status, requests } = fix();
+	t.equal(status, 0, 'nothing failed');
+	t.ok(replies(requests)[0].includes(`| \`ljharb/said\` | updated ${remotes.serverURL}/ljharb/said/pull/3; hid 2 of the App’s earlier comments on it that no longer apply |`), 'says what it hid');
+	t.deepEqual(
+		requests.filter((r) => r.path === '/graphql' && r.body.variables.classifier).map((r) => [r.body.variables.id, r.body.variables.classifier]),
+		[
+			['C_conflict', 'RESOLVED'],
+			['C_stuck', 'OUTDATED'],
+		],
+		'its conflict is resolved, and its having been stuck is outdated; anyone else’s are left alone',
+	);
+
+	remotes.commit('ljharb/said', 'main', { 'README.md': 'moved again\n' });
+	const failed = fix({ minimizeFails: ['C_conflict', 'C_stuck'] });
+	t.equal(failed.status, 0, 'a failure to hide them fails nothing');
+	t.ok(replies(failed.requests)[0].includes(`| \`ljharb/said\` | updated ${remotes.serverURL}/ljharb/said/pull/3 |`), 'the PR is still updated');
+	t.match(failed.stdout, /^::warning::could not hide 2 of the App’s earlier comments on one of its PRs that no longer apply \(FORBIDDEN\)$/m, 'it only warns, without saying where');
+
+	remotes.commit('ljharb/said', 'main', { 'README.md': 'moved once more\n' });
+	const secret = fix({
+		installationRepos: { 1: [installedRepo('ljharb', 'said', { private: true })] },
+		repos: { 'ljharb/said': repo({ workflows: drifted, isPrivate: true }) },
+		minimizeFails: ['C_conflict', 'C_stuck'],
+	});
+	t.equal(secret.status, 0, 'in a private repository, a failure to hide them fails nothing');
+	t.ok(secret.requests.some((r) => r.method === 'PATCH' && r.path === '/repos/ljharb/said/pulls/3'), 'the PR is still updated');
+	t.deepEqual(secret.requests.filter((r) => r.path === '/graphql' && r.body.variables.classifier).map((r) => r.body.variables.id), ['C_conflict', 'C_stuck'], 'it tries to hide them');
+	t.notOk(secret.stdout.includes('::warning::'), 'but its failing to isn’t logged at all');
 	t.end();
 });

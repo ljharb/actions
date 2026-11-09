@@ -75,7 +75,7 @@ const reasons = {
 /** @type {(plan: Plan) => string[]} */
 function changes({ writes, deletes }) {
 	return [
-		...writes.map((w) => `${code(w.path)}: ${reasons[/** @type {keyof typeof reasons} */ (w.reason)]}`), // eslint-disable-line no-extra-parens
+		...writes.map((w) => `${code(w.path)}: ${reasons[/** @type {keyof typeof reasons} */ (w.reason)]}`),
 		...deletes.map((d) => `${code(d.path)}: deleted, since it’s unexpected`),
 	];
 }
@@ -85,9 +85,14 @@ function changes({ writes, deletes }) {
  * A `package.json` that isn't a regular file (eg, an executable one, which writing it would change) is never edited.
  * @type {(plan: Plan, state: RepoState) => Promise<void>}
  */
-async function planIgnored(plan, {
-	packageJson: text, packageJsonRegular, hasConfig: configExists,
-}) {
+async function planIgnored(
+	plan,
+	{
+		packageJson: text,
+		packageJsonRegular,
+		hasConfig: configExists,
+	},
+) {
 	if (plan.writes.length + plan.deletes.length === 0) {
 		return;
 	}
@@ -170,7 +175,10 @@ function cloneState(git, state) {
 		return shown.status === 0 ? shown.stdout : null;
 	};
 	const entries = git([
-		'ls-tree', '-z', 'HEAD', '.github/workflows/',
+		'ls-tree',
+		'-z',
+		'HEAD',
+		'.github/workflows/',
 	]).stdout.split('\0').filter(Boolean).map((line) => {
 		const [info, file] = line.split('\t');
 		return { type: info.split(' ')[1], file };
@@ -186,10 +194,15 @@ function cloneState(git, state) {
 
 /** @type {(job: Job) => Promise<string>} */
 async function openPR({
-	context, state, base, files,
+	context,
+	state,
+	base,
+	files,
 }) {
 	const {
-		owner, name, installationId,
+		owner,
+		name,
+		installationId,
 	} = state;
 	const token = await installationToken(context.auth, installationId, {
 		repositoryNames: [name],
@@ -214,7 +227,10 @@ async function openPR({
 			dir: clone,
 		});
 		const prState = await findPR(octokit, {
-			owner, name, base, branch,
+			owner,
+			name,
+			base,
+			branch,
 		});
 		const tip = remoteTip(git, branch);
 		// the PR is always one commit, on the base's current tip, with the whole change, planned again from there
@@ -226,7 +242,9 @@ async function openPR({
 		const plan = await planFixes(kept, await checkRepo(kept), { files, categories: context.categories });
 		if (config !== null && plan.writes.length + plan.deletes.length > 0) {
 			plan.writes.unshift({
-				path: configFile, content: config, reason: 'kept',
+				path: configFile,
+				content: config,
+				reason: 'kept',
 			});
 		}
 		await planIgnored(plan, current);
@@ -234,7 +252,10 @@ async function openPR({
 		write(clone, plan);
 		// the default branch moved on since it was checked, and already has these changes
 		if (!commitChanges(git, {
-			base, message, paths: ['.github/workflows'].concat([configFile, packageJson].filter((file) => planned.has(file))), allowed: (file) => planned.has(file),
+			base,
+			message,
+			paths: ['.github/workflows'].concat([configFile, packageJson].filter((file) => planned.has(file))),
+			allowed: (file) => planned.has(file),
 		})) {
 			return `nothing to fix: ${code(base)} already matches`;
 		}
@@ -250,6 +271,7 @@ async function openPR({
 			identity,
 			title,
 			body: prBody(plan, context.link),
+			isPrivate: state.private,
 		});
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
@@ -258,7 +280,10 @@ async function openPR({
 
 /** @type {(job: Job) => Promise<string>} */
 async function describePR({
-	context, state, plan, base,
+	context,
+	state,
+	plan,
+	base,
 }) {
 	const token = await installationToken(context.auth, state.installationId, {
 		repositoryNames: [state.name],
@@ -266,7 +291,10 @@ async function describePR({
 	});
 	core.setSecret(token);
 	const prState = await findPR(octokitFor(token, state.private), {
-		owner: state.owner, name: state.name, base, branch,
+		owner: state.owner,
+		name: state.name,
+		base,
+		branch,
 	});
 	const pr = 'number' in prState ? `${GITHUB_SERVER_URL}/${state.repository}/pull/${prState.number}` : '';
 	const action = {
@@ -281,9 +309,14 @@ async function describePR({
  * Fixes one repository (or, in a dry run, says how it would), and returns what happened, as Markdown for one table cell.
  * @type {(context: Context, candidate: Candidate) => Promise<string>}
  */
-export async function fixRepo(context, {
-	state, result, files,
-}) {
+export async function fixRepo(
+	context,
+	{
+		state,
+		result,
+		files,
+	},
+) {
 	if (state.stateError) {
 		throw new Error(state.stateError);
 	}
@@ -301,7 +334,11 @@ export async function fixRepo(context, {
 		throw new Error('the repository has no default branch');
 	}
 	const outcome = await (context.dryRun ? describePR : openPR)({
-		context, state, plan, base, files,
+		context,
+		state,
+		plan,
+		base,
+		files,
 	});
 	return [outcome, ...skips(plan)].join('<br>');
 }

@@ -71,6 +71,9 @@ import nock from 'nock';
  *   gists?: Gist[],
  *   gistNoRawURL?: boolean,
  *   gistError?: ErrorReply,
+ *   minimized?: string[],
+ *   nodesError?: ErrorReply,
+ *   minimizeFails?: string[],
  * }} Scenario
  */
 /**
@@ -83,6 +86,7 @@ import nock from 'nock';
  * `repoInstallations`, keyed by `owner/name`, is the id of the installation on a repository (unspecified, 99), or an error;
  * a token asking for any of the `deniedPermissions` is refused, as one the installation hasn't been granted is.
  * Listing issues with a `creator` lists only theirs: the ones whose `user.login` it is.
+ * Looking comments up by node id, each of `minimized` is already hidden (`nodesError` fails that); hiding one of `minimizeFails` fails, as GitHub refuses a token without the permission it needs.
  */
 /** @typedef {{ method: string, path: string, body: any, authorization: string }} Recorded */
 
@@ -120,10 +124,13 @@ function isErrorReply(reply) {
 function accountReply(scenario, owner) {
 	const spec = scenario.accounts?.[owner];
 	if (!spec) {
-		return [200, {
-			data: { repository: null },
-			errors: [{ type: 'NOT_FOUND', path: ['repository'], message: `Could not resolve to a Repository with the name '${owner}/.github'.` }],
-		}];
+		return [
+			200,
+			{
+				data: { repository: null },
+				errors: [{ type: 'NOT_FOUND', path: ['repository'], message: `Could not resolve to a Repository with the name '${owner}/.github'.` }],
+			},
+		];
 	}
 	if (spec.error) {
 		return [spec.error.status, spec.error.body ?? { message: 'error' }];
@@ -141,6 +148,16 @@ function accountReply(scenario, owner) {
 function graphqlReply(scenario, variables) {
 	if ('owner' in variables) {
 		return accountReply(scenario, variables.owner);
+	}
+	if ('ids' in variables) {
+		return scenario.nodesError
+			? [scenario.nodesError.status, scenario.nodesError.body ?? { message: 'error' }]
+			: [200, { data: { nodes: /** @type {string[]} */ ([]).concat(variables.ids).map((id) => ({ id, isMinimized: (scenario.minimized ?? []).includes(id) })) } }];
+	}
+	if ('classifier' in variables) {
+		return (scenario.minimizeFails ?? []).includes(variables.id)
+			? [200, { data: { minimizeComment: null }, errors: [{ type: 'FORBIDDEN', message: `Resource not accessible by integration: ${variables.id}` }] }]
+			: [200, { data: { minimizeComment: { minimizedComment: { isMinimized: true } } } }];
 	}
 	const repos = scenario.repos ?? {};
 	/** @type {string[]} */
@@ -221,11 +238,14 @@ export function mockGitHub(scenario, record) {
 		const reply = scenario.installations ?? [];
 		return isErrorReply(reply) ? [reply.status, reply.body ?? { message: 'error' }] : [200, reply];
 	}));
-	app.reply(handle(() => [200, {
-		id: 1,
-		...scenario.appSlug === null ? {} : { slug: scenario.appSlug ?? 'fleet-bot' },
-		...scenario.appPermissions ? { permissions: scenario.appPermissions } : {},
-	}]));
+	app.reply(handle(() => [
+		200,
+		{
+			id: 1,
+			...scenario.appSlug === null ? {} : { slug: scenario.appSlug ?? 'fleet-bot' },
+			...scenario.appPermissions ? { permissions: scenario.appPermissions } : {},
+		},
+	]));
 	repoInstallation.reply(handle(({ path }) => {
 		const reply = scenario.repoInstallations?.[path.split('/').slice(2, 4).join('/')] ?? 99;
 		return isErrorReply(reply) ? [reply.status, reply.body ?? { message: 'Not Found' }] : [200, { id: reply }];
@@ -239,12 +259,15 @@ export function mockGitHub(scenario, record) {
 		if (Object.keys(body?.permissions ?? {}).some((name) => scenario.deniedPermissions?.includes(name))) {
 			return [422, { message: 'The permissions requested are not granted to this installation.' }];
 		}
-		return [201, {
-			token: `${tokenPrefix}${id}`,
-			expires_at: '2099-01-01T00:00:00Z', // eslint-disable-line camelcase
-			permissions: body?.permissions ?? {},
-			repository_selection: 'all', // eslint-disable-line camelcase
-		}];
+		return [
+			201,
+			{
+				token: `${tokenPrefix}${id}`,
+				expires_at: '2099-01-01T00:00:00Z', // eslint-disable-line camelcase
+				permissions: body?.permissions ?? {},
+				repository_selection: 'all', // eslint-disable-line camelcase
+			},
+		];
 	}));
 	installationRepos.reply(handle(({ authorization }) => {
 		const id = authorization.slice(authorization.indexOf(tokenPrefix) + tokenPrefix.length);
@@ -306,15 +329,18 @@ export function mockGitHub(scenario, record) {
 		if (scenario.gistError) {
 			return [scenario.gistError.status, scenario.gistError.body ?? { message: 'error' }];
 		}
-		return [200, {
-			id,
-			html_url: `https://gist.github.com/${id}`, // eslint-disable-line camelcase
-			// a file set to `null` is deleted
-			files: Object.fromEntries(Object.keys(body.files).filter((name) => body.files[name] !== null).map((name) => [
-				name,
-				{ filename: name, ...scenario.gistNoRawURL ? {} : { raw_url: `https://gist.githubusercontent.com/fleet-user/${id}/raw/0123abc/${name}` } }, // eslint-disable-line camelcase
-			])),
-		}];
+		return [
+			200,
+			{
+				id,
+				html_url: `https://gist.github.com/${id}`, // eslint-disable-line camelcase
+				// a file set to `null` is deleted
+				files: Object.fromEntries(Object.keys(body.files).filter((name) => body.files[name] !== null).map((name) => [
+					name,
+					{ filename: name, ...scenario.gistNoRawURL ? {} : { raw_url: `https://gist.githubusercontent.com/fleet-user/${id}/raw/0123abc/${name}` } }, // eslint-disable-line camelcase
+				])),
+			},
+		];
 	};
 	createGist.reply(handle(({ body }) => gistReply('new-gist', body)));
 	updateGist.reply(handle(({ path, body }) => gistReply(path.split('/')[2], body)));
