@@ -174,42 +174,50 @@ async function closeRanges(context, present, added) {
 		.sort((a, b) => a.decade - b.decade);
 	/** @type {Set<string>} */
 	const handled = new Set();
-	for (const [i, { name }] of shards.entries()) {
-		const next = shards[i + 1];
-		if (!added.has(name) && next && added.has(next.name)) {
-			const unknown = `so whether it overlaps the added \`${next.name}\` is unknown`;
-			/** @type {Resolved} */
-			let resolved;
-			if (context.ignored.has(name)) {
-				resolved = { name, why: `it’s ignored by \`ljharb-actions.json\`, so it’s left as it is, though it may overlap the added \`${next.name}\`` };
-			} else if (typeof context.files.get(name) === 'string') {
-				resolved = await resolve(context, name, true); // eslint-disable-line no-await-in-loop
-			} else {
-				resolved = { name, why: `it could not be read, ${unknown}` };
+	await shards.reduce(
+		async (previous, { name }, i) => {
+			await previous;
+			const next = shards[i + 1];
+			if (!added.has(name) && next && added.has(next.name)) {
+				const unknown = `so whether it overlaps the added \`${next.name}\` is unknown`;
+				/** @type {Resolved} */
+				let resolved;
+				if (context.ignored.has(name)) {
+					resolved = { name, why: `it’s ignored by \`ljharb-actions.json\`, so it’s left as it is, though it may overlap the added \`${next.name}\`` };
+				} else if (typeof context.files.get(name) === 'string') {
+					resolved = await resolve(context, name, true);
+				} else {
+					resolved = { name, why: `it could not be read, ${unknown}` };
+				}
+				// a file whose own range is unknown gets the one its place among the expected files implies, which ends where the added one starts
+				if ('why' in resolved || !resolved.own) {
+					add(context, resolved, 'range');
+					handled.add(name);
+				} else if (!semver.validRange(resolved.values.range)) {
+					add(context, { name, why: `its range, \`${resolved.values.range}\`, is not a valid semver range, ${unknown}` }, 'range');
+					handled.add(name);
+				} else if (isOpenEnded(resolved.values.range)) {
+					const upper = next.decade * 10;
+					add(
+						context,
+						{
+							name,
+							template: resolved.template,
+							values: {
+								...resolved.values,
+								range: closeRange(resolved.values.range, upper),
+								label: closeLabel(resolved.values.label, upper),
+							},
+							own: true,
+						},
+						'range',
+					);
+					handled.add(name);
+				}
 			}
-			// a file whose own range is unknown gets the one its place among the expected files implies, which ends where the added one starts
-			if ('why' in resolved || !resolved.own) {
-				add(context, resolved, 'range');
-				handled.add(name);
-			} else if (!semver.validRange(resolved.values.range)) {
-				add(context, { name, why: `its range, \`${resolved.values.range}\`, is not a valid semver range, ${unknown}` }, 'range');
-				handled.add(name);
-			} else if (isOpenEnded(resolved.values.range)) {
-				const upper = next.decade * 10;
-				add(context, {
-					name,
-					template: resolved.template,
-					values: {
-						...resolved.values,
-						range: closeRange(resolved.values.range, upper),
-						label: closeLabel(resolved.values.label, upper),
-					},
-					own: true,
-				}, 'range');
-				handled.add(name);
-			}
-		}
-	}
+		},
+		Promise.resolve(),
+	);
 	return handled;
 }
 
@@ -239,28 +247,36 @@ export async function planFixes(state, result, { files: names, categories } = {}
 		keep: state.config.keep ?? {},
 	};
 
-	for (const name of result.unexpected.filter(wanted('unexpected'))) {
+	result.unexpected.filter(wanted('unexpected')).forEach((name) => {
 		plan.deletes.push({ path: workflowPath(name), reason: 'unexpected' });
-	}
+	});
 
 	/** @type {Set<string>} */
 	const added = new Set();
-	for (const name of result.missing.filter(wanted('missing'))) {
-		const resolved = templateFor(name)
-			? await resolve(context, name, false) // eslint-disable-line no-await-in-loop
-			: { name, why: 'there is no template for it' };
-		add(context, resolved, 'missing');
-		if (!('why' in resolved)) {
-			added.add(name);
-		}
-	}
+	await result.missing.filter(wanted('missing')).reduce(
+		async (previous, name) => {
+			await previous;
+			const resolved = templateFor(name)
+				? await resolve(context, name, false)
+				: { name, why: 'there is no template for it' };
+			add(context, resolved, 'missing');
+			if (!('why' in resolved)) {
+				added.add(name);
+			}
+		},
+		Promise.resolve(),
+	);
 
 	// an unexpected file is never a predecessor, even when the filters keep it from being deleted
 	const handled = await closeRanges(context, [...files.keys()].filter((name) => !result.unexpected.includes(name)), added);
 
-	for (const { name } of result.drifted.filter((d) => wanted('drifted')(d.name) && !handled.has(d.name))) {
-		add(context, await resolve(context, name, true), 'drifted'); // eslint-disable-line no-await-in-loop
-	}
+	await result.drifted.filter((d) => wanted('drifted')(d.name) && !handled.has(d.name)).reduce(
+		async (previous, { name }) => {
+			await previous;
+			add(context, await resolve(context, name, true), 'drifted');
+		},
+		Promise.resolve(),
+	);
 
 	plan.writes.sort(byPath);
 	plan.deletes.sort(byPath);

@@ -7,11 +7,11 @@ import { mergeConfig, parseConfig } from '../../../fleet/lib/config.mjs';
 const file = '`some/file.json`';
 
 test('parseConfig: no config file', (t) => {
-	for (const text of [undefined, null]) {
+	[undefined, null].forEach((text) => {
 		const { config, error } = parseConfig(text, file);
 		t.equal(error, null, `${text}: no error`);
 		t.deepEqual(config, {}, `${text}: sets nothing`);
-	}
+	});
 
 	t.end();
 });
@@ -26,18 +26,18 @@ test('parseConfig: invalid JSON', (t) => {
 
 test('parseConfig: invalid JSON does not leak the file’s contents', (t) => {
 	const secret = 'ghp_SuperSecretToken0123456789abcdef';
-	for (const text of [
+	[
 		`{ "token": "${secret}" `,
 		`{ "token": ${secret} }`,
 		`${secret}`,
 		`{ "workflows": true, "${secret}" }`,
-	]) {
+	].forEach((text) => {
 		const { config, error } = parseConfig(text, file);
 		t.equal(error, '`some/file.json` is not valid JSON', `${JSON.stringify(text)}: only the label, and no parse details`);
 		t.notOk(String(error).includes('SuperSecret'), `${JSON.stringify(text)}: no part of the secret`);
 		t.notOk(String(error).includes('token'), `${JSON.stringify(text)}: no other part of the file`);
 		t.deepEqual(config, {}, `${JSON.stringify(text)}: sets nothing`);
-	}
+	});
 
 	t.end();
 });
@@ -58,11 +58,11 @@ test('parseConfig: a non-Error thrown while parsing', (t) => {
 });
 
 test('parseConfig: not an object', (t) => {
-	for (const text of ['null', '[]', '1', '"str"', 'true']) {
+	['null', '[]', '1', '"str"', 'true'].forEach((text) => {
 		const { config, error } = parseConfig(text, file);
 		t.equal(error, '`some/file.json` must contain a JSON object', `${text}: rejected`);
 		t.deepEqual(config, {}, `${text}: sets nothing`);
-	}
+	});
 
 	t.end();
 });
@@ -146,11 +146,11 @@ test('parseConfig: invalid workflows', (t) => {
 		['non-workflow file name', { 'README.md': true }],
 		['path', { 'sub/rebase.yml': true }],
 	];
-	for (const [label, workflows] of cases) {
+	cases.forEach(([label, workflows]) => {
 		const { config, error } = parseConfig(JSON.stringify({ workflows }), file);
 		t.equal(error, message, `${label}: rejected`);
 		t.deepEqual(config, {}, `${label}: leaves \`workflows\` unset`);
-	}
+	});
 
 	t.end();
 });
@@ -198,11 +198,11 @@ test('mergeConfig: precedence', (t) => {
 		],
 		['own `{}` (or `true`), account object: the account’s entries', accountObject, {}, accountObject],
 	];
-	for (const [label, account, own, expected] of cases) {
+	cases.forEach(([label, account, own, expected]) => {
 		const merged = mergeConfig(partial(account), partial(own));
 		t.ok(Object.hasOwn(merged, 'workflows'), `${label}: \`workflows\` is set`);
 		t.deepEqual(plain(merged.workflows), expected, label);
-	}
+	});
 
 	t.end();
 });
@@ -254,12 +254,12 @@ test('mergeConfig: fresh, null-prototype results, with no shared mutation', (t) 
 		['only the account set', account, {}],
 		['only own set', {}, own],
 	];
-	for (const [label, a, o] of cases) {
+	cases.forEach(([label, a, o]) => {
 		const result = mergeConfig(a, o);
 		t.ok(result.workflows && Object.getPrototypeOf(result.workflows) === null, `${label}: a null-prototype object`);
 		t.notEqual(result.workflows, a.workflows, `${label}: not the account’s object`);
 		t.notEqual(result.workflows, o.workflows, `${label}: not the own object`);
-	}
+	});
 
 	const first = mergeConfig({}, {});
 	if (first.workflows) {
@@ -287,18 +287,18 @@ test('parseConfig: `keep`', (t) => {
 	t.equal(Object.getPrototypeOf(config.keep), null, 'with a null prototype');
 	t.deepEqual(plainKeep(parseConfig('{ "keep": {} }', file).config.keep), {}, 'an empty object keeps nothing');
 
-	for (const [label, keep] of [
+	[
 		['not an object', '["skip-engines"]'],
 		['`null`', 'null'],
 		['a file name that isn’t a workflow’s', '{ "pretest": ["skip-engines"] }'],
 		['inputs that aren’t an array', '{ "node-pretest.yml": "skip-engines" }'],
 		['an input that isn’t a string', '{ "node-pretest.yml": [true] }'],
 		['an input that isn’t a name', '{ "node-pretest.yml": ["skip engines"] }'],
-	]) {
+	].forEach(([label, keep]) => {
 		const parsed = parseConfig(`{ "keep": ${keep} }`, file);
 		t.equal(parsed.error, '`some/file.json`: `keep` must be an object mapping workflow file names (`*.yml` or `*.yaml`) to arrays of input names', `${label}: an error`);
 		t.notOk('keep' in parsed.config, `${label}: sets nothing`);
-	}
+	});
 
 	const account = parseConfig('{ "keep": { "node-pretest.yml": ["skip-engines"] }, "workflows": false }', file, { account: true });
 	t.equal(account.error, '`some/file.json`: `keep` only applies to one repository, so it can only be set in its own `.github/ljharb-actions.json`', 'an account’s defaults can’t set it');

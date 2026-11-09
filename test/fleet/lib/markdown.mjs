@@ -88,7 +88,7 @@ test('split: a group’s text opens and closes each part it’s split across', (
 		'end',
 	], 600);
 	t.ok(parts.length > 4, `several parts (${parts.length})`);
-	for (const [i, part] of parts.entries()) {
+	parts.forEach((part, i) => {
 		const text = content(part);
 		const tableRows = text.split('\n').filter((l) => (/^\| \d+ \|/).test(l));
 		if (tableRows.length > 0) {
@@ -96,7 +96,7 @@ test('split: a group’s text opens and closes each part it’s split across', (
 		}
 		t.equal((text.match(/<details>/g) ?? []).length, (text.match(/<\/details>/g) ?? []).length, `part ${i + 1}: every <details> it opens, it closes`);
 		t.ok(part.length <= 600, `part ${i + 1} fits`);
-	}
+	});
 	t.equal(parts.map(content).join('\n').split('\n').filter((l) => (/^- line \d+/).test(l)).length, 30, 'every line of the group is in one part');
 
 	t.end();

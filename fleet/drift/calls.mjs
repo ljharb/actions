@@ -82,12 +82,12 @@ function entries(map, lines, {
 	const found = {
 		inputs: new Map(), comments: [], last: line, indent: null,
 	};
-	for (const { key, value } of map.items) {
+	const understood = map.items.every(({ key, value }) => {
 		const at = isString(key) && !key.anchor && !key.tag ? lineOf(Number(key.range?.[0])) : null;
 		const from = found.last + 1;
 		const between = lines.slice(from, at?.line);
 		if (!at || !isString(key) || !(/^ *$/).test(lines[at.line].slice(0, at.col)) || !between.every(isBlank)) {
-			return null;
+			return false;
 		}
 		const comments = between.map((_, i) => from + i).filter((j) => isComment(lines[j]));
 		found.last = lineOf(Math.max(Number(key.range?.[1]), Number(/** @type {Node} */ (value).range?.[1])) - 1).line; // eslint-disable-line no-extra-parens
@@ -96,8 +96,9 @@ function entries(map, lines, {
 		});
 		found.comments.push(...comments);
 		found.indent = at.col;
-	}
-	return found;
+		return true;
+	});
+	return understood ? found : null;
 }
 
 /**
@@ -165,7 +166,7 @@ export function read(original) {
 	const jobs = doc.get('jobs', true);
 	/** @type {Call[]} */
 	const calls = [];
-	for (const { key, value: job } of isMap(jobs) ? jobs.items : []) {
+	(isMap(jobs) ? jobs.items : []).forEach(({ key, value: job }) => {
 		const uses = isMap(job) ? job.items.find((pair) => isString(pair.key) && pair.key.value === 'uses') : null;
 		const file = isString(uses?.value) ? uses.value.value.match(usesValue)?.groups?.file : null;
 		if (isScalar(key) && uses && isString(uses.value) && file) {
@@ -181,7 +182,7 @@ export function read(original) {
 				}) : null,
 			});
 		}
-	}
+	});
 	return {
 		doc, lines, calls,
 	};

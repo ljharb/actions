@@ -58,7 +58,7 @@ function expectedReply(rows) {
 }
 
 test('fleet/merge: an empty queue is only read, and then there are no PRs to keep up to date', (t) => {
-	for (const [label, value] of [['no variable', undefined], ['an empty list', '[]'], ['nothing that’s an entry', '[1]']]) {
+	[['no variable', undefined], ['an empty list', '[]'], ['nothing that’s an entry', '[1]']].forEach(([label, value]) => {
 		const { status, stdout, requests } = run(t, typeof value === 'string' ? { queue: value } : {});
 		t.equal(status, 0, `${label}: exits successfully`);
 		t.match(stdout, /^the merge queue is empty$/m, `${label}: says so`);
@@ -74,7 +74,7 @@ test('fleet/merge: an empty queue is only read, and then there are no PRs to kee
 			`${label}: having only read the queue, and listed the App’s installations`,
 		);
 		t.deepEqual(requests[1].body, { repositories: ['actions'], permissions: { actions_variables: 'write' } }, `${label}: with a token that can only read and write this repository’s variables`); // eslint-disable-line camelcase
-	}
+	});
 	t.end();
 });
 
@@ -310,7 +310,7 @@ test('fleet/merge: a command that had already failed is 😕 once its last PR is
 test('fleet/merge: swapping a queued command’s reaction is only a best effort', (t) => {
 	/** @type {[CI, string][]} */
 	const cases = [[passing, 'done'], [failing, 'failed']];
-	for (const [ci, outcome] of cases) {
+	cases.forEach(([ci, outcome]) => {
 		const { status, stdout, requests } = run(t, {
 			queue: queue(entry('ljharb/d', 1, { commentId: 66 })),
 			prs: { 'ljharb/d#1': pr('ljharb/d', 1, fixBranch) },
@@ -320,7 +320,7 @@ test('fleet/merge: swapping a queued command’s reaction is only a best effort'
 		t.equal(status, 0, `${outcome}: exits successfully`);
 		t.match(stdout, new RegExp(`^::warning::could not mark a queued \`/merge\` as ${outcome}: could not be read \\(HTTP 500\\)$`, 'm'), `${outcome}: warning that it could not`);
 		t.equal(replies(requests).length, 1, `${outcome}: after replying`);
-	}
+	});
 	t.end();
 });
 

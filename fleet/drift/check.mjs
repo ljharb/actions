@@ -76,12 +76,12 @@ export function render(text, values) {
 export function guessValues(text, actual) {
 	/** @type {Record<string, string>} */
 	const values = {};
-	for (const line of text.split('\n').filter((l) => hasPlaceholder.test(l))) {
+	text.split('\n').filter((l) => hasPlaceholder.test(l)).forEach((line) => {
 		const match = actual.match(compile(line, 'm'));
 		Object.entries(match?.groups ?? {}).forEach(([name, value]) => {
 			values[name] ??= value;
 		});
-	}
+	});
 	return values;
 }
 
@@ -175,7 +175,7 @@ export async function checkRepo(state) {
 	const overrides = state.config.workflows;
 	const names = [...new Set([...Object.keys(expected), ...Object.keys(overrides)])].sort();
 
-	for (const name of names) {
+	names.forEach((name) => {
 		const entry = Object.hasOwn(expected, name) ? expected[name] : null;
 		const required = Object.hasOwn(overrides, name) ? overrides[name] : entry?.required ?? null;
 		const checked = !Object.hasOwn(overrides, name) || overrides[name];
@@ -203,7 +203,7 @@ export async function checkRepo(state) {
 				result.unreadable.push(name);
 			}
 		}
-	}
+	});
 
 	return result.missing.length > 0
 		|| result.unexpected.length > 0

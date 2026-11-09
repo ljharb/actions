@@ -44,18 +44,18 @@ export function tempDir(t, prefix) {
 export function isolateProcessGit(t) {
 	/** @type {Record<string, string | undefined>} */
 	const saved = {};
-	for (const [key, value] of Object.entries(gitIsolation)) {
+	Object.entries(gitIsolation).forEach(([key, value]) => {
 		saved[key] = process.env[key];
 		process.env[key] = value;
-	}
+	});
 	t.teardown(() => {
-		for (const [key, value] of Object.entries(saved)) {
+		Object.entries(saved).forEach(([key, value]) => {
 			if (typeof value === 'undefined') {
 				delete process.env[key];
 			} else {
 				process.env[key] = value;
 			}
-		}
+		});
 	});
 }
 
@@ -81,14 +81,14 @@ export function git(cwd, args, who = fixture) {
 
 /** @type {(dir: string, files: Record<string, string | null>) => void} */
 export function writeFiles(dir, files) {
-	for (const [file, content] of Object.entries(files)) {
+	Object.entries(files).forEach(([file, content]) => {
 		if (content === null) {
 			rmSync(path.join(dir, file), { force: true });
 		} else {
 			mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
 			writeFileSync(path.join(dir, file), content);
 		}
-	}
+	});
 }
 
 /**

@@ -89,7 +89,7 @@ export function parseCommand(body) {
 	};
 	/** @type {string[]} */
 	const unknown = [];
-	for (const raw of tokens) {
+	tokens.forEach((raw) => {
 		const token = raw.toLowerCase();
 		// a category can't also be an account, since accounts named like one can still be matched by their repositories
 		if (isCategory(token)) {
@@ -103,7 +103,7 @@ export function parseCommand(body) {
 		} else {
 			unknown.push(raw);
 		}
-	}
+	});
 	if (unknown.length > 0) {
 		return { type: 'error', message: `Unknown ${unknown.length === 1 ? 'filter' : 'filters'}: ${unknown.map(quote).join(', ')}.` };
 	}

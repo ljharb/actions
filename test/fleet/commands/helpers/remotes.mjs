@@ -34,7 +34,7 @@ export function makeRemotes(t, repos) {
 	/** @type {(repository: string) => string} */
 	const work = (repository) => path.join(root, 'work', repository);
 
-	for (const [repository, files] of Object.entries(repos)) {
+	Object.entries(repos).forEach(([repository, files]) => {
 		mkdirSync(remote(repository), { recursive: true });
 		git(remote(repository), ['init', '--quiet', '--bare', '--initial-branch=main']);
 		mkdirSync(work(repository), { recursive: true });
@@ -44,7 +44,7 @@ export function makeRemotes(t, repos) {
 		git(work(repository), ['add', '--all']);
 		git(work(repository), ['commit', '--quiet', '--message', 'initial']);
 		git(work(repository), ['push', '--quiet', 'origin', 'HEAD:refs/heads/main']);
-	}
+	});
 
 	return {
 		serverURL,
@@ -54,11 +54,11 @@ export function makeRemotes(t, repos) {
 			git(dir, ['switch', '--quiet', '--force-create', branch, `origin/${from}`]);
 			writeFiles(dir, files);
 			// each a symbolic link, to its value
-			for (const [link, to] of Object.entries(links)) {
+			Object.entries(links).forEach(([link, to]) => {
 				rmSync(path.join(dir, link), { recursive: true, force: true });
 				mkdirSync(path.dirname(path.join(dir, link)), { recursive: true });
 				symlinkSync(to, path.join(dir, link));
-			}
+			});
 			git(dir, ['add', '--all']);
 			git(dir, ['commit', '--quiet', '--message', 'change'], who);
 			git(dir, ['push', '--quiet', 'origin', `HEAD:refs/heads/${branch}`]);

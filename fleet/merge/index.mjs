@@ -166,12 +166,12 @@ async function check(app, accounts, entry) {
 function replies(results) {
 	/** @type {Map<number, string[]>} */
 	const rows = new Map();
-	for (const { entry, text } of results) {
+	results.forEach(({ entry, text }) => {
 		if (text) {
 			const comment = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/${entry.issueNumber}#issuecomment-${entry.commentId}`;
 			rows.set(entry.issueNumber, [...rows.get(entry.issueNumber) ?? [], `| ${code(entry.repository)} | ${text} (queued by [this comment](${comment})) |`]);
 		}
-	}
+	});
 	const table = { open: '| Repository | Outcome |\n| --- | --- |', close: '' };
 	return new Map([...rows].map(([issueNumber, lines]) => [
 		issueNumber,
@@ -225,27 +225,39 @@ async function report({ auth, bot }, dropped, { finished, failedCommands }) {
 	}
 	const [owner, repo] = GITHUB_REPOSITORY.split('/');
 	const octokit = await issueOctokit(auth, owner, repo);
-	for (const [issueNumber, parts] of bodies) {
-		for (const body of parts) {
-			await octokit.rest.issues.createComment({ // eslint-disable-line no-await-in-loop
+	await Array.from(bodies).reduce(
+		async (previous, [issueNumber, parts]) => {
+			await previous;
+			await parts.reduce(
+				async (previousPart, body) => {
+					await previousPart;
+					await octokit.rest.issues.createComment({
+						owner,
+						repo,
+						issue_number: issueNumber, // eslint-disable-line camelcase
+						body,
+					});
+				},
+				Promise.resolve(),
+			);
+		},
+		Promise.resolve(),
+	);
+	await core.summary.addRaw([...bodies.values()].flat().join('\n\n---\n\n')).write();
+	await finished.reduce(
+		async (previous, commentId) => {
+			await previous;
+			await finishQueued({
+				octokit,
 				owner,
 				repo,
-				issue_number: issueNumber, // eslint-disable-line camelcase
-				body,
+				commentId,
+				bot: await bot(),
+				ok: !failedCommands.has(commentId),
 			});
-		}
-	}
-	await core.summary.addRaw([...bodies.values()].flat().join('\n\n---\n\n')).write();
-	for (const commentId of finished) {
-		await finishQueued({ // eslint-disable-line no-await-in-loop
-			octokit,
-			owner,
-			repo,
-			commentId,
-			bot: await bot(), // eslint-disable-line no-await-in-loop
-			ok: !failedCommands.has(commentId),
-		});
-	}
+		},
+		Promise.resolve(),
+	);
 }
 
 /**
@@ -264,9 +276,13 @@ async function runQueue(app, accounts) {
 	/** @type {Map<Entry, Result>} */
 	const results = new Map();
 	// one at a time, private repositories last, as the commands do
-	for (const entry of [...entries.filter((e) => !e.private), ...entries.filter((e) => e.private)]) {
-		results.set(entry, await check(app, accounts, entry)); // eslint-disable-line no-await-in-loop
-	}
+	await entries.filter((e) => !e.private).concat(entries.filter((e) => e.private)).reduce(
+		async (previous, entry) => {
+			await previous;
+			results.set(entry, await check(app, accounts, entry));
+		},
+		Promise.resolve(),
+	);
 	const all = entries.map((e) => /** @type {Result} */ (results.get(e)));
 	const {
 		remaining,

@@ -57,33 +57,33 @@ export function declaredInputs(file) {
 export function stripKnownInputs(actual, template) {
 	/** @type {Map<string, Set<string>>} */
 	const templated = new Map();
-	for (const call of read(template)?.calls ?? []) {
+	(read(template)?.calls ?? []).forEach((call) => {
 		templated.set(call.file, new Set([...templated.get(call.file) ?? [], ...call.with?.inputs.keys() ?? []]));
-	}
+	});
 	const parsed = read(actual);
 	if (!parsed) {
 		return actual;
 	}
 	/** @type {Set<number>} */
 	const dropped = new Set();
-	for (const call of parsed.calls) {
+	parsed.calls.forEach((call) => {
 		const known = declaredInputs(call.file);
 		const own = templated.get(call.file) ?? new Set();
 		if (call.with?.understood) {
 			const removable = [...call.with.inputs].filter(([key, { scalar }]) => scalar && known.has(key) && !own.has(key));
-			for (const [, { start, end }] of removable) {
+			removable.forEach(([, { start, end }]) => {
 				for (let i = start; i < end; i += 1) {
 					dropped.add(i);
 				}
-			}
-			for (const j of call.with.comments) {
+			});
+			call.with.comments.forEach((j) => {
 				dropped.add(j);
-			}
+			});
 			if (removable.length === call.with.inputs.size && removable.length + call.with.comments.length > 0) {
 				dropped.add(call.with.line);
 			}
 		}
-	}
+	});
 	const stripped = parsed.lines.filter((_, i) => !dropped.has(i)).join('\n');
 	return read(stripped) ? endingsOf(stripped, actual) : actual;
 }
@@ -101,13 +101,13 @@ function passed(text) {
 	const inputs = new Map();
 	/** @type {Map<string, string>} */
 	const unread = new Map();
-	for (const call of parsed.calls) {
+	parsed.calls.forEach((call) => {
 		const understood = !call.with || call.with.understood;
 		inputs.set(call.job, { file: call.file, inputs: new Map(understood ? [...call.with?.inputs ?? []].map(([key, { start, end }]) => [key, parsed.lines.slice(start, end)]) : []) });
 		if (!understood) {
 			unread.set(call.job, call.file);
 		}
-	}
+	});
 	return { inputs, unread };
 }
 
@@ -144,14 +144,16 @@ function move(from, to) {
 	const where = counterparts(from, to);
 	/** @type {Moved} */
 	const result = { moved: new Map(), ambiguous: new Map() };
-	for (const [job, { file, inputs }] of from) {
+	/** @type {(passing: string[], key: string) => boolean} */
+	const passedBy = (passing, key) => passing.some((c) => to.get(c)?.inputs.has(key));
+	from.forEach(({ file, inputs }, job) => {
 		const { job: target, candidates } = /** @type {{ job: string | null, candidates: string[] }} */ (where.get(job)); // eslint-disable-line no-extra-parens
 		const passing = target === null ? candidates : [target];
-		const missing = new Map([...inputs].filter(([key]) => !passing.some((c) => to.get(c)?.inputs.has(key))));
+		const missing = new Map([...inputs].filter(([key]) => !passedBy(passing, key)));
 		if (missing.size > 0 && passing.length > 0) {
 			(target === null ? result.ambiguous : result.moved).set(target ?? job, { file, inputs: missing });
 		}
-	}
+	});
 	return result;
 }
 
@@ -180,13 +182,13 @@ export function notPassed(text, inputs) {
 	const now = inputsOf(text);
 	/** @type {Inputs} */
 	const missing = new Map();
-	for (const [job, { file, inputs: wanted }] of inputs) {
+	inputs.forEach(({ file, inputs: wanted }, job) => {
 		const call = now.get(job);
 		const left = new Map([...wanted].filter(([key]) => call?.file !== file || !call.inputs.has(key)));
 		if (left.size > 0) {
 			missing.set(job, { file, inputs: left });
 		}
-	}
+	});
 	return missing;
 }
 
@@ -234,14 +236,14 @@ function changedOtherwise(before, after, added) {
 	const without = /** @type {Map<unknown, unknown>} */ (after.doc.toJS({ mapAsMap: true })); // eslint-disable-line no-extra-parens
 	// there's a call in it, so its `jobs` is a mapping
 	const jobs = /** @type {Map<unknown, unknown>} */ (without.get('jobs')); // eslint-disable-line no-extra-parens
-	for (const [job, keys] of added) {
+	const unexpected = Array.from(added).find(([job, keys]) => {
 		const had = /** @type {Call} */ (before.calls.find((call) => call.job === job)); // eslint-disable-line no-extra-parens
 		const found = [...jobs].filter(([id]) => String(id) === job).map(([, value]) => value);
 		const map = found.length === 1 && found[0] instanceof Map ? found[0] : null;
 		const inputs = map?.get('with');
 		const expected = new Set([...had.with?.inputs.keys() ?? [], ...keys]);
 		if (!(inputs instanceof Map) || inputs.size !== expected.size || ![...inputs.keys()].every((key) => expected.has(key))) {
-			return `job “${job}”’s \`with:\` wouldn’t have exactly the inputs it has, and those added`;
+			return true;
 		}
 		keys.forEach((key) => inputs.delete(key));
 		if (!had.with) {
@@ -249,6 +251,11 @@ function changedOtherwise(before, after, added) {
 		} else if (inputs.size === 0 && had.with.inputs.size === 0) {
 			/** @type {Map<unknown, unknown>} */ (map).set('with', null); // eslint-disable-line no-extra-parens
 		}
+		return false;
+	});
+	if (unexpected) {
+		const [job] = unexpected;
+		return `job “${job}”’s \`with:\` wouldn’t have exactly the inputs it has, and those added`;
 	}
 	return isDeepStrictEqual(without, before.doc.toJS({ mapAsMap: true })) ? null : 'adding them would change more of the file than those inputs';
 }
@@ -267,15 +274,22 @@ export function addInputs(text, inputs) {
 	/** @type {Map<string, string[]>} */
 	const added = new Map();
 	// from the last call up, so that each insertion leaves the earlier calls' line numbers alone
-	for (const call of [...parsed.calls].reverse()) {
+	/** @type {{ why?: string }} */
+	const refused = {};
+	parsed.calls.slice().reverse().some((call) => {
 		const passing = inputs.get(call.job);
 		const wanted = [...passing?.file === call.file ? passing.inputs : []].filter(([key]) => !call.with?.inputs.has(key));
 		if (wanted.length > 0 && call.with?.understood !== false) {
-			for (const [key, value] of wanted) {
+			const isMalformed = wanted.some(([key, value]) => {
 				const why = malformed(key, value);
 				if (why) {
-					return { text, why: `job “${call.job}”’s ${key} can’t be added to ${call.file}: ${why}` };
+					refused.why = `job “${call.job}”’s ${key} can’t be added to ${call.file}: ${why}`;
+					return true;
 				}
+				return false;
+			});
+			if (isMalformed) {
+				return true;
 			}
 			const lined = wanted.flatMap(([, value]) => reindent(value, call.with?.indent ?? call.indent + 2));
 			if (call.with) {
@@ -285,6 +299,10 @@ export function addInputs(text, inputs) {
 			}
 			added.set(call.job, [...added.get(call.job) ?? [], ...wanted.map(([key]) => key)]);
 		}
+		return false;
+	});
+	if (typeof refused.why === 'string') {
+		return { text, why: refused.why };
 	}
 	const result = lines.join('\n');
 	const missing = notPassed(result, inputs);

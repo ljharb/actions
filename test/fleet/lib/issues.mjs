@@ -68,7 +68,7 @@ test('issueOctokit', async (t) => {
 		['not installed on the repository', { repoInstallations: { 'o/r': { status: 404 } } }, ' (HTTP 404)'],
 		['an error without an HTTP status', { repoInstallations: { 'o/r': /** @type {any} */ ('not an id') } }, ''], // eslint-disable-line no-extra-parens
 	];
-	for (const [label, scenario, status] of failures) {
+	failures.forEach(([label, scenario, status]) => {
 		t.test(label, async (st) => {
 			setup(st, scenario);
 			await issueOctokit(appAuth('1', privateKey()), 'o', 'r').then(
@@ -77,7 +77,7 @@ test('issueOctokit', async (t) => {
 			);
 			st.end();
 		});
-	}
+	});
 
 	t.end();
 });

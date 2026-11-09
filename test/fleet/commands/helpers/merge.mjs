@@ -202,9 +202,9 @@ export function mockMerge(scenario, record) {
 		[scope.get(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions(?:\?.*)?$/), handle(({ url, path }) => (scenario.eyesError ? errorReply(scenario.eyesError) : paged(url, scenario.eyes?.[path.split('/')[6]] ?? [])))],
 	];
 
-	for (const [interceptor, handler] of routes) {
+	routes.forEach(([interceptor, handler]) => {
 		interceptor.reply(/** @type {any} */ (handler)); // eslint-disable-line no-extra-parens
-	}
+	});
 
 	return () => {
 		routes.forEach(([interceptor]) => nock.removeInterceptor(interceptor));

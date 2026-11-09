@@ -5,7 +5,7 @@ import { evalModule, moduleURL } from './helpers/child.mjs';
 import { versionFixture } from './helpers/versions.mjs';
 
 test('isShard', (t) => {
-	for (const name of [
+	[
 		'node.yml',
 		'node-aught.yml',
 		'node-tens.yml',
@@ -13,10 +13,10 @@ test('isShard', (t) => {
 		'node-nineties.yml',
 		'node-100s.yml',
 		'node-250s.yml',
-	]) {
+	].forEach((name) => {
 		t.ok(isShard(name), `${name} is a node test shard`);
-	}
-	for (const name of [
+	});
+	[
 		'node.yaml',
 		'node-pretest.yml',
 		'node-tests.yml',
@@ -25,9 +25,9 @@ test('isShard', (t) => {
 		'xnode.yml',
 		'node.yml.bak',
 		'rebase.yml',
-	]) {
+	].forEach((name) => {
 		t.notOk(isShard(name), `${name} is not a node test shard`);
-	}
+	});
 
 	t.end();
 });

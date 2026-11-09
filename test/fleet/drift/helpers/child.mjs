@@ -27,11 +27,11 @@ export function moduleURL(relative) {
 function baseEnv() {
 	/** @type {Record<string, string>} */
 	const env = {};
-	for (const [k, v] of Object.entries(process.env)) {
+	Object.entries(process.env).forEach(([k, v]) => {
 		if (typeof v === 'string' && !(/^(?:GITHUB_|INPUT_|RUNNER_|ACTIONS_)/).test(k)) {
 			env[k] = v;
 		}
-	}
+	});
 	return env;
 }
 

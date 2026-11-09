@@ -71,14 +71,14 @@ test('parseCommand: errors', (t) => {
 test('legend', (t) => {
 	const text = legend();
 	t.ok(text.startsWith('### Commands\n'), 'a section of its own');
-	for (const example of ['`/fix <filters>`', '`/dry-run fix <filters>`', '`fleet/workflows`', '`missing`', '`drifted`', '`unexpected`', 'write access']) {
+	['`/fix <filters>`', '`/dry-run fix <filters>`', '`fleet/workflows`', '`missing`', '`drifted`', '`unexpected`', 'write access'].forEach((example) => {
 		t.ok(text.includes(example), `mentions ${example}`);
-	}
+	});
 	const examples = text.match(/^- `\/(?:dry-run )?fix [^`<]+`/gm) ?? [];
 	t.equal(examples.length, 3, 'with three examples');
-	for (const example of examples) {
+	examples.forEach((example) => {
 		t.equal(parseCommand(example.slice(3, -1)).type, 'fix', `${example.slice(2)} is a valid command`);
-	}
+	});
 	t.end();
 });
 
@@ -107,13 +107,13 @@ test('parseCommand: `/merge`', (t) => {
 
 test('legend: `/merge`', (t) => {
 	const text = legend();
-	for (const example of ['`/merge <filters>`', '`/dry-run merge <filters>`', '`actions-lock/relock`', 'queued']) {
+	['`/merge <filters>`', '`/dry-run merge <filters>`', '`actions-lock/relock`', 'queued'].forEach((example) => {
 		t.ok(text.includes(example), `mentions ${example}`);
-	}
+	});
 	const examples = text.match(/^- `\/(?:dry-run )?merge [^`<]+`/gm) ?? [];
 	t.equal(examples.length, 1, 'with an example');
-	for (const example of examples) {
+	examples.forEach((example) => {
 		t.equal(parseCommand(example.slice(3, -1)).type, 'merge', `${example.slice(2)} is a valid command`);
-	}
+	});
 	t.end();
 });

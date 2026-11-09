@@ -154,11 +154,11 @@ export function readOutputs(sandbox) {
 	/** @type {Record<string, string>} */
 	const outputs = {};
 	const re = /^(?<name>[^\n<]+)<<(?<delimiter>ghadelimiter_[^\n]+)\n(?<value>[\s\S]*?)\n\k<delimiter>$/gm;
-	for (const { groups } of contents.matchAll(re)) {
+	Array.from(contents.matchAll(re)).forEach(({ groups }) => {
 		if (groups) {
 			outputs[groups.name] = groups.value;
 		}
-	}
+	});
 	return outputs;
 }
 
@@ -183,11 +183,11 @@ export function runAction(script, sandbox, env = {}) {
 	if (process.env.NODE_V8_COVERAGE) {
 		childEnv.NODE_V8_COVERAGE = process.env.NODE_V8_COVERAGE;
 	}
-	for (const [key, value] of Object.entries(env)) {
+	Object.entries(env).forEach(([key, value]) => {
 		if (typeof value === 'string') {
 			childEnv[key] = value;
 		}
-	}
+	});
 
 	const result = spawnSync(
 		process.execPath,

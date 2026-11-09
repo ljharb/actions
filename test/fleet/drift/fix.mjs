@@ -289,9 +289,13 @@ test('planFixes: node test files per `engines.node`', (t) => {
 
 		const cases = ${JSON.stringify(states)};
 		const plans = [];
-		for (const { state, files, categories } of cases) {
-			plans.push(await planFixes(state, await checkRepo(state), { files: files && new Set(files), categories: categories && new Set(categories) }));
-		}
+		await cases.reduce(
+			async (previous, { state, files, categories }) => {
+				await previous;
+				plans.push(await planFixes(state, await checkRepo(state), { files: files && new Set(files), categories: categories && new Set(categories) }));
+			},
+			Promise.resolve(),
+		);
 		writeFileSync(process.env.FLEET_TEST_OUT, JSON.stringify(plans));
 	`, { versions: versionFixture() });
 	t.equal(status, 0, 'the child succeeds');

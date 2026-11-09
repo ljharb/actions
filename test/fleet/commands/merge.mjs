@@ -81,18 +81,18 @@ const prs = {
 };
 
 test('fleet/commands: `/merge` rejects filters it can’t use, and anything unknown', (t) => {
-	for (const [line, message] of [
+	[
 		['/merge ljharb rebase.yml', '`/merge` takes only repository (`owner/name`) and account (`owner`) filters, not `rebase.yml`.'],
 		['/dry-run merge missing', '`/dry-run merge` takes only repository (`owner/name`) and account (`owner`) filters, not `missing`.'],
 		['/merge', '`/merge` needs at least one filter: every repository at once is too broad.'],
 		['/merge @x', 'Unknown filter: `@x`.'],
-	]) {
+	].forEach(([line, message]) => {
 		const { status, requests } = command(t, line);
 		t.equal(status, 0, `${line}: exits successfully`);
 		t.deepEqual(replies(requests), [`${message} Nothing was done.\n\n${legend()}`], `${line}: says why, with the legend`);
 		t.deepEqual(reactions(requests), ['+eyes', '+confused', '-501'], `${line}: and swaps its 👀 for 😕`);
 		t.deepEqual(matching(requests, 'GET', /^\/app\/installations/), [], `${line}: without discovering anything`);
-	}
+	});
 	t.end();
 });
 
@@ -383,7 +383,7 @@ test('fleet/commands: `/merge` queues what fits, and its queued PRs remember tha
 test('fleet/commands: `/merge` without the Variables permission fails, naming it', (t) => {
 	/** @type {[string, Record<string, Record<string, any>[]>][]} */
 	const cases = [['something to queue', { 'ljharb/a': [pr('ljharb/a', 2, relockBranch)] }], ['nothing to queue', {}]];
-	for (const [label, openPulls] of cases) {
+	cases.forEach(([label, openPulls]) => {
 		const { status, stdout, requests } = runScript(t, script, {
 			event: { issue: report, comment: comment('/merge ljharb') },
 			github: { ...github(['a']), deniedPermissions: ['actions_variables'] },
@@ -395,7 +395,7 @@ test('fleet/commands: `/merge` without the Variables permission fails, naming it
 		if (label === 'something to queue') {
 			t.deepEqual(replies(requests), [expectedReply('/merge ljharb', [`| \`ljharb/a\` | not queued ${url(2)}: the merge queue could not be written |`], false)], `${label}: the reply says it wasn’t queued`);
 		}
-	}
+	});
 	t.end();
 });
 

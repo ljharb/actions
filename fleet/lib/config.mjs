@@ -35,7 +35,7 @@ function keepable(keep) {
 	const valid = Object.create(null);
 	/** @type {string[]} */
 	const errors = [];
-	for (const [name, inputs] of Object.entries(keep)) {
+	Object.entries(keep).forEach(([name, inputs]) => {
 		const template = templateFor(name);
 		const called = template === null ? [] : [...calledWorkflows(loadTemplate(template))];
 		if (called.length === 0) {
@@ -48,7 +48,7 @@ function keepable(keep) {
 			}
 			valid[name] = inputs.filter((input) => declared.has(input));
 		}
-	}
+	});
 	return { keep: valid, errors };
 }
 

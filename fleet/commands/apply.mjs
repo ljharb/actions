@@ -151,16 +151,16 @@ function target(dir, file) {
 
 /** @type {(dir: string, plan: Plan) => void} */
 function write(dir, { writes, deletes }) {
-	for (const { path: file, content } of writes) {
+	writes.forEach(({ path: file, content }) => {
 		const to = target(dir, file);
 		mkdirSync(path.dirname(to), { recursive: true });
 		// the file itself may be a symbolic link too: it's replaced, not written through, so the PR turns it into a regular file
 		rmSync(to, { force: true });
 		writeFileSync(to, content);
-	}
-	for (const { path: file } of deletes) {
+	});
+	deletes.forEach(({ path: file }) => {
 		rmSync(target(dir, file), { force: true });
-	}
+	});
 }
 
 /**

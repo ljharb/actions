@@ -33,13 +33,13 @@ function overrideEnv(names) {
 	/** @type {Map<string, string | undefined>} */
 	const originals = new Map(names.map((name) => [name, process.env[name]]));
 	return () => {
-		for (const [name, value] of originals) {
+		originals.forEach((value, name) => {
 			if (typeof value === 'string') {
 				process.env[name] = value;
 			} else {
 				delete process.env[name];
 			}
-		}
+		});
 	};
 }
 
@@ -97,15 +97,15 @@ test('placeholders', (t) => {
 });
 
 test('templateFor', (t) => {
-	for (const name of ['rebase.yml', 'node-pretest.yml', 'require-allow-edits.yml']) {
+	['rebase.yml', 'node-pretest.yml', 'require-allow-edits.yml'].forEach((name) => {
 		t.equal(templateFor(name), name, `${name} has its own template`);
-	}
-	for (const name of ['node.yml', 'node-aught.yml', 'node-tens.yml', 'node-twenties.yml', 'node-100s.yml']) {
+	});
+	['node.yml', 'node-aught.yml', 'node-tens.yml', 'node-twenties.yml', 'node-100s.yml'].forEach((name) => {
 		t.equal(templateFor(name), 'node.yml', `${name}, a node test shard, has the node template`);
-	}
-	for (const name of ['custom.yml', 'node-tests.yml', 'node.yaml', 'toString', '__proto__', 'hasOwnProperty']) {
+	});
+	['custom.yml', 'node-tests.yml', 'node.yaml', 'toString', '__proto__', 'hasOwnProperty'].forEach((name) => {
 		t.equal(templateFor(name), null, `${name} has no template`);
-	}
+	});
 
 	t.end();
 });
@@ -385,9 +385,13 @@ test('checkRepo: config and package.json errors', async (t) => {
 		'both errors, joined',
 	);
 
-	for (const packageJson of ['null', '[]', '{ "engines": null }', '{ "engines": { "node": 4 } }', '{ "engines": { "npm": ">= 4" } }']) {
-		t.equal(await checkRepo(repoState({ packageJson })), null, `${packageJson}: no \`engines.node\` string, so no error and no node expectations`); // eslint-disable-line no-await-in-loop
-	}
+	await ['null', '[]', '{ "engines": null }', '{ "engines": { "node": 4 } }', '{ "engines": { "npm": ">= 4" } }'].reduce(
+		async (previous, packageJson) => {
+			await previous;
+			t.equal(await checkRepo(repoState({ packageJson })), null, `${packageJson}: no \`engines.node\` string, so no error and no node expectations`);
+		},
+		Promise.resolve(),
+	);
 
 	t.end();
 });
@@ -438,9 +442,13 @@ test('checkRepo: node workflows per `engines.node`', (t) => {
 
 		const states = ${JSON.stringify(cases.map(([, s]) => s))};
 		const results = [];
-		for (const s of states) {
-			results.push(await checkRepo(s));
-		}
+		await states.reduce(
+			async (previous, s) => {
+				await previous;
+				results.push(await checkRepo(s));
+			},
+			Promise.resolve(),
+		);
 		writeFileSync(process.env.FLEET_TEST_OUT, JSON.stringify(results));
 	`, { versions: versionFixture() });
 	t.equal(status, 0, 'the child succeeds');

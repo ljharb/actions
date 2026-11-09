@@ -80,11 +80,11 @@ function parseOutputFile(file) {
 	/** @type {Record<string, string>} */
 	const outputs = {};
 	const re = /^(?<name>[^\n<]+)<<(?<delimiter>ghadelimiter_[^\n]+)\n(?<value>[\s\S]*?)\n\k<delimiter>$/gm;
-	for (const { groups } of content.matchAll(re)) {
+	Array.from(content.matchAll(re)).forEach(({ groups }) => {
 		// eslint-disable-next-line no-extra-parens
 		const { name, value } = /** @type {Record<string, string>} */ (groups);
 		outputs[name] = value;
-	}
+	});
 	return outputs;
 }
 

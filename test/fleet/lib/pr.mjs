@@ -68,7 +68,7 @@ function mockAPI(t, handlers) {
 	/** @type {Recorded[]} */
 	const requests = [];
 	const scope = nock('https://api.github.com').persist();
-	for (const [method, pattern, handler] of handlers) {
+	handlers.forEach(([method, pattern, handler]) => {
 		scope.intercept(pattern, method).reply(/** @type {any} */ (async (/** @type {Request} */ req) => {
 			const url = new URL(req.url);
 			const text = await req.text();
@@ -82,7 +82,7 @@ function mockAPI(t, handlers) {
 			});
 			return handler({ path: requestPath, body });
 		}));
-	}
+	});
 	t.teardown(() => {
 		nock.cleanAll();
 		// nock's net-connect block is process-wide; lift it so later test files in this tape process are unaffected
@@ -418,7 +418,7 @@ test('findPR', async (t) => {
 			{ mode: 'reopen', number: 5, head: '123' },
 		],
 	];
-	for (const [label, prs, expected] of cases) {
+	cases.forEach(([label, prs, expected]) => {
 		t.test(label, async (st) => {
 			const requests = mockAPI(st, [['GET', /^\/repos\/o\/r\/pulls/, () => [200, prs]]]);
 
@@ -447,7 +447,7 @@ test('findPR', async (t) => {
 			);
 			st.end();
 		});
-	}
+	});
 	t.end();
 });
 
@@ -1179,24 +1179,28 @@ test('commentOnce', async (t) => {
 		['the marker, by the bot, but not on its first line', [{ id: 1, user: { login: bot.name }, body: `quoting\n${marker}\nsaid` }], true],
 		['the marker, by the bot', [{ id: 1, user: { login: bot.name }, body: `${marker}\nsaid` }], false],
 	];
-	for (const [label, comments, expected] of cases) {
-		const requests = mockAPI(t, [
-			['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [200, comments]],
-			['POST', /^\/repos\/o\/r\/issues\/3\/comments$/, () => [201, {}]],
-		]);
-		const commented = await commentOnce({ // eslint-disable-line no-await-in-loop
-			octokit: getOctokit('ghs_test'),
-			owner,
-			name,
-			number: 3,
-			author: bot.name,
-			marker,
-			body: 'the body',
-		});
-		t.equal(commented, expected, `${label}: ${expected ? 'comments' : 'says nothing'}`);
-		t.deepEqual(requests.filter((r) => r.method === 'POST').map((r) => r.body), expected ? [{ body: `${marker}\nthe body` }] : [], `${label}: with the marker`);
-		nock.cleanAll();
-	}
+	await cases.reduce(
+		async (previous, [label, comments, expected]) => {
+			await previous;
+			const requests = mockAPI(t, [
+				['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [200, comments]],
+				['POST', /^\/repos\/o\/r\/issues\/3\/comments$/, () => [201, {}]],
+			]);
+			const commented = await commentOnce({
+				octokit: getOctokit('ghs_test'),
+				owner,
+				name,
+				number: 3,
+				author: bot.name,
+				marker,
+				body: 'the body',
+			});
+			t.equal(commented, expected, `${label}: ${expected ? 'comments' : 'says nothing'}`);
+			t.deepEqual(requests.filter((r) => r.method === 'POST').map((r) => r.body), expected ? [{ body: `${marker}\nthe body` }] : [], `${label}: with the marker`);
+			nock.cleanAll();
+		},
+		Promise.resolve(),
+	);
 	t.end();
 });
 

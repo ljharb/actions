@@ -28,7 +28,7 @@ async function main() {
 	const tree = await arb.loadActual();
 
 	let synthesized = 0;
-	for (const node of tree.inventory.values()) {
+	Array.from(tree.inventory.values()).forEach((node) => {
 		const isTagTarget = !node.resolved && node.version && node.packageName && Array.from(node.edgesIn).some((edge) => {
 			try {
 				return npa(`${edge.name}@${edge.spec}`).type === 'tag';
@@ -39,10 +39,10 @@ async function main() {
 		if (isTagTarget) {
 			// the `tag` validity check only requires a remote URL; integrity is not verified.
 			const tarball = node.packageName.replace(/^@[^/]+\//, '');
-			node.resolved = `https://registry.npmjs.org/${node.packageName}/-/${tarball}-${node.version}.tgz`;
+			node.resolved = `https://registry.npmjs.org/${node.packageName}/-/${tarball}-${node.version}.tgz`; // eslint-disable-line no-param-reassign
 			synthesized += 1;
 		}
-	}
+	});
 
 	// nothing to fix when there are no dist-tag deps; `npm ls` validates plain semver from disk.
 	if (synthesized === 0) {

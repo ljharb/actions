@@ -47,12 +47,19 @@ export async function commitsRefusal(octokit, {
 		}
 		return typeof gitUser?.email === 'string' && gitUser.email.toLowerCase() === await botEmail();
 	};
-	for (const {
-		author, committer, commit,
-	} of commits) {
-		if (!await isBot(author, commit.author) || !await isBot(committer, commit.committer)) { // eslint-disable-line no-await-in-loop
-			return { reason: 'it has commits by someone else; review and merge it yourself' };
-		}
+	const byOthers = await commits.reduce(
+		async (
+			previous,
+			{
+				author,
+				committer,
+				commit,
+			},
+		) => await previous || !await isBot(author, commit.author) || !await isBot(committer, commit.committer),
+		Promise.resolve(false),
+	);
+	if (byOthers) {
+		return { reason: 'it has commits by someone else; review and merge it yourself' };
 	}
 	return { count: commits.length, parents: commits[0].parents.map((p) => p.sha) };
 }

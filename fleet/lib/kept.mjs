@@ -33,9 +33,9 @@ export function keptConfig(git, rev, kept) {
 	if (!isObject(config) || !isObject(keep)) {
 		return null;
 	}
-	for (const [file, inputs] of kept) {
+	kept.forEach((inputs, file) => {
 		keep[file] = [...new Set([...Array.isArray(keep[file]) ? keep[file] : [], ...inputs])];
-	}
+	});
 	return `${JSON.stringify({ ...config, keep }, null, 2)}\n`;
 }
 
@@ -65,8 +65,8 @@ export function keptOnBranch(git, { base, tip }) {
 export function withKept(keep, kept) {
 	/** @type {Record<string, string[]>} */
 	const merged = Object.assign(Object.create(null), keep);
-	for (const [file, inputs] of kept) {
+	kept.forEach((inputs, file) => {
 		merged[file] = [...new Set([...merged[file] ?? [], ...inputs])];
-	}
+	});
 	return merged;
 }

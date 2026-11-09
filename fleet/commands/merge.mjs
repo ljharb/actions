@@ -142,16 +142,20 @@ async function mergeRepo(context, state, bot) {
 			writer ??= repoOctokit(context.auth, state, writePermissions);
 			return writer;
 		};
-		for (const pr of await candidatePRs(read, state, bot)) {
-			const outcome = await mergePR(context, { // eslint-disable-line no-await-in-loop
-				state,
-				pr,
-				bot,
-				read,
-				write,
-			});
-			outcomes.push({ ...outcome, key: entryKey({ repository: state.repository, number: pr.number }) });
-		}
+		await (await candidatePRs(read, state, bot)).reduce(
+			async (previous, pr) => {
+				await previous;
+				const outcome = await mergePR(context, {
+					state,
+					pr,
+					bot,
+					read,
+					write,
+				});
+				outcomes.push({ ...outcome, key: entryKey({ repository: state.repository, number: pr.number }) });
+			},
+			Promise.resolve(),
+		);
 	} catch (error) {
 		// a private repository's error is never output, as with `/fix`
 		if (state.private) {
@@ -183,18 +187,18 @@ async function enqueue(context, resolved, wanted) {
 	const queue = entries.filter((e) => !resolved.has(entryKey(e)));
 	/** @type {Set<Entry>} */
 	const full = new Set();
-	for (const entry of wanted) {
+	wanted.forEach((entry) => {
 		if (fits([...queue, entry])) {
 			queue.push(entry);
 		} else {
 			full.add(entry);
 		}
-	}
+	});
 	// a public PR that didn't fit is a failure of this command, which its queued PRs' reaction must say
 	if ([...full].some((e) => !e.private)) {
-		for (const entry of wanted.filter((e) => !full.has(e))) {
-			entry.commandFailed = true;
-		}
+		wanted.filter((e) => !full.has(e)).forEach((entry) => {
+			entry.commandFailed = true; // eslint-disable-line no-param-reassign
+		});
 	}
 	if (replaced.length > 0 || queue.length > entries.length - replaced.length) {
 		await writeQueue(
@@ -210,14 +214,18 @@ async function enqueue(context, resolved, wanted) {
 	context.progress.queued = queue.some((e) => !e.private && e.commentId === context.commentId); // eslint-disable-line no-param-reassign
 	/** @type {Map<number, boolean>} */
 	const others = new Map();
-	for (const entry of replaced.filter((e) => !e.private && e.commentId !== context.commentId)) {
+	replaced.filter((e) => !e.private && e.commentId !== context.commentId).forEach((entry) => {
 		others.set(entry.commentId, (others.get(entry.commentId) ?? true) && !entry.commandFailed);
-	}
-	for (const [commentId, ok] of others) {
-		if (!queue.some((e) => !e.private && e.commentId === commentId)) {
-			await context.finishOther(commentId, ok); // eslint-disable-line no-await-in-loop
-		}
-	}
+	});
+	await Array.from(others).reduce(
+		async (previous, [commentId, ok]) => {
+			await previous;
+			if (!queue.some((e) => !e.private && e.commentId === commentId)) {
+				await context.finishOther(commentId, ok);
+			}
+		},
+		Promise.resolve(),
+	);
 	return full;
 }
 
@@ -236,14 +244,18 @@ export async function runMerge(context, states, { repositories, accounts }) {
 	/** @type {Row[]} */
 	const rows = [];
 	// one at a time, private repositories last, as `/fix` does
-	for (const state of [...selected.filter((s) => !s.private), ...selected.filter((s) => s.private)]) {
-		const outcomes = await mergeRepo(context, state, bot); // eslint-disable-line no-await-in-loop
-		rows.push({
-			state,
-			named: repositories.has(state.repository.toLowerCase()),
-			outcomes,
-		});
-	}
+	await selected.filter((s) => !s.private).concat(selected.filter((s) => s.private)).reduce(
+		async (previous, state) => {
+			await previous;
+			const outcomes = await mergeRepo(context, state, bot);
+			rows.push({
+				state,
+				named: repositories.has(state.repository.toLowerCase()),
+				outcomes,
+			});
+		},
+		Promise.resolve(),
+	);
 
 	const outcomes = rows.flatMap((r) => r.outcomes);
 	const publicOutcomes = rows.filter((r) => !r.state.private).flatMap((r) => r.outcomes);
@@ -262,17 +274,17 @@ export async function runMerge(context, states, { repositories, accounts }) {
 	if (!context.dryRun) {
 		try {
 			const full = await enqueue(context, new Set(outcomes.flatMap((o) => (o.key ? [o.key] : []))), [...wanted.values()]);
-			for (const [o, entry] of wanted) {
+			wanted.forEach((entry, o) => {
 				if (full.has(entry)) {
 					unqueued.set(o, 'the merge queue is full; run `/merge` again once it has room');
 				}
-			}
+			});
 		} catch (error) {
 			queueError = messageOf(error);
 			core.setFailed(queueError);
-			for (const o of wanted.keys()) {
+			wanted.forEach((_, o) => {
 				unqueued.set(o, 'the merge queue could not be written');
-			}
+			});
 		}
 	}
 	/** @type {(o: Outcome) => Outcome} */
