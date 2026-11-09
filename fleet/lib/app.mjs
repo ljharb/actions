@@ -21,8 +21,10 @@ import { accountLogin, awaitingApproval } from './installations.mjs';
  *   defaultBranch: string | null,
  *   config: Config,
  *   configError: string | null,
+ *   hasConfig: boolean,
  *   stateError: string | null,
  *   packageJson: string | null,
+ *   packageJsonRegular: boolean,
  *   workflows: WorkflowFile[] | null,
  *   fork: boolean,
  *   source: { repository: string, archived: boolean, private: boolean } | null,
@@ -54,6 +56,7 @@ fragment state on Repository {
 	defaultBranchRef { name }
 	config: object(expression: "HEAD:.github/ljharb-actions.json") { ... on Blob { text } }
 	packageJson: object(expression: "HEAD:package.json") { ... on Blob { text } }
+	root: object(expression: "HEAD:") { ... on Tree { entries { name mode } } }
 	workflows: object(expression: "HEAD:.github/workflows") {
 		... on Tree { entries { name type object { ... on Blob { text } } } }
 	}
@@ -137,6 +140,14 @@ function workflowFiles(entries) {
 		: null;
 }
 
+// a regular file's mode, `100644`: not executable (`100755`), nor a symbolic link (`120000`)
+const regularMode = 0o100644;
+
+/** @type {(entries: { name: string, mode: number }[] | undefined, name: string) => boolean} */
+function isRegularFile(entries, name) {
+	return !!entries?.some((e) => e.name === name && e.mode === regularMode);
+}
+
 /** @type {(repo: Record<string, any> | null | undefined) => RepoState['source']} */
 function forkSource(repo) {
 	let root = repo?.isFork ? repo.parent : null;
@@ -171,8 +182,10 @@ function toState({
 		defaultBranch: repo?.defaultBranchRef?.name ?? null,
 		config,
 		configError: [inherited.error, own.error].filter(Boolean).join('; ') || null,
+		hasConfig: typeof repo?.config?.text === 'string',
 		stateError: repo ? null : 'could not read the repository’s state',
 		packageJson: repo?.packageJson?.text ?? null,
+		packageJsonRegular: isRegularFile(repo?.root?.entries, 'package.json'),
 		workflows: workflowFiles(repo?.workflows?.entries),
 		fork: Boolean(r.fork || repo?.isFork),
 		source: forkSource(repo),

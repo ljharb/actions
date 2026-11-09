@@ -386,6 +386,47 @@ test('maintain: rebases a PR onto its base’s tip', async (t) => {
 	t.end();
 });
 
+test('maintain: rebasing keeps `package.json`’s entry for `.github/ljharb-actions.json` there exactly when the file is', async (t) => {
+	/** @type {(ignore: string[]) => string} */
+	const pkg = (ignore) => `${JSON.stringify({
+		name: 'pkg', devDependencies: { npmignore: '^0.3.1' }, publishConfig: { ignore },
+	}, null, 2)}\n`;
+	const files = {
+		[pretest]: tapePretest, [aught]: tapeAught, 'README.md': 'readme\n',
+	};
+	/** @type {(initial: Record<string, string>, change: Record<string, string>, moved: Record<string, string | null>, label: string) => Promise<{ pkgJson: string, line: string | undefined }>} */
+	const rebased = async (initial, change, moved, label) => {
+		const server = setup(t, { ...files, ...initial });
+		const head = server.commit(fixBranch, { [aught]: fixedAught, ...change }, { who: bot, from: 'main', message });
+		const mainTip = server.commit('main', moved);
+		const { errors, stdout } = await run(t, {
+			server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]]),
+		});
+		t.equal(errors, 0, `${label}: nothing failed`);
+		const tip = server.tip(`refs/heads/${fixBranch}`);
+		t.deepEqual(server.log(`main..${tip}`), [`${botLine}|${botLine}|${message}|${mainTip}`], `${label}: one commit by the bot, on the base’s tip`);
+		t.equal(server.show(tip, aught), fixedAught.trim(), `${label}: with its change`);
+		return { pkgJson: `${server.show(tip, 'package.json')}\n`, line: logged(stdout).find((l) => l.startsWith(prURL(server))) };
+	};
+
+	const gained = await rebased({ 'package.json': pkg(['.github/workflows', config]) }, { 'package.json': pkg(['.github/workflows']) }, { [config]: '{}\n' }, 'a PR that removed the entry, whose base then gained the config file');
+	t.equal(gained.pkgJson, pkg(['.github/workflows', config]), 'the entry is added back, since the config file is there');
+	t.ok(String(gained.line).endsWith(': rebased onto `main`’s tip, and added `.github/ljharb-actions.json`, which it now has, to `package.json`’s `publishConfig.ignore`'), 'and says so');
+
+	const lost = await rebased({ 'package.json': pkg(['.github/workflows']), [config]: '{}\n' }, { 'package.json': pkg(['.github/workflows', config]) }, { [config]: null }, 'a PR that added the entry, whose base then lost the config file');
+	t.equal(lost.pkgJson, pkg(['.github/workflows']), 'the entry is removed, since the config file isn’t there');
+	t.ok(String(lost.line).endsWith(': rebased onto `main`’s tip, and removed `.github/ljharb-actions.json`, which it no longer has, from `package.json`’s `publishConfig.ignore`'), 'and says so');
+
+	const kept = await rebased({ 'package.json': pkg(['.github/workflows']), [config]: '{}\n' }, { 'package.json': pkg(['.github/workflows', config]) }, { 'README.md': 'moved\n' }, 'a PR that added the entry, whose base still has the config file');
+	t.equal(kept.pkgJson, pkg(['.github/workflows', config]), 'the entry is kept');
+	t.ok(String(kept.line).endsWith(': rebased onto `main`’s tip'), 'and nothing else is said');
+
+	const untouched = await rebased({ 'package.json': pkg(['.github/workflows']) }, {}, { [config]: '{}\n' }, 'a PR that doesn’t touch either, whose base then gained the config file');
+	t.equal(untouched.pkgJson, pkg(['.github/workflows']), 'is only replayed, since what the base has isn’t its change');
+	t.ok(String(untouched.line).endsWith(': rebased onto `main`’s tip'), 'and nothing else is said');
+	t.end();
+});
+
 test('maintain: rebasing and restoring work in a shallow clone without file contents', async (t) => {
 	const server = setup(t, {
 		[pretest]: tapePretest, [aught]: tapeAught, 'README.md': 'readme\n', 'big.txt': 'not needed\n',
@@ -814,6 +855,62 @@ test('maintain: restoring keeps what `keep` already has', async (t) => {
 	const tip = server.tip(`refs/heads/${fixBranch}`);
 	t.deepEqual(JSON.parse(server.show(tip, config)), { keep: { 'node-pretest.yml': ['skip-pack', 'skip-engines'], 'node-aught.yml': ['skip-ls-check'] } }, 'adding to its inputs, and replacing an entry that isn’t a list');
 	t.equal(`${server.show(tip, aught)}\n`, tapeAught, 'restoring every failed file’s inputs');
+	t.end();
+});
+
+test('maintain: restoring keeps `.github/ljharb-actions.json` out of the published package, when it uses `npmignore`', async (t) => {
+	/** @type {(ignore: unknown, extra?: Record<string, unknown>) => string} */
+	const pkg = (ignore, extra = { devDependencies: { npmignore: '^0.3.1' } }) => `${JSON.stringify({
+		name: 'pkg', ...extra, publishConfig: { ignore },
+	}, null, 2)}\n`;
+	const restoredLine = 'its CI failed, so restored `skip-engines` in `node-pretest.yml`, and kept them in `.github/ljharb-actions.json`';
+	/** @type {(files: Record<string, string>, label: string) => Promise<{ tip: string, line: string | undefined }>} */
+	const restore = async (files, label) => {
+		const server = setup(t, { [pretest]: tapePretest, ...files });
+		const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
+		const { errors, stdout } = await run(t, {
+			server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		});
+		t.equal(errors, 0, `${label}: nothing failed`);
+		const tip = server.tip(`refs/heads/${fixBranch}`);
+		t.notEqual(tip, head, `${label}: the PR is restored`);
+		t.equal(`${server.show(tip, pretest)}\n`, tapePretest, `${label}: putting the input back`);
+		return {
+			tip: fixtureGit(server.remote, ['cat-file', '-p', `${tip}:package.json`]),
+			line: logged(stdout).find((l) => l.startsWith(prURL(server))),
+		};
+	};
+
+	const adds = await restore({ 'package.json': pkg(['.github/workflows', 'test']) }, 'with no config file of its own');
+	t.equal(`${adds.tip}\n`, pkg(['.github/workflows', '.github/ljharb-actions.json', 'test']), 'adds the config file it writes to `publishConfig.ignore`, right after `.github/workflows`');
+	t.ok(String(adds.line).endsWith(`: ${restoredLine}, which it added to \`package.json\`’s \`publishConfig.ignore\``), 'and says so');
+
+	/** @type {[string, Record<string, string>][]} */
+	const unchanged = [
+		['already ignored', { 'package.json': pkg(['.github']) }],
+		['already ignored by its own entry, which isn’t removed, since the config file is there', { 'package.json': pkg(['.github/ljharb-actions.json']) }],
+		['its package doesn’t use `npmignore`', { 'package.json': pkg(['test'], {}) }],
+		['it has no `publishConfig.ignore`', { 'package.json': pkg(undefined) }],
+		['it isn’t JSON', { 'package.json': '{ nope' }],
+		// json-file-plus 4.0.1 writes every line ending as `\n`
+		['it has `\\r\\n` line endings, which `json-file-plus` would write as `\\n`s', { 'package.json': pkg(['test'], { scripts: { prepack: 'npmignore --auto' } }).replace(/\n/g, '\r\n'), [config]: '{}' }],
+		['it has no final newline, which `json-file-plus` would add', { 'package.json': pkg(['test']).trimEnd() }],
+	];
+	await unchanged.reduce(async (previous, [why, files]) => {
+		await previous;
+		const { tip, line } = await restore(files, why);
+		t.equal(tip, files['package.json'].trimEnd(), `${why}: \`package.json\` is unchanged`);
+		t.ok(String(line).endsWith(`: ${restoredLine}`), `${why}: and not mentioned`);
+	}, Promise.resolve());
+
+	const server = setup(t, { [pretest]: tapePretest });
+	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
+	const { errors } = await run(t, {
+		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+	});
+	t.equal(errors, 0, 'with no `package.json`, nothing fails');
+	t.notEqual(server.tip(`refs/heads/${fixBranch}`), head, 'the PR is still restored');
+	t.deepEqual(fixtureGit(server.remote, ['ls-tree', '--name-only', `refs/heads/${fixBranch}`]).split('\n'), ['.github'], 'and no `package.json` is added');
 	t.end();
 });
 

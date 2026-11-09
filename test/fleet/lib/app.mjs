@@ -177,6 +177,7 @@ test('discover: repository states', async (t) => {
 					defaultBranchRef: { name: 'trunk' },
 					config: { text: '{ "workflows": { "rebase.yml": false } }' },
 					packageJson: { text: '{ "engines": { "node": ">= 4" } }' },
+					root: { entries: [{ name: 'README.md', mode: 0o100755 }, { name: 'package.json', mode: 0o100644 }] },
 					workflows: {
 						entries: [
 							{ name: 'node.yml', type: 'blob', object: { text: 'name: node\n' } },
@@ -204,6 +205,7 @@ test('discover: repository states', async (t) => {
 					defaultBranchRef: null,
 					config: null,
 					packageJson: {},
+					root: { entries: [{ name: 'package.json', mode: 0o100755 }] },
 					workflows: {},
 				},
 			},
@@ -231,6 +233,7 @@ test('discover: repository states', async (t) => {
 	t.equal(full.configError, null, 'no config error');
 	t.equal(full.stateError, null, 'no state error');
 	t.equal(full.packageJson, '{ "engines": { "node": ">= 4" } }', 'package.json text');
+	t.equal(full.packageJsonRegular, true, 'package.json is a regular file');
 	t.deepEqual(full.workflows, [
 		{ name: 'node.yml', text: 'name: node\n' },
 		{ name: 'big.yml', text: null },
@@ -243,6 +246,7 @@ test('discover: repository states', async (t) => {
 	t.match(String(zed.configError), /is not valid JSON/, 'config error');
 	t.deepEqual({ ...zed.config.workflows }, {}, 'default config on error');
 	t.equal(zed.packageJson, null, 'no package.json');
+	t.equal(zed.packageJsonRegular, false, 'so it isn’t a regular file');
 	t.equal(zed.workflows, null, 'no workflows directory');
 
 	const empty = find(states, 'ljharb/empty');
@@ -250,6 +254,7 @@ test('discover: repository states', async (t) => {
 	t.equal(empty.defaultBranch, null, 'no default branch (an empty repo)');
 	t.equal(empty.configError, null, 'no config, no error');
 	t.equal(empty.packageJson, null, 'a non-blob package.json has no text');
+	t.equal(empty.packageJsonRegular, false, 'an executable package.json isn’t a regular file');
 	t.equal(empty.workflows, null, 'a non-tree workflows path has no entries');
 
 	const gone = find(states, 'ljharb/gone');

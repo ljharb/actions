@@ -22,6 +22,12 @@ import {
 } from '../lib/kept.mjs';
 import { code } from '../lib/markdown.mjs';
 import {
+	hasConfig,
+	packageJson,
+	packageJsonAt,
+	syncConfigIgnore,
+} from '../lib/npmignore.mjs';
+import {
 	botIdentity,
 	checkout,
 	commitChanges,
@@ -62,6 +68,8 @@ const reasons = {
 	drifted: 'rewritten from its template, since it has drifted',
 	range: 'its node version range now ends where an added file’s starts',
 	kept: 'keeps the inputs this PR put back when its CI failed, so they aren’t removed again',
+	ignored: `adds ${code(configFile)} to \`publishConfig.ignore\`, so that \`npmignore\` keeps it out of the published package`,
+	unignored: `removes ${code(configFile)} from \`publishConfig.ignore\`, since there’s no such file`,
 };
 
 /** @type {(plan: Plan) => string[]} */
@@ -70,6 +78,23 @@ function changes({ writes, deletes }) {
 		...writes.map((w) => `${code(w.path)}: ${reasons[/** @type {keyof typeof reasons} */ (w.reason)]}`), // eslint-disable-line no-extra-parens
 		...deletes.map((d) => `${code(d.path)}: deleted, since it’s unexpected`),
 	];
+}
+
+/**
+ * Adds to a plan that changes anything the edit to `package.json` that keeps the config file out of the published package, or that stops ignoring it once it won't exist, when it's needed (see `syncConfigIgnore`): the config file will exist when the plan writes it, or the repository has it (no plan deletes it).
+ * A `package.json` that isn't a regular file (eg, an executable one, which writing it would change) is never edited.
+ * @type {(plan: Plan, state: RepoState) => Promise<void>}
+ */
+async function planIgnored(plan, {
+	packageJson: text, packageJsonRegular, hasConfig: configExists,
+}) {
+	if (plan.writes.length + plan.deletes.length === 0) {
+		return;
+	}
+	const synced = await syncConfigIgnore(packageJsonRegular ? text : null, configExists || plan.writes.some((w) => w.path === configFile));
+	if (synced !== null) {
+		plan.writes.push({ path: packageJson, ...synced });
+	}
 }
 
 /** @type {(plan: Plan) => string[]} */
@@ -153,6 +178,8 @@ function cloneState(git, state) {
 	return {
 		...state,
 		packageJson: show('package.json'),
+		packageJsonRegular: packageJsonAt(git, 'HEAD') !== null,
+		hasConfig: hasConfig(git, 'HEAD'),
 		workflows: entries.filter((e) => e.type === 'blob').map(({ file }) => ({ name: path.posix.basename(file), text: show(file) })),
 	};
 }
@@ -202,11 +229,12 @@ async function openPR({
 				path: configFile, content: config, reason: 'kept',
 			});
 		}
+		await planIgnored(plan, current);
 		const planned = new Set([...plan.writes, ...plan.deletes].map((c) => c.path));
 		write(clone, plan);
 		// the default branch moved on since it was checked, and already has these changes
 		if (!commitChanges(git, {
-			base, message, paths: ['.github/workflows', ...planned.has(configFile) ? [configFile] : []], allowed: (file) => planned.has(file),
+			base, message, paths: ['.github/workflows'].concat([configFile, packageJson].filter((file) => planned.has(file))), allowed: (file) => planned.has(file),
 		})) {
 			return `nothing to fix: ${code(base)} already matches`;
 		}
@@ -267,6 +295,7 @@ export async function fixRepo(context, {
 	if (plan.writes.length === 0 && plan.deletes.length === 0) {
 		return ['nothing to fix', ...skips(plan)].join('<br>');
 	}
+	await planIgnored(plan, state);
 	const base = state.defaultBranch;
 	if (!base) {
 		throw new Error('the repository has no default branch');

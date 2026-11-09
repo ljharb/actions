@@ -21,6 +21,7 @@ import nock from 'nock';
  *   defaultBranchRef?: { name: string } | null,
  *   config?: { text?: string } | null,
  *   packageJson?: { text?: string } | null,
+ *   root?: { entries?: { name: string, mode: number }[] } | null,
  *   workflows?: { entries?: { name: string, type: string, object?: { text?: string } | null }[] } | null,
  * }} RepositoryData
  */

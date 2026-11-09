@@ -18,6 +18,12 @@ import { code } from '../lib/markdown.mjs';
 import { candidatePRs, messageOf } from '../lib/merge.mjs';
 import { changedReason, commitsRefusal, isSingleOnBase } from '../lib/merge-guards.mjs';
 import {
+	hasConfig,
+	packageJson,
+	packageJsonAt,
+	syncConfigIgnore,
+} from '../lib/npmignore.mjs';
+import {
 	botIdentity,
 	checkout,
 	commentOnce,
@@ -105,7 +111,34 @@ function say({
 }
 
 /**
+ * One commit on `base`'s tip whose tree is `tree`'s, with `writes`, and the message of `from`.
+ * @type {(git: Git, commit: { base: string, tree: string, from: string }, writes: Map<string, string>) => string}
+ */
+function rewrite(git, {
+	base, tree, from,
+}, writes) {
+	git(['read-tree', tree]);
+	writes.forEach((content, file) => {
+		const blob = git([
+			'hash-object',
+			'-w',
+			'--stdin',
+		], { input: content }).stdout.trim();
+		git([
+			'update-index',
+			'--add',
+			'--cacheinfo',
+			`100644,${blob},${file}`,
+		]);
+	});
+	return commitOnBase(git, {
+		base, tree: git(['write-tree']).stdout.trim(), from,
+	});
+}
+
+/**
  * Rebuilds the PR as one commit on its base's tip: the change all its commits make, applied there as `git rebase` would (a single commit is replayed onto the base's tip; several, squashed first). On a conflict, it's left as it is, and says so, about that tip.
+ * When its change touches `package.json` or the config file, `package.json`'s entry for the config file is synced again with whether the result has it (see `syncConfigIgnore`), since what the base changed meanwhile (eg, adding or deleting the config file) can leave the entry the PR added or removed wrong.
  * @type {(job: Job) => Promise<Outcome>}
  */
 async function rebase(job) {
@@ -130,13 +163,22 @@ async function rebase(job) {
 		await say(job, { kind: 'empty', base: onto }, `${code(base)} already has everything this PR changes, so the App leaves it as it is: it can be closed.`);
 		return { kind: 'empty', text: `${code(base)} already has everything it changes, so it’s left as it is; said so on it` };
 	}
-	const commit = commitOnBase(git, {
+	const touched = git([
+		'diff', '--name-only', from, tip, '--', packageJson, configFile,
+	]).stdout.trim() !== '';
+	const synced = touched ? await syncConfigIgnore(packageJsonAt(git, tree), hasConfig(git, tree)) : null;
+	const commit = rewrite(git, {
 		base, tree, from: String(commits.at(-1)),
-	});
+	}, new Map(synced === null ? [] : [[packageJson, synced.content]]));
 	pushBranch(git, {
 		base, branch: pr.head.ref, tip, identity, commit,
 	});
-	return { kind: 'rebased', text: `rebased onto ${code(base)}’s tip` };
+	/** @type {Record<'ignored' | 'unignored', string>} */
+	const resynced = {
+		ignored: `, and added ${code(configFile)}, which it now has, to ${code(packageJson)}’s \`publishConfig.ignore\``,
+		unignored: `, and removed ${code(configFile)}, which it no longer has, from ${code(packageJson)}’s \`publishConfig.ignore\``,
+	};
+	return { kind: 'rebased', text: `rebased onto ${code(base)}’s tip${synced === null ? '' : resynced[synced.reason]}` };
 }
 
 /**
@@ -204,31 +246,8 @@ function restorations(git, { base, tip }, failed) {
 }
 
 /**
- * One commit on `base`'s tip whose tree is `tip`'s, with `writes`.
- * @type {(git: Git, at: { base: string, tip: string }, writes: Map<string, string>) => string}
- */
-function rewrite(git, { base, tip }, writes) {
-	git(['read-tree', tip]);
-	writes.forEach((content, file) => {
-		const blob = git([
-			'hash-object',
-			'-w',
-			'--stdin',
-		], { input: content }).stdout.trim();
-		git([
-			'update-index',
-			'--add',
-			'--cacheinfo',
-			`100644,${blob},${file}`,
-		]);
-	});
-	return commitOnBase(git, {
-		base, tree: git(['write-tree']).stdout.trim(), from: tip,
-	});
-}
-
-/**
  * Puts back, in each workflow file whose CI failed that the PR changes, the inputs it removed (as the base has them, with their trailing comments), and keeps them (in `.github/ljharb-actions.json`'s `keep`), so that fixing the file again doesn't remove them again: then the next CI run decides.
+ * Since that config file is then in the PR, it's added to `package.json`'s `publishConfig.ignore`, when that's needed (see `syncConfigIgnore`), so it isn't published (so it's never removed from there, which is only for a PR that leaves no config file).
  * With nothing left to put back (eg, it already was, or what failed isn't something the PR changed), the PR needs a person, which it says, once for each head commit.
  * @type {(job: Job, failed: string[]) => Promise<Outcome>}
  */
@@ -257,10 +276,17 @@ async function restore(job, failed) {
 		return { kind: 'stuck', text: 'its CI failed, with nothing left to restore; said so on it' };
 	}
 	writes.set(configFile, config);
+	const ignored = await syncConfigIgnore(packageJsonAt(git, tip), true);
+	if (ignored !== null) {
+		writes.set(packageJson, ignored.content);
+	}
+	const commit = rewrite(git, {
+		base, tree: tip, from: tip,
+	}, writes);
 	pushBranch(git, {
-		base, branch: pr.head.ref, tip, identity: job.identity, commit: rewrite(git, { base, tip }, writes),
+		base, branch: pr.head.ref, tip, identity: job.identity, commit,
 	});
-	return { kind: 'restored', text: `its CI failed, so restored ${[...kept].map(([file, inputs]) => `${inputs.map(code).join(', ')} in ${code(file)}`).join('; ')}, and kept them in ${code(configFile)}` };
+	return { kind: 'restored', text: `its CI failed, so restored ${[...kept].map(([file, inputs]) => `${inputs.map(code).join(', ')} in ${code(file)}`).join('; ')}, and kept them in ${code(configFile)}${ignored === null ? '' : `, which it added to ${code(packageJson)}’s \`publishConfig.ignore\``}` };
 }
 
 /** @type {(context: Context, installationId: number) => Promise<Identity>} */

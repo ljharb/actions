@@ -17,8 +17,8 @@ import { expectedShards, shardDecade } from './shards.mjs';
 /** @import { RepoState } from '../lib/app.mjs' */
 /** @import { Result } from './check.mjs' */
 /** @typedef {'missing' | 'drifted' | 'unexpected'} Category */
-// `kept` is only ever `/fix`'s own, for the config that keeps what its PR put back
-/** @typedef {{ path: string, content: string, reason: Category | 'range' | 'kept' }} Write */
+// `kept`, `ignored`, and `unignored` are only ever `/fix`'s own: for the config that keeps what its PR put back, and for `package.json`, to keep that config out of the published package, or to stop ignoring it once it's gone
+/** @typedef {{ path: string, content: string, reason: Category | 'range' | 'kept' | 'ignored' | 'unignored' }} Write */
 /** @typedef {{ path: string, reason: 'unexpected' }} Delete */
 /** @typedef {{ path: string, why: string }} Skip */
 /** @typedef {{ writes: Write[], deletes: Delete[], skipped: Skip[] }} Plan */
