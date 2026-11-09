@@ -424,10 +424,18 @@ export function isSkippedAccount(failure) {
 }
 
 /**
- * Every repository the App is installed on in `accounts` (and, per `options`, the sources of their forks), as it is; what couldn't be read; and the logins of the accounts whose installation is waiting on them to approve the permissions reading needs (see `awaitsApproval`), which aren't failures.
- * @type {(auth: ReturnType<typeof createAppAuth>, accounts: Set<string>, options?: Options) => Promise<{ states: RepoState[], failures: Failure[], waiting: string[] }>}
+ * Every repository the App is installed on in `accounts` (and, per `options`, the sources of their forks), as it is; what couldn't be read; and the logins of the accounts whose installation is waiting on them to approve the permissions reading needs, or `needs` (what the caller then does with them), which aren't failures (see `awaitingApproval`).
+ * @type {(auth: ReturnType<typeof createAppAuth>, accounts: Set<string>, options?: Options & { needs?: Record<string, string> }) => Promise<{ states: RepoState[], failures: Failure[], waiting: string[] }>}
  */
-export async function discover(auth, accounts, { sourceAccounts = new Set(), committer = '' } = {}) {
+export async function discover(
+	auth,
+	accounts,
+	{
+		sourceAccounts = new Set(),
+		committer = '',
+		needs = {},
+	} = {},
+) {
 	const app = await appOctokit(auth);
 	const installations = await app.paginate('GET /app/installations', { per_page: 100 }); // eslint-disable-line camelcase
 
@@ -448,7 +456,7 @@ export async function discover(auth, accounts, { sourceAccounts = new Set(), com
 		ready,
 		waiting,
 		failures: unavailable,
-	} = await awaitingApproval(app, allowed, readPermissions);
+	} = await awaitingApproval(app, allowed, { ...readPermissions, ...needs });
 	unavailable.forEach((failure) => {
 		failures.push(failure);
 	});

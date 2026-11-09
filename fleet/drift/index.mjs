@@ -1,82 +1,24 @@
 import * as core from '@actions/core';
-import { getOctokit } from '@actions/github';
 
 import {
 	appAuth,
-	botLogin,
 	discover,
 	parseAccounts,
 } from '../lib/app.mjs';
-import { isReportAuthor, issueOctokit, legacyAuthor } from '../lib/issues.mjs';
+import { gistToken, publish } from '../lib/report.mjs';
 import { checkSafely } from './check.mjs';
 import { marker } from './marker.mjs';
-import { upsertGist } from './gist.mjs';
 import { report } from './report.mjs';
-
-/** @import { Written } from './report.mjs' */
 
 // how the full report's gist is found again on the next run; a dry run has its own, so it never changes what the issue links to
 const gistMarker = 'ljharb/actions fleet workflow drift report';
-const dryRunGistMarker = `${gistMarker} (dry runs)`;
-
-const { GITHUB_REPOSITORY = '' } = process.env;
-
-/**
- * @type {(options: {
- *   octokit: ReturnType<typeof getOctokit>,
- *   owner: string,
- *   repo: string,
- *   bot: string,
- *   found: { title: string, body: string } | null,
- * }) => Promise<string>}
- */
-async function upsertIssue({
-	octokit, owner, repo, bot, found,
-}) {
-	// the App's bot's own, or one opened as GitHub Actions' bot before the App wrote the report, which it adopts
-	const issues = (await Promise.all([bot, legacyAuthor].map((creator) => octokit.paginate(octokit.rest.issues.listForRepo, {
-		owner,
-		repo,
-		state: 'all',
-		creator,
-		per_page: 100, // eslint-disable-line camelcase
-	})))).flat();
-	const [issue] = issues
-		.filter((i) => !i.pull_request && i.body?.includes(marker) && isReportAuthor(i.user?.login, bot))
-		.sort((a, b) => b.created_at.localeCompare(a.created_at));
-
-	if (!found) {
-		if (issue?.state === 'open') {
-			await octokit.rest.issues.createComment({
-				owner, repo, issue_number: issue.number, body: 'No discrepancies remain; closing.', // eslint-disable-line camelcase
-			});
-			await octokit.rest.issues.update({
-				owner, repo, issue_number: issue.number, state: 'closed', // eslint-disable-line camelcase
-			});
-			return `closed ${issue.html_url}`;
-		}
-		return 'no discrepancies';
-	}
-	if (issue) {
-		await octokit.rest.issues.update({
-			owner, repo, issue_number: issue.number, title: found.title, body: found.body, state: 'open', // eslint-disable-line camelcase
-		});
-		return `updated ${issue.html_url}`;
-	}
-	const { data: created } = await octokit.rest.issues.create({
-		owner, repo, title: found.title, body: found.body,
-	});
-	return `created ${created.html_url}`;
-}
 
 async function main() {
 	// checked first, so that a run that can't write the report wastes nothing on checking
-	const gistToken = core.getInput('gist-token');
-	if (!gistToken) {
-		core.setFailed('`gist-token` is required: the full report is kept in a secret gist. Add a `FLEET_GIST_TOKEN` repository secret with a token that can write gists: a fine-grained token with the “Gists” account permission set to “Read and write”, or a classic token with the `gist` scope.');
+	const token = gistToken();
+	if (!token) {
 		return;
 	}
-	core.setSecret(gistToken);
 
 	const auth = appAuth(core.getInput('app-id', { required: true }), core.getInput('private-key', { required: true }));
 	const accounts = parseAccounts(core.getInput('accounts'), process.env.GITHUB_REPOSITORY_OWNER || '');
@@ -114,28 +56,22 @@ async function main() {
 		)
 		: null;
 
-	const dryRun = core.getBooleanInput('dry-run');
-	// the gist first, since the summary and the issue link to it; then the summary, so a failure to update the issue still leaves the report in the run
-	/** @type {Written} */
-	let written;
-	try {
-		written = await upsertGist(getOctokit(gistToken), dryRun ? dryRunGistMarker : gistMarker, found ? found.parts : ['No discrepancies.']);
-	} catch (error) {
-		// the summary and the issue are still updated, saying so, so neither is left out of date
-		written = { error: String(error) };
-	}
-	await core.summary.addRaw(found ? found.summary(written, false) : 'No discrepancies.').write();
-	const [owner, repo] = (core.getInput('issue-repository') || GITHUB_REPOSITORY).split('/');
-	// the issue is written by the App's bot, with a token for only its repository
-	const outcome = dryRun
-		? 'dry run: no issue changes'
-		: await upsertIssue({
-			octokit: await issueOctokit(auth, owner, repo),
-			owner,
-			repo,
-			bot: await botLogin(auth),
-			found: found && { title: found.title, body: found.summary(written, true) },
-		});
+	const { written, outcome } = await publish({
+		auth,
+		token,
+		gist: {
+			description: gistMarker,
+			dryRunDescription: `${gistMarker} (dry runs)`,
+			base: 'workflow-drift',
+		},
+		issue: {
+			marker,
+			closing: 'No discrepancies remain; closing.',
+			unchanged: 'no discrepancies',
+		},
+		found,
+		none: 'No discrepancies.',
+	});
 
 	core.info(`${all.length} of ${checked.length} repositories have discrepancies; ${'error' in written ? 'the full report could not be written to its gist' : `the full report is ${written.html_url}`}; ${outcome}`);
 	if ('error' in written) {

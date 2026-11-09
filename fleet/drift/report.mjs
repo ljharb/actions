@@ -1,10 +1,20 @@
 import { legend } from '../commands/syntax.mjs';
+import { code, fence, split } from '../lib/markdown.mjs';
 import {
-	code,
-	fence,
-	html,
-	split,
-} from '../lib/markdown.mjs';
+	byAccount,
+	fileLink,
+	fitting,
+	fullReportLink,
+	inline,
+	list,
+	maxPartLength,
+	problems,
+	reportLink,
+	runURL,
+	serverURL,
+	summaryProblems,
+	thisRepository,
+} from '../lib/report.mjs';
 import { templateFor } from './check.mjs';
 import { marker } from './marker.mjs';
 
@@ -12,51 +22,20 @@ import { marker } from './marker.mjs';
 /** @import { Failure } from '../lib/app.mjs' */
 /** @typedef {{ installed: number, external: number }} Checked */
 /** @import { Unit } from '../lib/markdown.mjs' */
-/** @import { Gist } from './gist.mjs' */
-/** @typedef {Gist | { error: string }} Written */
-/** @typedef {{ title: string, parts: string[], summary: (written: Written, forIssue: boolean) => string }} Report */
+/** @import { Report } from '../lib/report.mjs' */
 
-// GitHub's limit for an issue's body is 65536 characters; a run summary's is 1 MiB, so this fits in both
-export const maxSummaryLength = 60000;
-/*
- * a gist's API (and its page) cut a file short past 1 MB, so the full report is in files of at most this many characters:
- * each is at most 3 bytes in UTF-8 (a surrogate pair is 2 characters, and 4 bytes), with room left for saying which part it is
- */
-export const maxPartLength = 300000;
-
-const {
-	GITHUB_SERVER_URL = 'https://github.com',
-	GITHUB_REPOSITORY = '',
-	GITHUB_RUN_ID,
-} = process.env;
-const runURL = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`;
-
-// third-party text in HTML: a blank line would end GitHub's HTML block and let the rest render as Markdown, so it's kept to one line
-/** @type {(s: string) => string} */
-function inline(s) {
-	return html(s.replace(/\s*[\r\n]+\s*/g, ' ').trim());
-}
-
-/** @type {(href: string, name: string) => string} */
-function fileLink(href, name) {
-	return `<a href="${html(href)}"><code>${inline(name)}</code></a>`;
-}
+export { maxPartLength, maxSummaryLength } from '../lib/report.mjs';
 
 /** @type {(repository: string, name: string) => string} */
 function workflowLink(repository, name) {
-	return fileLink(`${GITHUB_SERVER_URL}/${repository}/blob/HEAD/.github/workflows/${encodeURIComponent(name)}`, name);
+	return fileLink(`${serverURL}/${repository}/blob/HEAD/.github/workflows/${encodeURIComponent(name)}`, name);
 }
 
 // a missing file has nothing to link to, so it links to the template it should match, if there is one
 /** @type {(name: string) => string} */
 function templateLink(name) {
 	const template = templateFor(name);
-	return template ? fileLink(`${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/HEAD/fleet/drift/templates/${template}`, name) : `<code>${inline(name)}</code>`;
-}
-
-/** @type {(items: string[]) => string} */
-function list(items) {
-	return items.length > 0 ? `<ul>\n${items.map((item) => `<li>${item}</li>`).join('\n')}\n</ul>` : '';
+	return template ? fileLink(`${serverURL}/${thisRepository}/blob/HEAD/fleet/drift/templates/${template}`, name) : `<code>${inline(name)}</code>`;
 }
 
 // GitHub renders a fenced block inside HTML only with blank lines around it
@@ -73,9 +52,14 @@ function diffSection(repository, { name, diff }) {
 
 /** @type {(result: Result) => string} */
 function row({
-	repository, missing, unexpected, drifted, unreadable, error,
+	repository,
+	missing,
+	unexpected,
+	drifted,
+	unreadable,
+	error,
 }) {
-	const repo = fileLink(`${GITHUB_SERVER_URL}/${repository}/tree/HEAD/.github/workflows`, repository);
+	const repo = fileLink(`${serverURL}/${repository}/tree/HEAD/.github/workflows`, repository);
 	const other = [
 		...error ? [`<code>${inline(error)}</code>`] : [],
 		...unreadable.length > 0 ? [`unreadable: ${list(unreadable.map((name) => workflowLink(repository, name)))}`] : [],
@@ -90,20 +74,6 @@ function row({
 }
 
 /** @typedef {{ owner: string, results: Result[] }} Account */
-
-// accounts' repositories, grouped case-insensitively, in the order the results are in
-/** @type {(results: Result[]) => Account[]} */
-function byAccount(results) {
-	/** @type {Map<string, Account>} */
-	const accounts = new Map();
-	results.forEach((result) => {
-		const [owner] = result.repository.split('/');
-		const account = accounts.get(owner.toLowerCase()) ?? { owner, results: [] };
-		account.results.push(result);
-		accounts.set(owner.toLowerCase(), account);
-	});
-	return Array.from(accounts.values());
-}
 
 const tableHeader = '<tr><th>Repository</th><th>Missing</th><th>Unexpected</th><th>Drifted</th><th>Other</th></tr>';
 
@@ -138,11 +108,6 @@ function accountTable({ owner, results }) {
 	];
 }
 
-/** @type {(failure: Failure) => string} */
-function failureItem({ scope, message }) {
-	return `- ${scope}: ${code(message)}`;
-}
-
 /** @type {(results: Result[], key: 'missing' | 'unexpected' | 'drifted') => number} */
 function files(results, key) {
 	return results.reduce((n, r) => n + r[key].length, 0);
@@ -167,65 +132,39 @@ export function report(results, privateCount, failures, checked, waiting = []) {
 	const sources = checked.external > 0 ? `, and ${checked.external} sources of forks it’s installed on` : '';
 	/** @type {(updated: string) => string} */
 	const intro = (updated) => [
-		`[This run](${runURL}) checked the workflow files of ${checked.installed} repositories the fleet App is installed on${sources}, against the templates in [\`fleet/drift/templates\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/HEAD/fleet/drift/templates).`,
+		`[This run](${runURL}) checked the workflow files of ${checked.installed} repositories the fleet App is installed on${sources}, against the templates in [\`fleet/drift/templates\`](${serverURL}/${thisRepository}/tree/HEAD/fleet/drift/templates).`,
 		`${total} have discrepancies${privateCount > 0 ? ` (${privateCount} of them private, so not listed)` : ''}.`,
 		...updated ? [updated] : [],
 	].join(' ');
-	const incomplete = '⚠️ Some repositories could not be checked, so this report is incomplete:';
-	const awaiting = `⏳ Waiting on permission approval: ${waiting.map(code).join(', ')}. Until each of these accounts approves the App’s permissions (in its settings, under “Applications”, or from GitHub’s email about them), its repositories aren’t checked.`;
 	const accounts = byAccount(results);
 	const title = `Workflow drift: ${total} of ${count} repositories`;
 
 	// everything: every failure, every repository, and every diff, in as many files as it takes
-	const parts = split(/** @type {(string | Unit)[]} */ ([]).concat(
-		`# ${title}`,
-		'',
-		intro('This report is updated in place on every run.'),
-		failures.length > 0
-			? ['', incomplete].concat(failures.map(failureItem))
-			: [],
-		waiting.length > 0 ? ['', awaiting] : [],
-		accounts.flatMap((account) => /** @type {(string | Unit)[]} */ (['']).concat(accountTable(account))),
-		'',
-		legend(),
-	), maxPartLength);
+	const parts = split(
+		/** @type {(string | Unit)[]} */ ([]).concat(
+			`# ${title}`,
+			'',
+			intro('This report is updated in place on every run.'),
+			problems(failures, waiting),
+			accounts.flatMap((account) => /** @type {(string | Unit)[]} */ (['']).concat(accountTable(account))),
+			'',
+			legend(),
+		),
+		maxPartLength,
+	);
 
 	return {
 		title,
 		parts,
 		summary(written, forIssue) {
-			const where = 'error' in written ? '' : written.html_url;
-			// without `detailed`, its size doesn't depend on anything
-			/** @type {(detailed: boolean) => string} */
-			const link = (detailed) => {
-				if ('error' in written) {
-					return `⚠️ **The full report could not be written to its gist**${detailed ? ` (${code(written.error)})` : ''}, so this run failed, and [its log](${runURL}) has the error; the next run will try again.`;
-				}
-				const inFiles = written.files.length > 1
-					? ` It’s in ${written.files.length} files, each small enough (under 1 MB) for GitHub to show in full; read them in order${detailed ? `: ${written.files.map((f, i) => `[${i + 1}](${f.raw_url})`).join(' · ')}` : ''}.`
-					: '';
-				return `**[The full report](${where})** has every repository, every discrepancy, and every diff; it’s a secret gist, updated in place on every run.${inFiles}`;
-			};
-			const fullReport = where ? `[the full report](${where})` : 'the full report';
+			const fullReport = fullReportLink(written);
 			/** @type {(listFailures: boolean, withAccounts: boolean, detailed?: boolean) => string} */
 			const render = (listFailures, withAccounts, detailed = true) => /** @type {string[]} */ ([]).concat(
 				forIssue ? [marker] : [],
 				intro(forIssue ? 'This issue is updated in place on every run, and closed when there are none.' : ''),
 				'',
-				link(detailed),
-				failures.length > 0
-					? [''].concat(listFailures
-						? [incomplete].concat(failures.map(failureItem))
-						: [`⚠️ ${failures.length} repositories or installations could not be checked, so this report is incomplete; ${fullReport} lists them all.`])
-					: [],
-				waiting.length > 0
-					? [
-						'',
-						listFailures
-							? awaiting
-							: `⏳ ${waiting.length} accounts are waiting on permission approval, so their repositories weren’t checked; ${fullReport} lists them.`,
-					]
-					: [],
+				reportLink(written, 'every repository, every discrepancy, and every diff', detailed),
+				summaryProblems(failures, waiting, listFailures, fullReport),
 				accounts.length > 0
 					? [''].concat(withAccounts
 						? accountCounts(accounts)
@@ -244,12 +183,15 @@ export function report(results, privateCount, failures, checked, waiting = []) {
 					: [],
 			).join('\n');
 			// the failures (and the accounts waiting on approval), the accounts' counts, or the links to each file (or the gist's error), are left to the full report (or the log) only when there are too many for this; without all three, nothing in it grows with the fleet, so it always fits
-			return [
-				render(true, true),
-				render(false, true),
-				render(true, false),
-				render(false, false),
-			].find((text) => text.length <= maxSummaryLength) ?? render(false, false, false);
+			return fitting(
+				[
+					render(true, true),
+					render(false, true),
+					render(true, false),
+					render(false, false),
+				],
+				() => render(false, false, false),
+			);
 		},
 	};
 }

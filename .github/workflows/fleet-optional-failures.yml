@@ -1,0 +1,48 @@
+name: 'fleet: optional-job failures report'
+
+on:
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'check, summarize, and write the full report to the dry runs’ own gist, but create, edit, or close no issue'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+cache-mode: none
+
+concurrency:
+  group: fleet-optional-failures
+  cancel-in-progress: false
+
+jobs:
+  optional:
+    if: vars.FLEET_APP_ID != ''
+    runs-on: ubuntu-24.04
+
+    # the report issue is written by the fleet App's bot, and CI is read by the App, with tokens of its own
+    permissions:
+      contents: read
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          disable-sudo: true
+          egress-policy: audit
+          allowed-endpoints: >
+            api.github.com:443
+
+      - uses: ljharb/actions/fleet/optional@main
+        with:
+          app-id: ${{ vars.FLEET_APP_ID }}
+          private-key: ${{ secrets.FLEET_APP_PRIVATE_KEY }}
+          accounts: ${{ vars.FLEET_ACCOUNTS }}
+          source-accounts: ${{ vars.FLEET_SOURCE_ACCOUNTS }}
+          gist-token: ${{ secrets.FLEET_GIST_TOKEN }}
+          dry-run: ${{ inputs.dry-run == true }}
