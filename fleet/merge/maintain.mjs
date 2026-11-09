@@ -48,7 +48,7 @@ import { reposWithAppPRs } from './repos.mjs';
  * - `rebased`: it was rebuilt as one commit on its base's tip
  * - `conflict`: it can't be, since it conflicts with its base (which it says, once per head and base tip)
  * - `empty`: it can't be, since its base already has everything it changes (which it says, once per head and base tip)
- * - `pending`, `passed`: it's one commit on its base's tip, and its CI is still running (or has failed only as its base's tip's has, so far), or passed (or, for a relock PR, isn't looked at)
+ * - `pending`, `passed`: it's one commit on its base's tip, and its CI is still running (or has failed only as its base's tip's has, so far), or passed (or, for a relock PR, isn't looked at); CI that failed only in ways `continue-on-error` hides passed (see `optionalFailures`)
  * - `restored`: its CI failed, and inputs it removed from a workflow file that failed in a way its base's tip doesn't were put back, and kept
  * - `stuck`: its CI failed, and there's nothing left to put back (or where to put it back is ambiguous, or every workflow file that failed only failed as on its base's tip), so it needs a person (which it says, once per head)
  * Once it's said a PR is `stuck`, that's what it is until its head changes; once it's said it's `conflict` or `empty`, that's what it is until its head, or its base's tip, changes: later runs find what was said on it, and never clone it again to decide it again.
@@ -85,16 +85,32 @@ function show(git, rev) {
  * One commit on `base`'s tip with `tree`, with the message of `from` (the PR's oldest commit, which is the App's, whose message says what it's for).
  * @type {(git: Git, commit: { base: string, tree: string, from: string }) => string}
  */
-function commitOnBase(git, {
-	base, tree, from,
-}) {
-	return git([
-		'commit-tree', tree, '-p', `origin/${base}`, '-F', '-',
-	], {
-		input: git([
-			'log', '-1', '--format=%B', from,
-		]).stdout,
-	}).stdout.trim();
+function commitOnBase(
+	git,
+	{
+		base,
+		tree,
+		from,
+	},
+) {
+	return git(
+		[
+			'commit-tree',
+			tree,
+			'-p',
+			`origin/${base}`,
+			'-F',
+			'-',
+		],
+		{
+			input: git([
+				'log',
+				'-1',
+				'--format=%B',
+				from,
+			]).stdout,
+		},
+	).stdout.trim();
 }
 
 /** @typedef {{ context: Context, repo: Repo, pr: PR, octokit: Octokit, token: string }} Target */
@@ -102,11 +118,24 @@ function commitOnBase(git, {
 
 // about the PR's head commit, which is what it was looked at as (and, with `base`, its base's tip, which it was looked at on)
 /** @type {(target: Target, about: { kind: Said, base?: string }, body: string) => Promise<boolean>} */
-function say({
-	context, repo, pr, octokit,
-}, { kind, base }, body) {
+function say(
+	{
+		context,
+		repo,
+		pr,
+		octokit,
+	},
+	{ kind, base },
+	body,
+) {
 	return commentOnce({
-		octokit, owner: repo.owner, name: repo.name, number: pr.number, author: context.bot, marker: marker(kind, pr.head.sha, base), body,
+		octokit,
+		owner: repo.owner,
+		name: repo.name,
+		number: pr.number,
+		author: context.bot,
+		marker: marker(kind, pr.head.sha, base),
+		body,
 	});
 }
 
@@ -114,16 +143,25 @@ function say({
  * One commit on `base`'s tip whose tree is `tree`'s, with `writes`, and the message of `from`.
  * @type {(git: Git, commit: { base: string, tree: string, from: string }, writes: Map<string, string>) => string}
  */
-function rewrite(git, {
-	base, tree, from,
-}, writes) {
+function rewrite(
+	git,
+	{
+		base,
+		tree,
+		from,
+	},
+	writes,
+) {
 	git(['read-tree', tree]);
 	writes.forEach((content, file) => {
-		const blob = git([
-			'hash-object',
-			'-w',
-			'--stdin',
-		], { input: content }).stdout.trim();
+		const blob = git(
+			[
+				'hash-object',
+				'-w',
+				'--stdin',
+			],
+			{ input: content },
+		).stdout.trim();
 		git([
 			'update-index',
 			'--add',
@@ -132,7 +170,9 @@ function rewrite(git, {
 		]);
 	});
 	return commitOnBase(git, {
-		base, tree: git(['write-tree']).stdout.trim(), from,
+		base,
+		tree: git(['write-tree']).stdout.trim(),
+		from,
 	});
 }
 
@@ -143,16 +183,28 @@ function rewrite(git, {
  */
 async function rebase(job) {
 	const {
-		git, pr, tip, identity,
+		git,
+		pr,
+		tip,
+		identity,
 	} = job;
 	const base = pr.base.ref;
 	const commits = ownCommits(git, { base, tip });
 	const from = commits.length === 1 ? `${tip}^` : git([
-		'merge-base', `origin/${base}`, tip,
+		'merge-base',
+		`origin/${base}`,
+		tip,
 	]).stdout.trim();
-	const merged = git([
-		'merge-tree', '--write-tree', `--merge-base=${from}`, `origin/${base}`, tip,
-	], { allowFailure: true });
+	const merged = git(
+		[
+			'merge-tree',
+			'--write-tree',
+			`--merge-base=${from}`,
+			`origin/${base}`,
+			tip,
+		],
+		{ allowFailure: true },
+	);
 	const onto = git(['rev-parse', `origin/${base}`]).stdout.trim();
 	if (merged.status !== 0) {
 		await say(job, { kind: 'conflict', base: onto }, `This PR conflicts with ${code(base)}, so the App can’t rebase it onto ${code(base)}’s tip, which it must be on to be merged: it needs updating (eg, with \`/fix\`), or closing.`);
@@ -164,14 +216,30 @@ async function rebase(job) {
 		return { kind: 'empty', text: `${code(base)} already has everything it changes, so it’s left as it is; said so on it` };
 	}
 	const touched = git([
-		'diff', '--name-only', from, tip, '--', packageJson, configFile,
+		'diff',
+		'--name-only',
+		from,
+		tip,
+		'--',
+		packageJson,
+		configFile,
 	]).stdout.trim() !== '';
 	const synced = touched ? await syncConfigIgnore(packageJsonAt(git, tree), hasConfig(git, tree)) : null;
-	const commit = rewrite(git, {
-		base, tree, from: String(commits.at(-1)),
-	}, new Map(synced === null ? [] : [[packageJson, synced.content]]));
+	const commit = rewrite(
+		git,
+		{
+			base,
+			tree,
+			from: String(commits.at(-1)),
+		},
+		new Map(synced === null ? [] : [[packageJson, synced.content]]),
+	);
 	pushBranch(git, {
-		base, branch: pr.head.ref, tip, identity, commit,
+		base,
+		branch: pr.head.ref,
+		tip,
+		identity,
+		commit,
 	});
 	/** @type {Record<'ignored' | 'unignored', string>} */
 	const resynced = {
@@ -203,7 +271,11 @@ function declaredOnly(inputs) {
  */
 function restorations(git, { base, tip }, failed) {
 	const changed = new Set(git([
-		'diff', '--name-only', '-z', `origin/${base}`, tip,
+		'diff',
+		'--name-only',
+		'-z',
+		`origin/${base}`,
+		tip,
 	]).stdout.split('\0').filter(Boolean));
 	/** @type {Map<string, string>} */
 	const writes = new Map();
@@ -253,11 +325,16 @@ function restorations(git, { base, tip }, failed) {
  */
 async function restore(job, failed) {
 	const {
-		git, pr, tip,
+		git,
+		pr,
+		tip,
 	} = job;
 	const base = pr.base.ref;
 	const {
-		writes, kept, ambiguous, unwritable,
+		writes,
+		kept,
+		ambiguous,
+		unwritable,
 	} = restorations(git, { base, tip }, failed);
 	if (ambiguous.size > 0) {
 		await say(job, { kind: 'stuck' }, `CI failed on this PR’s head commit, and the App can’t tell where to restore inputs this PR removed: ${[...ambiguous].map(([file, why]) => `in ${code(file)}, ${code(why)}`).join('; ')}. It needs a person to look at it.`);
@@ -280,11 +357,21 @@ async function restore(job, failed) {
 	if (ignored !== null) {
 		writes.set(packageJson, ignored.content);
 	}
-	const commit = rewrite(git, {
-		base, tree: tip, from: tip,
-	}, writes);
+	const commit = rewrite(
+		git,
+		{
+			base,
+			tree: tip,
+			from: tip,
+		},
+		writes,
+	);
 	pushBranch(git, {
-		base, branch: pr.head.ref, tip, identity: job.identity, commit,
+		base,
+		branch: pr.head.ref,
+		tip,
+		identity: job.identity,
+		commit,
 	});
 	return { kind: 'restored', text: `its CI failed, so restored ${[...kept].map(([file, inputs]) => `${inputs.map(code).join(', ')} in ${code(file)}`).join('; ')}, and kept them in ${code(configFile)}${ignored === null ? '' : `, which it added to ${code(packageJson)}’s \`publishConfig.ignore\``}` };
 }
@@ -303,11 +390,23 @@ function identityFor({ auth, identities }, installationId) {
  * Which of `kinds` the bot already said the PR is, about its head commit (and, with `base`, its base's tip: see `say`), from the API: so that what's decided about them is never decided again (which would take a clone).
  * @type {(target: Target, kinds: Said[], base?: string) => Promise<Outcome | null>}
  */
-async function alreadySaid({
-	context, repo, pr, octokit,
-}, kinds, base) {
+async function alreadySaid(
+	{
+		context,
+		repo,
+		pr,
+		octokit,
+	},
+	kinds,
+	base,
+) {
 	const said = await findMarked({
-		octokit, owner: repo.owner, name: repo.name, number: pr.number, author: context.bot, markers: kinds.map((k) => marker(k, pr.head.sha, base)),
+		octokit,
+		owner: repo.owner,
+		name: repo.name,
+		number: pr.number,
+		author: context.bot,
+		markers: kinds.map((k) => marker(k, pr.head.sha, base)),
 	});
 	const kind = kinds.find((k) => marker(k, pr.head.sha, base) === said);
 	return kind ? { kind, text: `left as it is: as already said on it, it’s \`${kind}\` until its head commit${base ? ', or its base’s tip,' : ''} changes` } : null;
@@ -322,14 +421,23 @@ const branchChanged = /** @type {const} */ ({ kind: 'changed', text: 'its branch
  */
 async function withClone(target, onBase, act) {
 	const {
-		context, repo, pr, token,
+		context,
+		repo,
+		pr,
+		token,
 	} = target;
 	const identity = await identityFor(context, repo.installationId);
 	const dir = mkdtempSync(path.join(process.env.RUNNER_TEMP || tmpdir(), 'fleet-maintain-'));
 	try {
 		const base = pr.base.ref;
 		const { git } = checkout({
-			serverURL: context.serverURL, repository: repo.repository, base, token, identity, dir: path.join(dir, 'repo'), partial: onBase ? { depth: 1 } : {},
+			serverURL: context.serverURL,
+			repository: repo.repository,
+			base,
+			token,
+			identity,
+			dir: path.join(dir, 'repo'),
+			partial: onBase ? { depth: 1 } : {},
 		});
 		// with `onBase`, the head and its parent, which should be the base's tip
 		const tip = remoteTip(git, pr.head.ref, onBase ? { depth: 2 } : {});
@@ -337,7 +445,10 @@ async function withClone(target, onBase, act) {
 			return branchChanged;
 		}
 		return await act({
-			...target, git, tip, identity,
+			...target,
+			git,
+			tip,
+			identity,
 		});
 	} finally {
 		rmSync(dir, { recursive: true, force: true });
@@ -345,17 +456,17 @@ async function withClone(target, onBase, act) {
 }
 
 /**
- * For a PR whose CI failed, restores what it removed from the workflow files whose failures it could have caused (see `restore`), but never for a failure its base branch's tip has too (see `blame`): when that's every one, the PR needs a person, which it says, once for each head commit. While that can't be told yet, nothing's done.
- * @type {(target: Target, failures: CIFailure[], commits: { headCommit: Commit, baseTip: Commit }) => Promise<Outcome>}
+ * For a PR whose CI failed, restores what it removed from the workflow files whose failures it could have caused (see `restore`), but never for a failure its base branch's tip has too, nor one that `continue-on-error` hides (see `blame`): when that's every one, the PR needs a person, which it says, once for each head commit. While that can't be told yet, nothing's done.
+ * @type {(target: Target, ci: { failures: CIFailure[], running: boolean }, baseTip: Commit) => Promise<Outcome>}
  */
-async function remediate(target, failures, commits) {
-	const blamed = await blame(target.octokit, failures, commits);
+async function remediate(target, ci, baseTip) {
+	const blamed = await blame(target.octokit, ci, baseTip);
 	const base = target.pr.base.ref;
 	if (blamed.kind === 'running') {
 		return { kind: 'pending', text: `up to date; its CI has failed only as ${code(base)}’s does so far, and is still running` };
 	}
 	if (blamed.kind === 'base') {
-		await say(target, { kind: 'stuck' }, `Every workflow file that failed on this PR’s head commit (${blamed.files.map(code).join(', ')}) fails the same way on ${code(base)}’s head commit (${code(commits.baseTip.head)}), so the App has nothing to restore: it needs a person to look at it.`);
+		await say(target, { kind: 'stuck' }, `Every workflow file that failed on this PR’s head commit (${blamed.files.map(code).join(', ')}) fails the same way on ${code(base)}’s head commit (${code(baseTip.head)}), so the App has nothing to restore: it needs a person to look at it.`);
 		return { kind: 'stuck', text: `its CI failed only as ${code(base)}’s does; said so on it` };
 	}
 	return withClone(target, true, (job) => restore(job, blamed.files));
@@ -367,16 +478,30 @@ async function remediate(target, failures, commits) {
  * Never touches a PR with anyone else's commits on it.
  * @type {(context: Context, target: { repo: Repo, pr: PR, octokit: Octokit, token: string }) => Promise<Outcome>}
  */
-export async function maintainPR(context, {
-	repo, pr, octokit, token,
-}) {
+export async function maintainPR(
+	context,
+	{
+		repo,
+		pr,
+		octokit,
+		token,
+	},
+) {
 	/** @type {Target} */
 	const target = {
-		context, repo, pr, octokit, token,
+		context,
+		repo,
+		pr,
+		octokit,
+		token,
 	};
 	/** @type {MergeTarget} */
 	const at = {
-		owner: repo.owner, name: repo.name, number: pr.number, base: pr.base.ref, head: pr.head.sha,
+		owner: repo.owner,
+		name: repo.name,
+		number: pr.number,
+		base: pr.base.ref,
+		head: pr.head.sha,
 	};
 	const commits = await commitsRefusal(octokit, at, context.bot);
 	if ('reason' in commits) {
@@ -388,7 +513,9 @@ export async function maintainPR(context, {
 	}
 	if (!await isSingleOnBase(octokit, at, commits)) {
 		const { data: ref } = await octokit.rest.git.getRef({
-			owner: repo.owner, repo: repo.name, ref: `heads/${pr.base.ref}`,
+			owner: repo.owner,
+			repo: repo.name,
+			ref: `heads/${pr.base.ref}`,
 		});
 		return await alreadySaid(target, ['conflict', 'empty'], ref.object.sha) ?? withClone(target, false, rebase);
 	}
@@ -404,10 +531,7 @@ export async function maintainPR(context, {
 	const ci = await ciFailures(octokit, headCommit);
 	if (ci.kind === 'failed') {
 		// its one commit's parent is its base's tip
-		return await alreadySaid(target, ['stuck']) ?? remediate(target, ci.failures, {
-			headCommit,
-			baseTip: { ...headCommit, head: commits.parents[0] },
-		});
+		return await alreadySaid(target, ['stuck']) ?? remediate(target, ci, { ...headCommit, head: commits.parents[0] });
 	}
 	return { kind: ci.kind, text: `up to date; its CI ${ci.kind === 'pending' ? 'is still running' : 'passed'}` };
 }
@@ -432,32 +556,38 @@ export async function maintain(auth, accounts, { bot, serverURL }) {
 	};
 	let errors = failures;
 	// one at a time, private repositories last, as the commands do
-	await repos.filter((r) => !r.private).concat(repos.filter((r) => r.private)).reduce(async (previous, repo) => {
-		await previous;
-		try {
-			const token = await installationToken(auth, repo.installationId, { repositoryNames: [repo.name], permissions });
-			core.setSecret(token);
-			const octokit = octokitFor(token, repo.private);
-			await (await candidatePRs(octokit, repo, context.bot)).reduce(async (previousPR, pr) => {
-				await previousPR;
-				const { text } = await maintainPR(context, {
-					repo,
-					pr,
-					octokit,
-					token,
-				});
-				if (!repo.private) {
-					core.info(`${serverURL}/${repo.repository}/pull/${pr.number}: ${text}`);
-				}
-			}, Promise.resolve());
-		} catch (error) {
+	await repos.filter((r) => !r.private).concat(repos.filter((r) => r.private)).reduce(
+		async (previous, repo) => {
+			await previous;
+			try {
+				const token = await installationToken(auth, repo.installationId, { repositoryNames: [repo.name], permissions });
+				core.setSecret(token);
+				const octokit = octokitFor(token, repo.private);
+				await (await candidatePRs(octokit, repo, context.bot)).reduce(
+					async (previousPR, pr) => {
+						await previousPR;
+						const { text } = await maintainPR(context, {
+							repo,
+							pr,
+							octokit,
+							token,
+						});
+						if (!repo.private) {
+							core.info(`${serverURL}/${repo.repository}/pull/${pr.number}: ${text}`);
+						}
+					},
+					Promise.resolve(),
+				);
+			} catch (error) {
 			// a private repository's failure is never shown, and never fails the run
-			if (!repo.private) {
-				errors += 1;
-				core.warning(`${repo.repository}: ${messageOf(error)}`);
+				if (!repo.private) {
+					errors += 1;
+					core.warning(`${repo.repository}: ${messageOf(error)}`);
+				}
 			}
-		}
-	}, Promise.resolve());
+		},
+		Promise.resolve(),
+	);
 	core.info('Open PRs in private repositories, if any, were also kept up to date; nothing about them is shown here.');
 	return errors;
 }

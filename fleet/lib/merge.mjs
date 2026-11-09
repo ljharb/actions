@@ -31,8 +31,8 @@ export { behindReason, maxPRCommits } from './merge-guards.mjs';
  *   commandFailed?: boolean,
  * }} Entry
  */
-// a failure's `files` are the workflow files (eg, `.github/workflows/tests.yml`) whose runs or jobs failed, or had a step whose failure `continue-on-error` hides
-/** @typedef {{ kind: 'ready' } | { kind: 'pending' } | { kind: 'failed', failures: string[], files: string[] } | { kind: 'behind' } | { kind: 'refused', reason: string }} Assessment */
+// a failure's `files` are the workflow files (eg, `.github/workflows/tests.yml`) whose runs or jobs failed; `optional`, when there is any, says what failed that `continue-on-error` hides, which never keeps a PR from being merged (see `ciStatus`)
+/** @typedef {{ kind: 'ready', optional?: string[] } | { kind: 'pending' } | { kind: 'failed', failures: string[], files: string[], optional?: string[] } | { kind: 'behind' } | { kind: 'refused', reason: string }} Assessment */
 /** @typedef {{ owner: string, name: string, number: number, base: string, head: string }} Target */
 /** @typedef {{ number: number, head: { sha: string, ref: string, repo: { full_name: string } | null }, base: { ref: string }, user: { login: string } | null }} PR */
 
@@ -89,9 +89,15 @@ function describePermissions(permissions) {
  * An Octokit for only the repository `name`, with only `permissions`.
  * @type {(auth: Auth, repo: { installationId: number, name: string, private: boolean }, permissions: Record<string, string>) => Promise<Octokit>}
  */
-export async function repoOctokit(auth, {
-	installationId, name, private: isPrivate,
-}, permissions) {
+export async function repoOctokit(
+	auth,
+	{
+		installationId,
+		name,
+		private: isPrivate,
+	},
+	permissions,
+) {
 	/** @type {string} */
 	let token;
 	try {
@@ -116,32 +122,41 @@ export async function installationFor(auth, owner, name) {
  * The open PRs the App's bot opened in `owner/name` from one of its own branches there: never from a fork, nor by anyone else.
  * @type {(octokit: Octokit, repo: { owner: string, name: string, repository: string }, bot: string) => Promise<PR[]>}
  */
-export async function candidatePRs(octokit, {
-	owner, name, repository,
-}, bot) {
+export async function candidatePRs(
+	octokit,
+	{
+		owner,
+		name,
+		repository,
+	},
+	bot,
+) {
 	/** @type {PR[]} */
 	const found = [];
-	await botBranches.reduce(async (previous, branch) => {
-		await previous;
-		// `head` only narrows by the head repository's owner and branch, so a fork of anything else the owner has can still match
-		const prs = await octokit.paginate(octokit.rest.pulls.list, {
-			owner,
-			repo: name,
-			head: `${owner}:${branch}`,
-			state: 'open',
-			per_page: 100, // eslint-disable-line camelcase
-		});
-		prs.filter((pr) => pr.head.ref === branch
+	await botBranches.reduce(
+		async (previous, branch) => {
+			await previous;
+			// `head` only narrows by the head repository's owner and branch, so a fork of anything else the owner has can still match
+			const prs = await octokit.paginate(octokit.rest.pulls.list, {
+				owner,
+				repo: name,
+				head: `${owner}:${branch}`,
+				state: 'open',
+				per_page: 100, // eslint-disable-line camelcase
+			});
+			prs.filter((pr) => pr.head.ref === branch
 			&& pr.head.repo?.full_name.toLowerCase() === repository.toLowerCase()
 			&& pr.user?.login.toLowerCase() === bot.toLowerCase()).forEach((pr) => {
-			found.push(pr);
-		});
-	}, Promise.resolve());
+				found.push(pr);
+			});
+		},
+		Promise.resolve(),
+	);
 	return found.sort((a, b) => a.number - b.number);
 }
 
 /**
- * Whether a PR can be merged now: `refused` when it has commits that aren't the App's bot's own (which only a person can review), `behind` when it isn't one commit on its base's current tip (which the App fixes by rebasing it, not by waiting), else how its CI went.
+ * Whether a PR can be merged now: `refused` when it has commits that aren't the App's bot's own (which only a person can review), `behind` when it isn't one commit on its base's current tip (which the App fixes by rebasing it, not by waiting), else how its CI went (see `ciStatus`), with what failed that `continue-on-error` hides, if anything did.
  * @type {(octokit: Octokit, target: Target, bot: string) => Promise<Assessment>}
  */
 export async function assess(octokit, target, bot) {
@@ -153,7 +168,15 @@ export async function assess(octokit, target, bot) {
 		return { kind: 'behind' };
 	}
 	const ci = await ciStatus(octokit, target);
-	return ci.kind === 'passed' ? { kind: 'ready' } : ci;
+	return ci.kind === 'passed' ? { ...ci, kind: 'ready' } : ci;
+}
+
+/**
+ * What a reply about a PR says, after what happened to it, about the failures of its CI that `continue-on-error` hides (see `ciStatus`), when there are any: they never keep it from being merged.
+ * @type {(assessment: { optional?: string[] }) => string}
+ */
+export function optionalNote({ optional = [] }) {
+	return optional.length > 0 ? `; optional jobs failed, which doesn’t block merging: ${optional.join('; ')}` : '';
 }
 
 /**
@@ -161,12 +184,22 @@ export async function assess(octokit, target, bot) {
  * A refusal's message (eg, from branch protection) can name what refused it, so only its HTTP status is kept.
  * @type {(octokit: Octokit, target: Target) => Promise<void>}
  */
-export async function fastForward(octokit, {
-	owner, name, base, head,
-}) {
+export async function fastForward(
+	octokit,
+	{
+		owner,
+		name,
+		base,
+		head,
+	},
+) {
 	try {
 		await octokit.rest.git.updateRef({
-			owner, repo: name, ref: `heads/${base}`, sha: head, force: false,
+			owner,
+			repo: name,
+			ref: `heads/${base}`,
+			sha: head,
+			force: false,
 		});
 	} catch (error) {
 		throw new Error(`GitHub refused to fast-forward ${code(base)} to it${httpStatus(error)}, eg because of a branch protection rule`);
@@ -229,7 +262,9 @@ export async function readQueue(octokit, owner, repo) {
 	let value;
 	try {
 		({ data: { value } } = await octokit.rest.actions.getRepoVariable({
-			owner, repo, name: queueVariable,
+			owner,
+			repo,
+			name: queueVariable,
 		}));
 	} catch (error) {
 		if (statusOf(error) === 404) {
@@ -249,11 +284,20 @@ export async function readQueue(octokit, owner, repo) {
 }
 
 /** @type {(octokit: Octokit, where: { owner: string, repo: string, exists: boolean }, entries: Entry[]) => Promise<void>} */
-export async function writeQueue(octokit, {
-	owner, repo, exists,
-}, entries) {
+export async function writeQueue(
+	octokit,
+	{
+		owner,
+		repo,
+		exists,
+	},
+	entries,
+) {
 	const options = {
-		owner, repo, name: queueVariable, value: JSON.stringify(entries),
+		owner,
+		repo,
+		name: queueVariable,
+		value: JSON.stringify(entries),
 	};
 	await (exists ? octokit.rest.actions.updateRepoVariable(options) : octokit.rest.actions.createRepoVariable(options));
 }
@@ -264,23 +308,38 @@ export async function writeQueue(octokit, {
  * @type {(options: { octokit: Octokit, owner: string, repo: string, commentId: number, bot: string, ok: boolean }) => Promise<void>}
  */
 export async function finishQueued({
-	octokit, owner, repo, commentId, bot, ok,
+	octokit,
+	owner,
+	repo,
+	commentId,
+	bot,
+	ok,
 }) {
 	try {
 		const reactions = await octokit.paginate(octokit.rest.reactions.listForIssueComment, {
-			owner, repo, comment_id: commentId, content: 'eyes', per_page: 100, // eslint-disable-line camelcase
+			owner,
+			repo,
+			comment_id: commentId, // eslint-disable-line camelcase
+			content: 'eyes',
+			per_page: 100, // eslint-disable-line camelcase
 		});
-		await reactions.filter((r) => r.user?.login.toLowerCase() === bot.toLowerCase()).reduce(async (previous, reaction) => {
-			await previous;
-			await octokit.rest.reactions.deleteForIssueComment({
-				owner,
-				repo,
-				comment_id: commentId, // eslint-disable-line camelcase
-				reaction_id: reaction.id, // eslint-disable-line camelcase
-			});
-		}, Promise.resolve());
+		await reactions.filter((r) => r.user?.login.toLowerCase() === bot.toLowerCase()).reduce(
+			async (previous, reaction) => {
+				await previous;
+				await octokit.rest.reactions.deleteForIssueComment({
+					owner,
+					repo,
+					comment_id: commentId, // eslint-disable-line camelcase
+					reaction_id: reaction.id, // eslint-disable-line camelcase
+				});
+			},
+			Promise.resolve(),
+		);
 		await octokit.rest.reactions.createForIssueComment({
-			owner, repo, comment_id: commentId, content: ok ? 'rocket' : 'confused', // eslint-disable-line camelcase
+			owner,
+			repo,
+			comment_id: commentId, // eslint-disable-line camelcase
+			content: ok ? 'rocket' : 'confused',
 		});
 	} catch (error) {
 		core.warning(`could not mark a queued \`/merge\` as ${ok ? 'done' : 'failed'}: ${failureMessage(error)}`);

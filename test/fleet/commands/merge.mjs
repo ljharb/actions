@@ -98,7 +98,10 @@ test('fleet/commands: `/merge` rejects filters it can’t use, and anything unkn
 
 test('fleet/commands: `/dry-run merge`', (t) => {
 	const {
-		status, stdout, requests, summary,
+		status,
+		stdout,
+		requests,
+		summary,
 	} = command(t, '/dry-run merge ljharb', {
 		github: github(['a', 'archived', 'b', 'c', 'none'], ['secret']),
 		merge: {
@@ -110,17 +113,24 @@ test('fleet/commands: `/dry-run merge`', (t) => {
 				'ljharb/secret': [pr('ljharb/secret', 1, fixBranch)],
 			},
 			ci: {
-				'a-1': passing, 'a-2': pending, 'b-1': failing, 'secret-1': passing,
+				'a-1': passing,
+				'a-2': pending,
+				'b-1': failing,
+				'secret-1': passing,
 			},
 			refs: { 'ljharb/c': 'moved-on' },
 		},
 	});
 	t.equal(status, 0, 'exits successfully');
-	const body = expectedReply('/dry-run merge ljharb', [
-		`| \`ljharb/a\` | would merge ${url(1)}<br>would queue ${url(2)}: its checks haven’t all finished, so it would be merged once they pass |`,
-		'| `ljharb/b` | would not merge https://github.com/ljharb/b/pull/1: its checks failed: `tests`: failure |',
-		`| \`ljharb/c\` | would not merge https://github.com/ljharb/c/pull/1: ${needsUpdating} |`,
-	], true);
+	const body = expectedReply(
+		'/dry-run merge ljharb',
+		[
+			`| \`ljharb/a\` | would merge ${url(1)}<br>would queue ${url(2)}: its checks haven’t all finished, so it would be merged once they pass |`,
+			'| `ljharb/b` | would not merge https://github.com/ljharb/b/pull/1: its checks failed: `tests`: failure |',
+			`| \`ljharb/c\` | would not merge https://github.com/ljharb/c/pull/1: ${needsUpdating} |`,
+		],
+		true,
+	);
 	t.deepEqual(replies(requests), [body], 'says what it would do with each PR the bot opened from its own branches; the others, an archived repository, one without any (unless named), and a private one, aren’t mentioned');
 	t.equal(summary, body, 'the run summary has the same');
 	t.deepEqual(refUpdates(requests), [], 'merges nothing');
@@ -131,12 +141,20 @@ test('fleet/commands: `/dry-run merge`', (t) => {
 	t.deepEqual(matching(requests, 'GET', /^\/repos\/ljharb\/archived\//), [], 'never reading the archived repository');
 
 	const tokens = matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).filter((r) => r.body?.repositories);
-	t.deepEqual(tokens.map((r) => r.body), ['a', 'b', 'c', 'none', 'secret'].map((name) => ({
-		repositories: [name],
-		permissions: {
-			contents: 'read', pull_requests: 'read', checks: 'read', actions: 'read', statuses: 'read', // eslint-disable-line camelcase
-		},
-	})), 'each read with a token for only that repository, that can only read, a private one’s last');
+	t.deepEqual(
+		tokens.map((r) => r.body),
+		['a', 'b', 'c', 'none', 'secret'].map((name) => ({
+			repositories: [name],
+			permissions: {
+				contents: 'read',
+				pull_requests: 'read', // eslint-disable-line camelcase
+				checks: 'read',
+				actions: 'read',
+				statuses: 'read',
+			},
+		})),
+		'each read with a token for only that repository, that can only read, a private one’s last',
+	);
 	t.end();
 });
 
@@ -154,46 +172,75 @@ test('fleet/commands: `/merge` fast-forwards what passed, queues what’s pendin
 				'ljharb/secret-pending': [pr('ljharb/secret-pending', 1, fixBranch)],
 			},
 			ci: {
-				'a-1': passing, 'a-2': pending, 'b-1': failing, 'refused-1': passing, 'secret-1': passing, 'secret-pending-1': {},
+				'a-1': passing,
+				'a-2': pending,
+				'b-1': failing,
+				'refused-1': passing,
+				'secret-1': passing,
+				'secret-pending-1': {},
 			},
 			refs: { 'ljharb/c': 'moved-on' },
 			refUpdates: { 'ljharb/refused': { status: 422, body: { message: 'Protected branch update failed: the secret-rule rule' } } },
 		},
 	});
 	t.equal(status, 1, 'fails, since a public repository could not be merged');
-	t.deepEqual(annotations(stdout), [
-		'::error::1 repository could not be merged',
-	], 'saying how many');
-	t.deepEqual(refUpdates(requests), [
-		'/repos/ljharb/a/git/refs/heads%2Fmain a-1 force=false',
-		'/repos/ljharb/refused/git/refs/heads%2Fmain refused-1 force=false',
-		'/repos/ljharb/secret/git/refs/heads%2Fmain secret-1 force=false',
-	], 'fast-forwards each passing PR’s base to its head, never forced, a private one’s too');
+	t.deepEqual(
+		annotations(stdout),
+		[
+			'::error::1 repository could not be merged',
+		],
+		'saying how many',
+	);
+	t.deepEqual(
+		refUpdates(requests),
+		[
+			'/repos/ljharb/a/git/refs/heads%2Fmain a-1 force=false',
+			'/repos/ljharb/refused/git/refs/heads%2Fmain refused-1 force=false',
+			'/repos/ljharb/secret/git/refs/heads%2Fmain secret-1 force=false',
+		],
+		'fast-forwards each passing PR’s base to its head, never forced, a private one’s too',
+	);
 	const writes = matching(requests, 'PATCH', /\/git\/refs\//);
 	t.ok(writes.every((r) => r.authorization === 'token ghs_installation_1'), 'with the installation’s token');
 	const writeTokens = matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).filter((r) => r.body?.permissions?.contents === 'write');
 	t.deepEqual(writeTokens.map((r) => r.body), ['a', 'refused', 'secret'].map((name) => ({ repositories: [name], permissions: { contents: 'write', workflows: 'write' } })), 'which can push (and change workflow files), for only that repository, only asked for when merging');
 
-	t.deepEqual(replies(requests), [expectedReply(line, [
-		`| \`ljharb/a\` | merged ${url(1)}<br>queued ${url(2)}: ${queuedText} |`,
-		'| `ljharb/b` | not merged https://github.com/ljharb/b/pull/1: its checks failed: `tests`: failure |',
-		`| \`ljharb/c\` | not merged https://github.com/ljharb/c/pull/1: ${needsUpdating} |`,
-		'| `ljharb/none` | nothing to merge |',
-		'| `ljharb/refused` | not merged https://github.com/ljharb/refused/pull/1: GitHub refused to fast-forward `main` to it (HTTP 422), eg because of a branch protection rule |',
-	], false)], 'replies with what happened to each public PR, a named repository without any too, and never the refusal’s own message');
+	t.deepEqual(
+		replies(requests),
+		[expectedReply(
+			line,
+			[
+				`| \`ljharb/a\` | merged ${url(1)}<br>queued ${url(2)}: ${queuedText} |`,
+				'| `ljharb/b` | not merged https://github.com/ljharb/b/pull/1: its checks failed: `tests`: failure |',
+				`| \`ljharb/c\` | not merged https://github.com/ljharb/c/pull/1: ${needsUpdating} |`,
+				'| `ljharb/none` | nothing to merge |',
+				'| `ljharb/refused` | not merged https://github.com/ljharb/refused/pull/1: GitHub refused to fast-forward `main` to it (HTTP 422), eg because of a branch protection rule |',
+			],
+			false,
+		)],
+		'replies with what happened to each public PR, a named repository without any too, and never the refusal’s own message',
+	);
 	t.notOk(stdout.includes('secret'), 'never naming a private repository, or a refusal’s message');
 
-	t.deepEqual(writtenQueue(requests), [
-		entry('ljharb/a', 2, { commandFailed: true }),
-		entry('ljharb/secret-pending', 1, { isPrivate: true, commandFailed: true }),
-	], 'queues the pending ones, a private one’s too, noting that the command already failed');
+	t.deepEqual(
+		writtenQueue(requests),
+		[
+			entry('ljharb/a', 2, { commandFailed: true }),
+			entry('ljharb/secret-pending', 1, { isPrivate: true, commandFailed: true }),
+		],
+		'queues the pending ones, a private one’s too, noting that the command already failed',
+	);
 	const queueWrite = matching(requests, 'POST', /^\/repos\/ljharb\/actions\/actions\/variables$/);
 	t.equal(queueWrite.length, 1, 'creating the queue’s variable, which didn’t exist');
 	t.equal(queueWrite[0].authorization, issueToken, 'with the App’s token for this repository');
-	t.deepEqual(matching(requests, 'POST', /^\/app\/installations\/99\/access_tokens$/).map((r) => r.body), [
-		{ repositories: ['actions'], permissions: { issues: 'write', metadata: 'read' } },
-		{ repositories: ['actions'], permissions: { actions_variables: 'write' } }, // eslint-disable-line camelcase
-	], 'which can only read and write its Actions variables');
+	t.deepEqual(
+		matching(requests, 'POST', /^\/app\/installations\/99\/access_tokens$/).map((r) => r.body),
+		[
+			{ repositories: ['actions'], permissions: { issues: 'write', metadata: 'read' } },
+			{ repositories: ['actions'], permissions: { actions_variables: 'write' } }, // eslint-disable-line camelcase
+		],
+		'which can only read and write its Actions variables',
+	);
 	t.deepEqual(reactions(requests), ['+eyes'], 'and, since it queued a public PR, keeps its 👀 until the queue resolves it');
 	t.end();
 });
@@ -247,7 +294,10 @@ test('fleet/commands: `/merge` replaces a PR’s older queue entry, finishing th
 				'ljharb/secret': [pr('ljharb/secret', 1, fixBranch)],
 			},
 			ci: {
-				'a-1': pending, 'a-2': passing, 'z-1': passing, 'secret-1': passing,
+				'a-1': pending,
+				'a-2': passing,
+				'z-1': passing,
+				'secret-1': passing,
 			},
 			eyes: {
 				55: [{ id: 601, content: 'eyes', user: { login: bot } }, { id: 602, content: 'eyes', user: { login: 'someone' } }],
@@ -256,11 +306,15 @@ test('fleet/commands: `/merge` replaces a PR’s older queue entry, finishing th
 		},
 	});
 	t.equal(status, 0, 'exits successfully');
-	t.deepEqual(writtenQueue(requests), [
-		entry('ljharb/a', 9, { commentId: 66 }),
-		entry('ljharb/z', 2, { commentId: 44, isPrivate: true }),
-		entry('ljharb/a', 1),
-	], 'the queue keeps only what no newer command resolved: a pending PR is queued again, as the newest command asked; what it merged now is dropped');
+	t.deepEqual(
+		writtenQueue(requests),
+		[
+			entry('ljharb/a', 9, { commentId: 66 }),
+			entry('ljharb/z', 2, { commentId: 44, isPrivate: true }),
+			entry('ljharb/a', 1),
+		],
+		'the queue keeps only what no newer command resolved: a pending PR is queued again, as the newest command asked; what it merged now is dropped',
+	);
 	t.deepEqual(reactions(requests, 55), ['+rocket', '-601'], 'a command whose only PR another took over is finished, removing only the bot’s 👀');
 	t.deepEqual(reactions(requests, 44), ['+confused', '-603'], 'one whose last public PR was merged now, but which had already failed, is 😕');
 	t.deepEqual(reactions(requests, 66), [], 'one with a public PR still queued keeps its 👀');
@@ -307,10 +361,18 @@ test('fleet/commands: `/merge` queues what fits, and its queued PRs remember tha
 			ci: { 'a-2': pending, 'b-1': pending },
 		},
 	});
-	t.deepEqual(replies(requests), [expectedReply('/merge ljharb', [
-		`| \`ljharb/a\` | queued ${url(2)}: ${queuedText} |`,
-		'| `ljharb/b` | not queued https://github.com/ljharb/b/pull/1: the merge queue is full; run `/merge` again once it has room |',
-	], false)], 'the first fits, and the second doesn’t');
+	t.deepEqual(
+		replies(requests),
+		[expectedReply(
+			'/merge ljharb',
+			[
+				`| \`ljharb/a\` | queued ${url(2)}: ${queuedText} |`,
+				'| `ljharb/b` | not queued https://github.com/ljharb/b/pull/1: the merge queue is full; run `/merge` again once it has room |',
+			],
+			false,
+		)],
+		'the first fits, and the second doesn’t',
+	);
 	const written = writtenQueue(requests);
 	t.deepEqual(written?.slice(1), [entry('ljharb/a', 2, { commandFailed: true })], 'so the queued one is marked as from a command that failed');
 	t.ok(Buffer.byteLength(JSON.stringify(JSON.parse(matching(requests, 'PATCH', /variables\/FLEET_MERGE_QUEUE$/)[0].body.value))) <= maxQueueBytes, 'and the queue still fits');
@@ -343,10 +405,18 @@ test('fleet/commands: `/merge` in a repository it can’t read, or without the p
 		github: { ...github(['a', 'gone']), deniedPermissions: ['checks'], repos: { 'ljharb/a': repo() } },
 	});
 	t.equal(denied.status, 1, 'fails');
-	t.deepEqual(replies(denied.requests), [expectedReply('/merge ljharb/a ljharb/gone', [
-		'| `ljharb/a` | failed: `the fleet GitHub App could not get a token for it (HTTP 422): the App needs the “Contents: Read-only”, “Pull requests: Read-only”, “Checks: Read-only”, “Actions: Read-only”, “Commit statuses: Read-only” repository permissions, approved by its installation` |',
-		'| `ljharb/gone` | failed: `could not read the repository’s state` |',
-	], false)], 'saying which permissions it needs, and which repository couldn’t be read');
+	t.deepEqual(
+		replies(denied.requests),
+		[expectedReply(
+			'/merge ljharb/a ljharb/gone',
+			[
+				'| `ljharb/a` | failed: `the fleet GitHub App could not get a token for it (HTTP 422): the App needs the “Contents: Read-only”, “Pull requests: Read-only”, “Checks: Read-only”, “Actions: Read-only”, “Commit statuses: Read-only” repository permissions, approved by its installation` |',
+				'| `ljharb/gone` | failed: `could not read the repository’s state` |',
+			],
+			false,
+		)],
+		'saying which permissions it needs, and which repository couldn’t be read',
+	);
 	t.match(denied.stdout, /^::error::2 repositories could not be merged$/m, 'counting both');
 
 	const privateDenied = runScript(t, script, {
@@ -359,21 +429,48 @@ test('fleet/commands: `/merge` in a repository it can’t read, or without the p
 	t.end();
 });
 
-test('fleet/commands: `/merge` inspects masked step failures, and treats no CI at all as pending', (t) => {
-	const { requests } = command(t, '/dry-run merge ljharb', {
+test('fleet/commands: `/merge` notes failures that `continue-on-error` hides, which never block it, and treats no CI at all as pending', (t) => {
+	// as tape-testing/tape#625 had: a step whose failure `continue-on-error` hides, in two runs of the same workflow, which only its check run's `failure` annotations show
+	const hidden = {
+		checkRuns: [5, 6].map((id) => ({
+			...checkRun('tests / non-latest - 0.9'),
+			id,
+			app: { slug: 'github-actions' },
+			url: `https://api.github.com/check-runs/${id}`,
+			annotations: [{ annotation_level: 'failure', message: 'Process completed with exit code 1.' }], // eslint-disable-line camelcase
+		})),
+		runs: [5, 6].map((id) => ({ id, jobs: [{ name: 'tests / non-latest - 0.9', check_run_url: `https://api.github.com/check-runs/${id}`, steps: [{ name: 'tests', conclusion: 'success' }] }] })), // eslint-disable-line camelcase
+	};
+	const note = '; optional jobs failed, which doesn’t block merging: `tests / non-latest - 0.9`: `Process completed with exit code 1.`';
+	const dryRun = command(t, '/dry-run merge ljharb', {
 		merge: {
-			openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch), pr('ljharb/a', 2, relockBranch)] },
+			openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch), pr('ljharb/a', 2, relockBranch), pr('ljharb/a', 3, fixBranch)] },
 			ci: {
-				'a-1': {
-					checkRuns: [{ ...checkRun('test'), app: { slug: 'github-actions' }, url: 'https://api.github.com/check-runs/9' }],
-					runs: [{ id: 5, jobs: [{ name: 'test', check_run_url: 'https://api.github.com/check-runs/9', steps: [{ name: 'lint', conclusion: 'failure' }] }] }], // eslint-disable-line camelcase
+				'a-1': hidden,
+				// a job whose `continue-on-error` hides its failure: its check run failed, but its workflow run succeeded
+				'a-3': {
+					checkRuns: [{ ...checkRun('optional', 'failure'), app: { slug: 'github-actions' }, check_suite: { id: 70 } }, checkRun('tests', 'failure')], // eslint-disable-line camelcase
+					runs: [{ id: 7, check_suite_id: 70, jobs: [] }], // eslint-disable-line camelcase
 				},
 			},
 		},
 	});
-	t.deepEqual(replies(requests), [expectedReply('/dry-run merge ljharb', [
-		`| \`ljharb/a\` | would not merge ${url(1)}: its checks failed: \`test\`: step \`lint\`: failure<br>would queue ${url(2)}: its checks haven’t all finished, so it would be merged once they pass |`,
-	], true)], 'a step that failed under `continue-on-error` fails CI; no checks at all is pending');
+	t.deepEqual(
+		replies(dryRun.requests),
+		[expectedReply(
+			'/dry-run merge ljharb',
+			[
+				`| \`ljharb/a\` | would merge ${url(1)}${note}<br>would queue ${url(2)}: its checks haven’t all finished, so it would be merged once they pass<br>would not merge ${url(3)}: its checks failed: \`tests\`: failure; optional jobs failed, which doesn’t block merging: \`optional\`: failure |`,
+			],
+			true,
+		)],
+		'a step that failed under `continue-on-error` doesn’t fail CI, and is noted once; nor does a job that did, which is noted beside a real failure; no checks at all is pending',
+	);
+
+	const merged = command(t, '/merge ljharb/a', { merge: { openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch)] }, ci: { 'a-1': hidden } } });
+	t.equal(merged.status, 0, 'exits successfully');
+	t.deepEqual(refUpdates(merged.requests), ['/repos/ljharb/a/git/refs/heads%2Fmain a-1 force=false'], 'merging it');
+	t.deepEqual(replies(merged.requests), [expectedReply('/merge ljharb/a', [`| \`ljharb/a\` | merged ${url(1)}${note} |`], false)], 'noting what failed that doesn’t block it');
 	t.end();
 });
 
@@ -422,22 +519,34 @@ test('fleet/commands: `/merge` takes only PRs of the App’s bot’s own commits
 	const line = `/merge ${names.map((n) => `ljharb/${n}`).join(' ')} ljharb/secret`;
 	const { status, stdout, requests } = command(t, line, { github: github(names, ['secret']), merge });
 	t.equal(status, 0, 'exits successfully');
-	t.deepEqual(refUpdates(requests), [
-		'/repos/ljharb/email/git/refs/heads%2Fmain email-1 force=false',
-		'/repos/ljharb/suite-empty/git/refs/heads%2Fmain suite-empty-1 force=false',
-		'/repos/ljharb/suite-stuck/git/refs/heads%2Fmain suite-stuck-1 force=false',
-	], 'merges only the PRs whose commits are all the bot’s (by its noreply email, when GitHub links them to no user), whose check suites have all finished, an empty one with no conclusion too, and ignoring suites with no check runs that apps left queued long ago');
+	t.deepEqual(
+		refUpdates(requests),
+		[
+			'/repos/ljharb/email/git/refs/heads%2Fmain email-1 force=false',
+			'/repos/ljharb/suite-empty/git/refs/heads%2Fmain suite-empty-1 force=false',
+			'/repos/ljharb/suite-stuck/git/refs/heads%2Fmain suite-stuck-1 force=false',
+		],
+		'merges only the PRs whose commits are all the bot’s (by its noreply email, when GitHub links them to no user), whose check suites have all finished, an empty one with no conclusion too, and ignoring suites with no check runs that apps left queued long ago',
+	);
 	t.deepEqual(writtenQueue(requests), [entry('ljharb/suite-pending', 1, { commandFailed: true })], 'queues only the one with an unfinished check suite: never one with someone else’s commits, even while its CI is pending, nor a private one’s');
-	t.deepEqual(replies(requests), [expectedReply(line, [
-		`| \`ljharb/author\` | not merged https://github.com/ljharb/author/pull/1: ${someoneElse} |`,
-		`| \`ljharb/committer\` | not merged https://github.com/ljharb/committer/pull/1: ${someoneElse} |`,
-		'| `ljharb/email` | merged https://github.com/ljharb/email/pull/1 |',
-		'| `ljharb/many` | not merged https://github.com/ljharb/many/pull/1: it has at least 250 commits, more than GitHub lists, so they can’t all be checked to be the App’s own; review and merge it yourself |',
-		'| `ljharb/suite-empty` | merged https://github.com/ljharb/suite-empty/pull/1 |',
-		'| `ljharb/suite-failed` | not merged https://github.com/ljharb/suite-failed/pull/1: its checks failed: check suite 2: timed_out |',
-		`| \`ljharb/suite-pending\` | queued https://github.com/ljharb/suite-pending/pull/1: ${queuedText} |`,
-		'| `ljharb/suite-stuck` | merged https://github.com/ljharb/suite-stuck/pull/1 |',
-	], false)], 'saying why each public one wasn’t merged');
+	t.deepEqual(
+		replies(requests),
+		[expectedReply(
+			line,
+			[
+				`| \`ljharb/author\` | not merged https://github.com/ljharb/author/pull/1: ${someoneElse} |`,
+				`| \`ljharb/committer\` | not merged https://github.com/ljharb/committer/pull/1: ${someoneElse} |`,
+				'| `ljharb/email` | merged https://github.com/ljharb/email/pull/1 |',
+				'| `ljharb/many` | not merged https://github.com/ljharb/many/pull/1: it has at least 250 commits, more than GitHub lists, so they can’t all be checked to be the App’s own; review and merge it yourself |',
+				'| `ljharb/suite-empty` | merged https://github.com/ljharb/suite-empty/pull/1 |',
+				'| `ljharb/suite-failed` | not merged https://github.com/ljharb/suite-failed/pull/1: its checks failed: check suite 2: timed_out |',
+				`| \`ljharb/suite-pending\` | queued https://github.com/ljharb/suite-pending/pull/1: ${queuedText} |`,
+				'| `ljharb/suite-stuck` | merged https://github.com/ljharb/suite-stuck/pull/1 |',
+			],
+			false,
+		)],
+		'saying why each public one wasn’t merged',
+	);
 	t.notOk(stdout.includes('secret'), 'never mentioning the private one');
 	t.deepEqual(matching(requests, 'GET', /\/repos\/ljharb\/(?:author|committer|many)\/(?:compare|commits\/)/), [], 'never even reading CI, or comparing, for one it won’t merge for its commits');
 

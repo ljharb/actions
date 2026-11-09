@@ -10,6 +10,7 @@ import {
 	fastForward,
 	fits,
 	messageOf,
+	optionalNote,
 	queueOctokit,
 	readPermissions,
 	readQueue,
@@ -57,12 +58,23 @@ function tense(dryRun, now, later) {
  * What `/merge` does with one PR (or, in a dry run, would do).
  * @type {(context: MergeContext, job: { state: RepoState, pr: PR, bot: string, read: Octokit, write: () => Promise<Octokit> }) => Promise<Outcome>}
  */
-async function mergePR(context, {
-	state, pr, bot, read, write,
-}) {
+async function mergePR(
+	context,
+	{
+		state,
+		pr,
+		bot,
+		read,
+		write,
+	},
+) {
 	const url = prURL(state.repository, pr.number);
 	const target = {
-		owner: state.owner, name: state.name, number: pr.number, base: pr.base.ref, head: pr.head.sha,
+		owner: state.owner,
+		name: state.name,
+		number: pr.number,
+		base: pr.base.ref,
+		head: pr.head.sha,
 	};
 	const assessment = await assess(read, target, bot);
 	const not = tense(context.dryRun, 'not merged', 'would not merge');
@@ -73,7 +85,7 @@ async function mergePR(context, {
 		return { text: `${not} ${url}: ${behindReason(target.base)}`, ok: context.dryRun };
 	}
 	if (assessment.kind === 'failed') {
-		return { text: `${not} ${url}: its checks failed: ${assessment.failures.join(', ')}`, ok: context.dryRun };
+		return { text: `${not} ${url}: its checks failed: ${assessment.failures.join(', ')}${optionalNote(assessment)}`, ok: context.dryRun };
 	}
 	if (assessment.kind === 'pending' && context.dryRun) {
 		return { text: `would queue ${url}: its checks haven’t all finished, so it would be merged once they pass`, ok: true };
@@ -96,17 +108,19 @@ async function mergePR(context, {
 		};
 	}
 	if (context.dryRun) {
-		return { text: `would merge ${url}`, ok: true };
+		return { text: `would merge ${url}${optionalNote(assessment)}`, ok: true };
 	}
 	const octokit = await write();
 	try {
 		await fastForward(octokit, target);
 	} catch (error) {
 		return {
-			text: `not merged ${url}: ${messageOf(error)}`, ok: false, error: true,
+			text: `not merged ${url}: ${messageOf(error)}`,
+			ok: false,
+			error: true,
 		};
 	}
-	return { text: `merged ${url}`, ok: true };
+	return { text: `merged ${url}${optionalNote(assessment)}`, ok: true };
 }
 
 /**
@@ -130,7 +144,11 @@ async function mergeRepo(context, state, bot) {
 		};
 		for (const pr of await candidatePRs(read, state, bot)) {
 			const outcome = await mergePR(context, { // eslint-disable-line no-await-in-loop
-				state, pr, bot, read, write,
+				state,
+				pr,
+				bot,
+				read,
+				write,
 			});
 			outcomes.push({ ...outcome, key: entryKey({ repository: state.repository, number: pr.number }) });
 		}
@@ -142,7 +160,9 @@ async function mergeRepo(context, state, bot) {
 			const text = messageOf(error);
 			core.warning(`${state.repository}: ${text}`);
 			outcomes.push({
-				text: `failed: ${code(text)}`, ok: false, error: true,
+				text: `failed: ${code(text)}`,
+				ok: false,
+				error: true,
 			});
 		}
 	}
@@ -177,9 +197,15 @@ async function enqueue(context, resolved, wanted) {
 		}
 	}
 	if (replaced.length > 0 || queue.length > entries.length - replaced.length) {
-		await writeQueue(octokit, {
-			owner, repo, exists,
-		}, queue);
+		await writeQueue(
+			octokit,
+			{
+				owner,
+				repo,
+				exists,
+			},
+			queue,
+		);
 	}
 	context.progress.queued = queue.some((e) => !e.private && e.commentId === context.commentId); // eslint-disable-line no-param-reassign
 	/** @type {Map<number, boolean>} */
@@ -213,7 +239,9 @@ export async function runMerge(context, states, { repositories, accounts }) {
 	for (const state of [...selected.filter((s) => !s.private), ...selected.filter((s) => s.private)]) {
 		const outcomes = await mergeRepo(context, state, bot); // eslint-disable-line no-await-in-loop
 		rows.push({
-			state, named: repositories.has(state.repository.toLowerCase()), outcomes,
+			state,
+			named: repositories.has(state.repository.toLowerCase()),
+			outcomes,
 		});
 	}
 

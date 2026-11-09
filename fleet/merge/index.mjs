@@ -11,6 +11,7 @@ import {
 	installationFor,
 	maxQueueHours,
 	messageOf,
+	optionalNote,
 	queueOctokit,
 	readPermissions,
 	readQueue,
@@ -41,18 +42,31 @@ const runURL = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_
 const privateNote = 'Queued PRs in private repositories, if any, were also checked; nothing about them is shown here.';
 
 /** @type {(entry: Entry, outcome: { ok: boolean, text: string | null, error?: boolean }) => Result} */
-function drop(entry, {
-	ok, text, error = false,
-}) {
+function drop(
+	entry,
+	{
+		ok,
+		text,
+		error = false,
+	},
+) {
 	return {
-		entry, keep: false, ok, text, error,
+		entry,
+		keep: false,
+		ok,
+		text,
+		error,
 	};
 }
 
 /** @type {(entry: Entry, error?: boolean) => Result} */
 function keep(entry, error = false) {
 	return {
-		entry, keep: true, ok: true, text: null, error,
+		entry,
+		keep: true,
+		ok: true,
+		text: null,
+		error,
 	};
 }
 
@@ -65,17 +79,23 @@ async function recheck({ auth, bot }, entry, visibility) {
 	const url = `${GITHUB_SERVER_URL}/${entry.repository}/pull/${entry.number}`;
 	const installationId = await installationFor(auth, owner, name);
 	const repo = {
-		installationId, name, private: entry.private,
+		installationId,
+		name,
+		private: entry.private,
 	};
 	const read = await repoOctokit(auth, repo, readPermissions);
 	const { data: pr } = await read.rest.pulls.get({
-		owner, repo: name, pull_number: entry.number, // eslint-disable-line camelcase
+		owner,
+		repo: name,
+		pull_number: entry.number, // eslint-disable-line camelcase
 	});
 	// a repository made private since is private now
 	visibility.shown &&= !pr.base.repo.private; // eslint-disable-line no-param-reassign
 	/** @type {(ok: boolean, text: string, error?: boolean) => Result} */
 	const done = (ok, text, error) => drop(entry, {
-		ok, text: visibility.shown ? text : null, error: error && visibility.shown,
+		ok,
+		text: visibility.shown ? text : null,
+		error: error && visibility.shown,
 	});
 	if (pr.state !== 'open') {
 		return pr.merged_at ? done(true, `already merged ${url}`) : done(false, `not merged ${url}: it was closed`);
@@ -85,7 +105,11 @@ async function recheck({ auth, bot }, entry, visibility) {
 		return done(false, `not merged ${url}: the PR changed after \`/merge\`; run \`/merge\` again`);
 	}
 	const target = {
-		owner, name, number: entry.number, base: entry.base, head: entry.headSha,
+		owner,
+		name,
+		number: entry.number,
+		base: entry.base,
+		head: entry.headSha,
 	};
 	const assessment = await assess(read, target, await bot());
 	if (assessment.kind === 'refused') {
@@ -101,7 +125,7 @@ async function recheck({ auth, bot }, entry, visibility) {
 		return done(false, `not merged ${url}: ${behindReason(target.base)}`);
 	}
 	if (assessment.kind === 'failed') {
-		return done(false, `not merged ${url}: its checks failed: ${assessment.failures.join(', ')}`);
+		return done(false, `not merged ${url}: its checks failed: ${assessment.failures.join(', ')}${optionalNote(assessment)}`);
 	}
 	const write = await repoOctokit(auth, repo, writePermissions);
 	try {
@@ -109,7 +133,7 @@ async function recheck({ auth, bot }, entry, visibility) {
 	} catch (error) {
 		return done(false, `not merged ${url}: ${messageOf(error)}`, true);
 	}
-	return done(true, `merged ${url}`);
+	return done(true, `merged ${url}${optionalNote(assessment)}`);
 }
 
 /**
@@ -150,14 +174,18 @@ function replies(results) {
 	}
 	const table = { open: '| Repository | Outcome |\n| --- | --- |', close: '' };
 	return new Map([...rows].map(([issueNumber, lines]) => [
-		issueNumber, split([
-			`The merge queue, as of [this run](${runURL}):`,
-			'',
-			{ text: table.open, group: table },
-			...lines.map((text) => ({ text, group: table })),
-			'',
-			privateNote,
-		], maxBodyLength),
+		issueNumber,
+		split(
+			[
+				`The merge queue, as of [this run](${runURL}):`,
+				'',
+				{ text: table.open, group: table },
+				...lines.map((text) => ({ text, group: table })),
+				'',
+				privateNote,
+			],
+			maxBodyLength,
+		),
 	]));
 }
 
@@ -179,7 +207,10 @@ function settle(all) {
 	const finished = [...new Set(dropped.filter((r) => !r.entry.private).map((r) => r.entry.commentId))]
 		.filter((id) => !remaining.some((e) => !e.private && e.commentId === id));
 	return {
-		remaining, changed, finished, failedCommands,
+		remaining,
+		changed,
+		finished,
+		failedCommands,
 	};
 }
 
@@ -197,14 +228,22 @@ async function report({ auth, bot }, dropped, { finished, failedCommands }) {
 	for (const [issueNumber, parts] of bodies) {
 		for (const body of parts) {
 			await octokit.rest.issues.createComment({ // eslint-disable-line no-await-in-loop
-				owner, repo, issue_number: issueNumber, body, // eslint-disable-line camelcase
+				owner,
+				repo,
+				issue_number: issueNumber, // eslint-disable-line camelcase
+				body,
 			});
 		}
 	}
 	await core.summary.addRaw([...bodies.values()].flat().join('\n\n---\n\n')).write();
 	for (const commentId of finished) {
 		await finishQueued({ // eslint-disable-line no-await-in-loop
-			octokit, owner, repo, commentId, bot: await bot(), ok: !failedCommands.has(commentId), // eslint-disable-line no-await-in-loop
+			octokit,
+			owner,
+			repo,
+			commentId,
+			bot: await bot(), // eslint-disable-line no-await-in-loop
+			ok: !failedCommands.has(commentId),
 		});
 	}
 }
@@ -228,14 +267,23 @@ async function runQueue(app, accounts) {
 	for (const entry of [...entries.filter((e) => !e.private), ...entries.filter((e) => e.private)]) {
 		results.set(entry, await check(app, accounts, entry)); // eslint-disable-line no-await-in-loop
 	}
-	const all = entries.map((e) => /** @type {Result} */ (results.get(e))); // eslint-disable-line no-extra-parens
+	const all = entries.map((e) => /** @type {Result} */ (results.get(e)));
 	const {
-		remaining, changed, finished, failedCommands,
+		remaining,
+		changed,
+		finished,
+		failedCommands,
 	} = settle(all);
 	if (changed) {
-		await writeQueue(queue, {
-			owner, repo, exists,
-		}, remaining);
+		await writeQueue(
+			queue,
+			{
+				owner,
+				repo,
+				exists,
+			},
+			remaining,
+		);
 	}
 	await report(app, all.filter((r) => !r.keep), { finished, failedCommands });
 	return all.filter((r) => r.error).length;

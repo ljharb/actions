@@ -14,7 +14,7 @@
 		"sort-keys": "off",
 		"max-len": "off",
 		"max-lines": ["error", {
-			"max": 400,
+			"max": 600,
 			"skipBlankLines": true,
 			"skipComments": true,
 		}],

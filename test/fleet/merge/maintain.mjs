@@ -75,9 +75,17 @@ let current = () => {};
  * With `partial`, it's cloned by a `file://` URL from a server that allows filters, so that a clone is really as shallow, and as partial, as asked for (a local clone ignores `--depth` and `--filter`).
  * @type {(t: Test, options: { server: Server, github: Scenario, merge: MergeScenario, posted?: Comment[], offline?: boolean, partial?: boolean }) => Promise<{ errors: number, stdout: string, requests: Recorded[] }>}
  */
-async function run(t, {
-	server, github, merge, posted = [], offline = false, partial = false,
-}) {
+async function run(
+	t,
+	{
+		server,
+		github,
+		merge,
+		posted = [],
+		offline = false,
+		partial = false,
+	},
+) {
 	current();
 	nock.disableNetConnect();
 	/** @type {Recorded[]} */
@@ -87,7 +95,10 @@ async function run(t, {
 	listComments.reply(/** @type {any} */ ((/** @type {Request} */ req) => {
 		const { pathname, search } = new URL(req.url);
 		requests.push({
-			method: 'GET', path: `${pathname}${search}`, body: null, authorization: '',
+			method: 'GET',
+			path: `${pathname}${search}`,
+			body: null,
+			authorization: '',
 		});
 		return [200, posted.filter((c) => c.key === pathname.replace(/\/comments$/, ''))];
 	}));
@@ -135,11 +146,17 @@ function installed(repos, extra = {}) {
 	return {
 		installations: [{ id: 1, account: { login: 'ljharb' } }],
 		installationRepos: { 1: repos.map((r) => installedRepo('ljharb', r.name, { private: !!r.private })) },
-		repos: Object.fromEntries(repos.map((r) => [`ljharb/${r.name}`, {
-			data: {
-				isArchived: !!r.archived, isFork: !!r.fork, p0: { totalCount: r.open?.[0] ?? 1 }, p1: { totalCount: r.open?.[1] ?? 0 },
+		repos: Object.fromEntries(repos.map((r) => [
+			`ljharb/${r.name}`,
+			{
+				data: {
+					isArchived: !!r.archived,
+					isFork: !!r.fork,
+					p0: { totalCount: r.open?.[0] ?? 1 },
+					p1: { totalCount: r.open?.[1] ?? 0 },
+				},
 			},
-		}])),
+		])),
 		...extra,
 	};
 }
@@ -155,7 +172,11 @@ function commitsOf(server, head) {
 		const [shas, author, committer] = line.split('|');
 		const [sha, ...parents] = shas.split(' ');
 		return prCommit(sha, {
-			author: login(author), committer: login(committer), authorEmail: author, committerEmail: committer, parents,
+			author: login(author),
+			committer: login(committer),
+			authorEmail: author,
+			committerEmail: committer,
+			parents,
 		});
 	});
 }
@@ -199,10 +220,17 @@ function failedIn(head, files) {
 	return {
 		[head]: {
 			checkRuns: [{
-				id: 1, name: 'tests / engines', status: 'completed', conclusion: 'failure',
+				id: 1,
+				name: 'tests / engines',
+				status: 'completed',
+				conclusion: 'failure',
 			}],
 			runs: files.map((file, i) => ({
-				id: 40944612252 + i, name: 'Tests: pretest/posttest', path: file, conclusion: 'failure', jobs: [],
+				id: 40944612252 + i,
+				name: 'Tests: pretest/posttest',
+				path: file,
+				conclusion: 'failure',
+				jobs: [],
 			})),
 		},
 	};
@@ -210,23 +238,26 @@ function failedIn(head, files) {
 
 /** @typedef {{ checkRuns: Record<string, unknown>[], runs: ({ id: number, jobs: Record<string, unknown>[] } & Record<string, unknown>)[] }} Runs */
 
+/** @typedef {'failed' | 'optional' | 'hidden' | 'passed'} JobOutcome */
+
 /**
- * A GitHub Actions run of `file`, with a job (and its check run) for each of `jobs`, each named as its key, where each that's `true` has a step whose failure `continue-on-error` hides, which only its check run's `failure` annotation shows; `id` (and the IDs after it, one per job) is its own. Unless `extra` says otherwise, the run, and each check run, completed as a success.
- * @type {(id: number, file: string, jobs: Record<string, boolean>, extra?: Record<string, unknown>) => Runs}
+ * A GitHub Actions run of `file`, with a job (and its check run, in the run's check suite) for each of `jobs`, each named as its key: one that `failed` failed the run; one that's `optional` failed, but its `continue-on-error` hid that, so the run still succeeded; one that's `hidden` had a step whose failure `continue-on-error` hid, which only its check run's `failure` annotation shows; and one that `passed` passed. `id` is its own, and its check suite's; the IDs after it are its jobs', one each. Unless `extra` says otherwise, the run completed as a failure when any job `failed`, else as a success.
+ * @type {(id: number, file: string, jobs: Record<string, JobOutcome>, extra?: Record<string, unknown>) => Runs}
  */
-function maskedRun(id, file, jobs, extra = {}) {
+function actionsRun(id, file, jobs, extra = {}) {
 	const names = Object.keys(jobs);
 	/** @type {(i: number) => string} */
-	const url = (i) => `https://api.github.com/repos/ljharb/r/check-runs/${id + i}`;
+	const url = (i) => `https://api.github.com/repos/ljharb/r/check-runs/${id + i + 1}`;
 	return {
 		checkRuns: names.map((name, i) => ({
-			id: id + i,
+			id: id + i + 1,
 			name,
 			status: 'completed',
-			conclusion: 'success',
+			conclusion: jobs[name] === 'failed' || jobs[name] === 'optional' ? 'failure' : 'success',
 			app: { slug: 'github-actions' },
+			check_suite: { id }, // eslint-disable-line camelcase
 			url: url(i),
-			annotations: jobs[name]
+			annotations: jobs[name] === 'hidden'
 				? [{ annotation_level: 'failure', message: 'Process completed with exit code 1.' }] // eslint-disable-line camelcase
 				: [],
 		})),
@@ -234,6 +265,8 @@ function maskedRun(id, file, jobs, extra = {}) {
 			{
 				id,
 				path: file,
+				check_suite_id: id, // eslint-disable-line camelcase
+				conclusion: names.some((name) => jobs[name] === 'failed') ? 'failure' : 'success',
 				...extra,
 				jobs: names.map((name, i) => ({ name, check_run_url: url(i), steps: [], run_id: id })), // eslint-disable-line camelcase
 			},
@@ -329,10 +362,14 @@ test('maintain: an installation waiting on its account to approve the App’s pe
 		merge: {},
 	});
 	t.equal(waiting.errors, 0, 'nothing failed');
-	t.deepEqual(logged(waiting.stdout), [
-		'::notice::installation 1 (ljharb) is waiting on its account to approve the App’s permissions (workflows: write), so it’s skipped until then',
-		'no open PRs from the App’s branches to keep up to date',
-	], 'saying so, for an installation without a permission keeping its PRs up to date needs');
+	t.deepEqual(
+		logged(waiting.stdout),
+		[
+			'::notice::installation 1 (ljharb) is waiting on its account to approve the App’s permissions (workflows: write), so it’s skipped until then',
+			'no open PRs from the App’s branches to keep up to date',
+		],
+		'saying so, for an installation without a permission keeping its PRs up to date needs',
+	);
 	t.deepEqual(waiting.requests.map((r) => `${r.method} ${r.path}`), ['GET /app/installations?per_page=100', 'GET /app'], 'without asking for a token, or reading anything but what permissions the App itself has');
 
 	const unavailable = await run(t, {
@@ -366,7 +403,9 @@ test('maintain: rebases a PR onto its base’s tip', async (t) => {
 	const mainTip = server.commit('main', { 'README.md': 'moved\n' });
 
 	const { errors, stdout, requests } = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]]),
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
 	});
 
 	t.equal(errors, 0, 'nothing failed');
@@ -379,20 +418,37 @@ test('maintain: rebases a PR onto its base’s tip', async (t) => {
 	t.deepEqual(comments(requests), [], 'saying nothing on the PR');
 	const token = requests.find((r) => r.path.endsWith('/access_tokens') && r.body?.repositories);
 	t.deepEqual(token?.body, { repositories: ['r'], permissions }, 'with a token for only that repository');
-	t.deepEqual(permissions, {
-		contents: 'write', pull_requests: 'write', workflows: 'write', checks: 'read', actions: 'read', statuses: 'read', // eslint-disable-line camelcase
-	}, 'that can push workflow files, comment, and read CI');
+	t.deepEqual(
+		permissions,
+		{
+			contents: 'write',
+			pull_requests: 'write', // eslint-disable-line camelcase
+			workflows: 'write',
+			checks: 'read',
+			actions: 'read',
+			statuses: 'read',
+		},
+		'that can push workflow files, comment, and read CI',
+	);
 	t.ok(stdout.includes('Open PRs in private repositories, if any, were also kept up to date; nothing about them is shown here.'), 'always ending with the same note about private ones');
 	t.end();
 });
 
 test('maintain: rebasing keeps `package.json`’s entry for `.github/ljharb-actions.json` there exactly when the file is', async (t) => {
 	/** @type {(ignore: string[]) => string} */
-	const pkg = (ignore) => `${JSON.stringify({
-		name: 'pkg', devDependencies: { npmignore: '^0.3.1' }, publishConfig: { ignore },
-	}, null, 2)}\n`;
+	const pkg = (ignore) => `${JSON.stringify(
+		{
+			name: 'pkg',
+			devDependencies: { npmignore: '^0.3.1' },
+			publishConfig: { ignore },
+		},
+		null,
+		2,
+	)}\n`;
 	const files = {
-		[pretest]: tapePretest, [aught]: tapeAught, 'README.md': 'readme\n',
+		[pretest]: tapePretest,
+		[aught]: tapeAught,
+		'README.md': 'readme\n',
 	};
 	/** @type {(initial: Record<string, string>, change: Record<string, string>, moved: Record<string, string | null>, label: string) => Promise<{ pkgJson: string, line: string | undefined }>} */
 	const rebased = async (initial, change, moved, label) => {
@@ -400,7 +456,9 @@ test('maintain: rebasing keeps `package.json`’s entry for `.github/ljharb-acti
 		const head = server.commit(fixBranch, { [aught]: fixedAught, ...change }, { who: bot, from: 'main', message });
 		const mainTip = server.commit('main', moved);
 		const { errors, stdout } = await run(t, {
-			server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]]),
+			server,
+			github: installed([{ name: 'r' }]),
+			merge: shown(server, [[1, fixBranch, head]]),
 		});
 		t.equal(errors, 0, `${label}: nothing failed`);
 		const tip = server.tip(`refs/heads/${fixBranch}`);
@@ -429,14 +487,20 @@ test('maintain: rebasing keeps `package.json`’s entry for `.github/ljharb-acti
 
 test('maintain: rebasing and restoring work in a shallow clone without file contents', async (t) => {
 	const server = setup(t, {
-		[pretest]: tapePretest, [aught]: tapeAught, 'README.md': 'readme\n', 'big.txt': 'not needed\n',
+		[pretest]: tapePretest,
+		[aught]: tapeAught,
+		'README.md': 'readme\n',
+		'big.txt': 'not needed\n',
 	});
 	fixtureGit(server.remote, ['config', 'uploadpack.allowFilter', 'true']);
 	server.commit('main', { 'old.txt': 'history\n' });
 	const rebasing = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
 	const mainTip = server.commit('main', { 'README.md': 'moved\n' });
 	const first = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, rebasing]]), partial: true,
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, rebasing]]),
+		partial: true,
 	});
 	t.equal(first.errors, 0, 'rebasing: nothing failed');
 	const rebased = server.tip(`refs/heads/${fixBranch}`);
@@ -445,13 +509,19 @@ test('maintain: rebasing and restoring work in a shallow clone without file cont
 	t.equal(server.show(rebased, 'README.md'), 'moved', 'rebasing: and the base’s');
 
 	const other = setup(t, {
-		[pretest]: tapePretest, [aught]: tapeAught, 'README.md': 'readme\n', 'big.txt': 'not needed\n',
+		[pretest]: tapePretest,
+		[aught]: tapeAught,
+		'README.md': 'readme\n',
+		'big.txt': 'not needed\n',
 	});
 	fixtureGit(other.remote, ['config', 'uploadpack.allowFilter', 'true']);
 	const otherTip = other.commit('main', { 'old.txt': 'history\n' });
 	const restoring = other.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
 	const second = await run(t, {
-		server: other, github: installed([{ name: 'r' }]), merge: shown(other, [[1, fixBranch, restoring]], { ci: failedIn(restoring, [pretest]) }), partial: true,
+		server: other,
+		github: installed([{ name: 'r' }]),
+		merge: shown(other, [[1, fixBranch, restoring]], { ci: failedIn(restoring, [pretest]) }),
+		partial: true,
 	});
 	t.equal(second.errors, 0, 'restoring: nothing failed');
 	const restored = other.tip(`refs/heads/${fixBranch}`);
@@ -472,7 +542,9 @@ test('maintain: squashes a PR with several of the bot’s commits into one', asy
 	const later = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, message: 'more' });
 
 	const { stdout } = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, later]]),
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, later]]),
 	});
 	t.ok(head, 'fixture: the bot merged the base in');
 	t.ok(logged(stdout).includes(`${prURL(server)}: rebased onto \`main\`’s tip`), 'rebases it');
@@ -490,7 +562,10 @@ test('maintain: a PR that conflicts with its base says so, once for each head an
 	/** @type {Comment[]} */
 	const posted = [];
 	const scenario = {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]]), posted,
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+		posted,
 	};
 
 	const first = await run(t, scenario);
@@ -550,7 +625,10 @@ test('maintain: a PR whose base already has its changes is left as it is', async
 	/** @type {Comment[]} */
 	const posted = [];
 	const scenario = {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]]), posted,
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+		posted,
 	};
 	const { stdout, requests } = await run(t, scenario);
 	t.ok(logged(stdout).includes(`${prURL(server)}: \`main\` already has everything it changes, so it’s left as it is; said so on it`), 'says so');
@@ -579,7 +657,11 @@ test('maintain: a PR with someone else’s commits is never touched, and says so
 	/** @type {Comment[]} */
 	const posted = [];
 	const scenario = {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]]), posted, offline: true,
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+		posted,
+		offline: true,
 	};
 
 	const first = await run(t, scenario);
@@ -618,7 +700,10 @@ test('maintain: a PR whose branch moved while it was being looked at is left for
 	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
 	const listed = shown(server, [[1, fixBranch, head]]);
 	const stale = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: { ...listed, openPulls: { [repository]: [pr(repository, 1, fixBranch, { sha: 'stale' })] } }, offline: true,
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: { ...listed, openPulls: { [repository]: [pr(repository, 1, fixBranch, { sha: 'stale' })] } },
+		offline: true,
 	});
 	t.ok(logged(stale.stdout).includes(changed(server)), 'its commits, from the API, don’t end at the head it was listed with: says so, without cloning anything');
 	t.equal(stale.errors, 0, 'nothing failed');
@@ -627,7 +712,9 @@ test('maintain: a PR whose branch moved while it was being looked at is left for
 	// what the API showed, before the branch moved
 	const pushed = server.commit(fixBranch, { [aught]: tapeAught }, { who: bot, message: 'meanwhile' });
 	const moved = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: { ...listed, ci: failedIn(head, [aught]) },
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: { ...listed, ci: failedIn(head, [aught]) },
 	});
 	t.ok(logged(moved.stdout).includes(changed(server)), 'its branch moved between reading the API and cloning it: says so');
 	t.equal(server.tip(`refs/heads/${fixBranch}`), pushed, 'pushing nothing');
@@ -649,17 +736,27 @@ test('maintain: an up-to-date PR', async (t) => {
 	const openPulls = { [repository]: [pr(repository, 1, fixBranch, { sha: fix }), pr(repository, 2, relockBranch, { sha: relock })] };
 
 	const pending = await run(t, {
-		server, github: installed([{ name: 'r', open: [1, 1] }]), merge: { ...shown(server, [[1, fixBranch, fix], [2, relockBranch, relock]]), openPulls, ci: { [fix]: { checkRuns: [{ id: 1, name: 'tests', status: 'in_progress', conclusion: null }] } } }, offline: true,
+		server,
+		github: installed([{ name: 'r', open: [1, 1] }]),
+		merge: { ...shown(server, [[1, fixBranch, fix], [2, relockBranch, relock]]), openPulls, ci: { [fix]: { checkRuns: [{ id: 1, name: 'tests', status: 'in_progress', conclusion: null }] } } },
+		offline: true,
 	});
 	t.equal(pending.errors, 0, 'nothing failed, with nothing cloned: everything is decided from the API');
-	t.deepEqual(logged(pending.stdout).filter((line) => line.startsWith(server.serverURL)), [
-		`${prURL(server)}: up to date; its CI is still running`,
-		`${prURL(server, 2)}: up to date`,
-	], 'a `fleet/workflows` PR whose CI is pending waits; a relock PR’s CI isn’t read');
+	t.deepEqual(
+		logged(pending.stdout).filter((line) => line.startsWith(server.serverURL)),
+		[
+			`${prURL(server)}: up to date; its CI is still running`,
+			`${prURL(server, 2)}: up to date`,
+		],
+		'a `fleet/workflows` PR whose CI is pending waits; a relock PR’s CI isn’t read',
+	);
 	t.notOk(pending.requests.some((r) => r.path.includes(`/commits/${relock}/`)), 'never even reading a relock PR’s CI');
 
 	const passed = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, fix]], { ci: { [fix]: { checkRuns: [{ id: 1, name: 'tests', status: 'completed', conclusion: 'success' }] } } }), offline: true,
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, fix]], { ci: { [fix]: { checkRuns: [{ id: 1, name: 'tests', status: 'completed', conclusion: 'success' }] } } }),
+		offline: true,
 	});
 	t.equal(passed.errors, 0, 'nothing failed, with nothing cloned');
 	t.ok(logged(passed.stdout).includes(`${prURL(server)}: up to date; its CI passed`), 'one whose CI passed is left alone');
@@ -670,7 +767,9 @@ test('maintain: an up-to-date PR', async (t) => {
 
 test('maintain: a `fleet/workflows` PR whose CI failed gets back the inputs it removed, which are kept, without oscillating', async (t) => {
 	const server = setup(t, {
-		[pretest]: tapePretest, [aught]: tapeAught, [config]: '{\n\t"relock": false\n}\n',
+		[pretest]: tapePretest,
+		[aught]: tapeAught,
+		[config]: '{\n\t"relock": false\n}\n',
 	});
 	// as tape-testing/tape#625 did
 	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), [aught]: fixedAught }, { who: bot, from: 'main', message });
@@ -680,7 +779,10 @@ test('maintain: a `fleet/workflows` PR whose CI failed gets back the inputs it r
 	const github = installed([{ name: 'r' }]);
 
 	const first = await run(t, {
-		server, github, merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }), posted,
+		server,
+		github,
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		posted,
 	});
 	t.equal(first.errors, 0, 'nothing failed');
 	t.ok(logged(first.stdout).includes(`${prURL(server)}: its CI failed, so restored \`skip-engines\` in \`node-pretest.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'says what it restored');
@@ -694,7 +796,10 @@ test('maintain: a `fleet/workflows` PR whose CI failed gets back the inputs it r
 
 	// the restored head failed too
 	const scenario = {
-		server, github, merge: shown(server, [[1, fixBranch, restored]], { ci: failedIn(restored, [pretest, '.github/workflows/unchanged.yml']) }), posted,
+		server,
+		github,
+		merge: shown(server, [[1, fixBranch, restored]], { ci: failedIn(restored, [pretest, '.github/workflows/unchanged.yml']) }),
+		posted,
 	};
 	const second = await run(t, scenario);
 	t.ok(logged(second.stdout).includes(`${prURL(server)}: its CI failed, with nothing left to restore; said so on it`), 'with nothing left to restore, it gives up');
@@ -710,11 +815,12 @@ test('maintain: a `fleet/workflows` PR whose CI failed gets back the inputs it r
 });
 
 test('maintain: a `fleet/workflows` PR whose CI fails only as its base’s tip’s does is never blamed for it', async (t) => {
-	const nonLatest = { 'tests / non-latest - 8.x': true, 'tests / non-latest - 0.9': true, 'tests / latest': false };
+	/** @type {Record<string, JobOutcome>} */
+	const nonLatest = { 'tests / non-latest - 8.x': 'failed', 'tests / non-latest - 0.9': 'failed', 'tests / latest': 'passed' };
 	/** @type {(base: Runs | null, head?: Runs) => Promise<{ server: Server, head: string, mainTip: string, result: Awaited<ReturnType<typeof run>> }>} */
-	const scenario = async (base, head = maskedRun(100, aught, nonLatest)) => {
+	const scenario = async (base, head = actionsRun(100, aught, nonLatest)) => {
 		const server = setup(t);
-		// as tape-testing/tape#625 did: its base's tip had the same masked failures, in the same jobs
+		// its base's tip has the same failures, in the same jobs
 		const sha = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), [aught]: fixedAught }, { who: bot, from: 'main', message });
 		const mainTip = server.tip('main');
 		const result = await run(t, {
@@ -730,48 +836,58 @@ test('maintain: a `fleet/workflows` PR whose CI fails only as its base’s tip�
 		};
 	};
 
-	const same = await scenario(maskedRun(200, aught, nonLatest));
+	const same = await scenario(actionsRun(200, aught, nonLatest));
 	t.equal(same.result.errors, 0, 'nothing failed');
 	t.ok(logged(same.result.stdout).includes(`${prURL(same.server)}: its CI failed only as \`main\`’s does; said so on it`), 'with the same failures in the same jobs of the same file on the base’s tip, nothing is restored');
 	t.deepEqual(comments(same.result.requests), [`${marker('stuck', same.head)}\nEvery workflow file that failed on this PR’s head commit (\`.github/workflows/node-aught.yml\`) fails the same way on \`main\`’s head commit (\`${same.mainTip}\`), so the App has nothing to restore: it needs a person to look at it.`], 'saying so on the PR');
 	t.equal(same.server.tip(`refs/heads/${fixBranch}`), same.head, 'pushing nothing');
 	t.ok(same.result.requests.some((r) => r.path.includes(`head_sha=${same.mainTip}`)), 'having read the base’s tip’s CI');
 
-	const regular = await scenario({
-		checkRuns: [{ id: 210, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 600 } }], // eslint-disable-line camelcase
-		runs: [{ id: 211, path: aught, conclusion: 'failure', check_suite_id: 600, jobs: [] }], // eslint-disable-line camelcase
-	}, {
-		checkRuns: [
-			{ id: 110, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 500 } }, // eslint-disable-line camelcase
-			{ id: 112, name: 'elsewhere', status: 'completed', conclusion: 'failure', check_suite: { id: 999 } }, // eslint-disable-line camelcase
-		],
-		runs: [{ id: 111, path: aught, conclusion: 'failure', check_suite_id: 500, jobs: [] }], // eslint-disable-line camelcase
-	});
+	const regular = await scenario(
+		{
+			checkRuns: [{ id: 210, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 600 } }], // eslint-disable-line camelcase
+			runs: [{ id: 211, path: aught, conclusion: 'failure', check_suite_id: 600, jobs: [] }], // eslint-disable-line camelcase
+		},
+		{
+			checkRuns: [
+				{ id: 110, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 500 } }, // eslint-disable-line camelcase
+				{ id: 112, name: 'elsewhere', status: 'completed', conclusion: 'failure', check_suite: { id: 999 } }, // eslint-disable-line camelcase
+			],
+			runs: [{ id: 111, path: aught, conclusion: 'failure', check_suite_id: 500, jobs: [] }], // eslint-disable-line camelcase
+		},
+	);
 	t.deepEqual(comments(regular.result.requests).map((c) => c.split('\n')[1]), [`Every workflow file that failed on this PR’s head commit (\`.github/workflows/node-aught.yml\`) fails the same way on \`main\`’s head commit (\`${regular.mainTip}\`), so the App has nothing to restore: it needs a person to look at it.`], 'as with a failed run, and a failed job in its check suite; a failure in no workflow file isn’t compared');
 	t.equal(regular.server.tip(`refs/heads/${fixBranch}`), regular.head, 'pushing nothing then either');
 
 	/** @type {[string, Runs | null][]} */
 	const blamed = [
-		['the base’s tip’s run of it passed', maskedRun(300, aught, { 'tests / non-latest - 8.x': false, 'tests / non-latest - 0.9': false })],
-		['another job of it failed on the base’s tip', maskedRun(300, aught, { 'tests / non-latest - 0.9': true, 'tests / latest': true })],
-		['the base’s tip has no run of it', maskedRun(300, '.github/workflows/other.yml', { 'tests / non-latest - 8.x': true, 'tests / non-latest - 0.9': true })],
-		['the base’s tip’s run of it is still running', maskedRun(300, aught, nonLatest, { status: 'in_progress', conclusion: null })],
+		['the base’s tip’s run of it passed', actionsRun(300, aught, { 'tests / non-latest - 8.x': 'passed', 'tests / non-latest - 0.9': 'passed' })],
+		['another job of it failed on the base’s tip', actionsRun(300, aught, { 'tests / non-latest - 0.9': 'failed', 'tests / latest': 'failed' })],
+		['the same jobs of it failed on the base’s tip, but only as `continue-on-error` hides', actionsRun(300, aught, { 'tests / non-latest - 8.x': 'optional', 'tests / non-latest - 0.9': 'hidden' })],
+		['the base’s tip has no run of it', actionsRun(300, '.github/workflows/other.yml', { 'tests / non-latest - 8.x': 'failed', 'tests / non-latest - 0.9': 'failed' })],
+		['the base’s tip’s run of it is still running', actionsRun(300, aught, nonLatest, { status: 'in_progress', conclusion: null })],
 		['the base’s tip has no CI at all', null],
 	];
-	await blamed.reduce(async (previous, [label, base]) => {
-		await previous;
-		const { server, result } = await scenario(base);
-		t.ok(logged(result.stdout).includes(`${prURL(server)}: its CI failed, so restored \`skip-ls-check\` in \`node-aught.yml\`, and kept them in \`.github/ljharb-actions.json\``), `${label}: the failure is the PR’s, so what it removed is restored`);
-		t.equal(`${server.show(server.tip(`refs/heads/${fixBranch}`), aught)}\n`, tapeAught, `${label}: as it was`);
-	}, Promise.resolve());
+	await blamed.reduce(
+		async (previous, [label, base]) => {
+			await previous;
+			const { server, result } = await scenario(base);
+			t.ok(logged(result.stdout).includes(`${prURL(server)}: its CI failed, so restored \`skip-ls-check\` in \`node-aught.yml\`, and kept them in \`.github/ljharb-actions.json\``), `${label}: the failure is the PR’s, so what it removed is restored`);
+			t.equal(`${server.show(server.tip(`refs/heads/${fixBranch}`), aught)}\n`, tapeAught, `${label}: as it was`);
+		},
+		Promise.resolve(),
+	);
 
-	const mixed = await scenario(together(
-		maskedRun(300, aught, nonLatest),
-		maskedRun(310, pretest, { engines: false }),
-	), together(
-		maskedRun(100, aught, nonLatest),
-		maskedRun(110, pretest, { engines: true }),
-	));
+	const mixed = await scenario(
+		together(
+			actionsRun(300, aught, nonLatest),
+			actionsRun(310, pretest, { engines: 'passed' }),
+		),
+		together(
+			actionsRun(100, aught, nonLatest),
+			actionsRun(110, pretest, { engines: 'failed' }),
+		),
+	);
 	t.ok(logged(mixed.result.stdout).includes(`${prURL(mixed.server)}: its CI failed, so restored \`skip-engines\` in \`node-pretest.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'with failures of its own in one file, and only its base’s in another, only the first’s inputs are restored');
 	const tip = mixed.server.tip(`refs/heads/${fixBranch}`);
 	t.equal(`${mixed.server.show(tip, pretest)}\n`, tapePretest, 'putting them back');
@@ -784,26 +900,34 @@ test('maintain: a `fleet/workflows` PR whose CI fails only as its base’s tip�
 		checkRuns: [{ id, name: 'tests / engines', status: 'completed', conclusion: 'failure', check_suite: { id: suite } }], // eslint-disable-line camelcase
 		runs: [{ id: id + 1, path: pretest, conclusion: 'failure', check_suite_id: suite, jobs: [] }], // eslint-disable-line camelcase
 	});
-	const hidden = await scenario(together(broken(400, 600), maskedRun(300, aught, { 'tests / non-latest - 8.x': false })), together(broken(150, 500), maskedRun(100, aught, nonLatest)));
-	t.ok(logged(hidden.result.stdout).includes(`${prURL(hidden.server)}: its CI failed, so restored \`skip-ls-check\` in \`node-aught.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'a masked failure of its own, which what decided its CI failed leaves out once something else failed, is still the PR’s, so what it removed is restored');
-	t.equal(`${hidden.server.show(hidden.server.tip(`refs/heads/${fixBranch}`), aught)}\n`, tapeAught, 'as it was');
-	t.deepEqual(comments(hidden.result.requests), [], 'never saying it fails only as its base does');
+	const optional = await scenario(together(broken(400, 600), actionsRun(300, aught, { 'tests / non-latest - 8.x': 'passed' })), together(broken(150, 500), actionsRun(100, aught, { 'tests / non-latest - 8.x': 'hidden', 'tests / non-latest - 0.9': 'optional', 'tests / latest': 'passed' })));
+	t.deepEqual(comments(optional.result.requests).map((c) => c.split('\n')[1]), [`Every workflow file that failed on this PR’s head commit (\`.github/workflows/node-pretest.yml\`) fails the same way on \`main\`’s head commit (\`${optional.mainTip}\`), so the App has nothing to restore: it needs a person to look at it.`], 'failures of its own that `continue-on-error` hides, of a step or of a job, are never the PR’s, so with only its base’s real failures besides, it needs a person');
+	t.equal(optional.server.tip(`refs/heads/${fixBranch}`), optional.head, 'restoring nothing');
 
-	const running = await scenario(broken(400, 600), together(broken(150, 500), maskedRun(100, aught, nonLatest, { status: 'in_progress', conclusion: null })));
+	const running = await scenario(broken(400, 600), together(broken(150, 500), actionsRun(100, aught, nonLatest, { status: 'in_progress', conclusion: null })));
 	t.ok(logged(running.result.stdout).includes(`${prURL(running.server)}: up to date; its CI has failed only as \`main\`’s does so far, and is still running`), 'with only its base’s failures so far, and a run still going, it waits');
 	t.equal(running.server.tip(`refs/heads/${fixBranch}`), running.head, 'pushing nothing');
 	t.deepEqual(comments(running.result.requests), [], 'and saying nothing');
 
-	const unstarted = await scenario({
-		checkRuns: [{ id: 210, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 600 } }], // eslint-disable-line camelcase
-		runs: [{ id: 211, path: aught, conclusion: 'failure', check_suite_id: 600, jobs: [] }], // eslint-disable-line camelcase
-	}, { checkRuns: [], runs: [{ id: 111, path: aught, conclusion: 'startup_failure', jobs: [] }] });
+	const unstarted = await scenario(
+		{
+			checkRuns: [{ id: 210, name: 'tests / 8.x', status: 'completed', conclusion: 'failure', check_suite: { id: 600 } }], // eslint-disable-line camelcase
+			runs: [{ id: 211, path: aught, conclusion: 'failure', check_suite_id: 600, jobs: [] }], // eslint-disable-line camelcase
+		},
+		{ checkRuns: [], runs: [{ id: 111, path: aught, conclusion: 'startup_failure', jobs: [] }] },
+	);
 	t.ok(logged(unstarted.result.stdout).includes(`${prURL(unstarted.server)}: its CI failed, so restored \`skip-ls-check\` in \`node-aught.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'a run of its that never got to a job (eg, for a missing required input) isn’t the same failure as one of the base’s that failed in a job, so what it removed is restored');
 	t.deepEqual(comments(unstarted.result.requests), [], 'saying nothing');
 
-	const passed = await scenario(maskedRun(200, aught, nonLatest), maskedRun(100, aught, { 'tests / latest': false }));
+	const passed = await scenario(actionsRun(200, aught, nonLatest), actionsRun(100, aught, { 'tests / latest': 'passed' }));
 	t.ok(logged(passed.result.stdout).includes(`${prURL(passed.server)}: up to date; its CI passed`), 'a PR whose CI passed is left alone');
 	t.notOk(passed.result.requests.some((r) => r.path.includes(passed.mainTip)), 'without reading the base’s tip’s CI');
+
+	const onlyOptional = await scenario(actionsRun(200, aught, nonLatest), actionsRun(100, aught, { 'tests / non-latest - 8.x': 'hidden', 'tests / non-latest - 0.9': 'optional', 'tests / latest': 'passed' }));
+	t.ok(logged(onlyOptional.result.stdout).includes(`${prURL(onlyOptional.server)}: up to date; its CI passed`), 'a PR whose only failures `continue-on-error` hides passed, so it’s left alone');
+	t.equal(onlyOptional.server.tip(`refs/heads/${fixBranch}`), onlyOptional.head, 'restoring nothing');
+	t.deepEqual(comments(onlyOptional.result.requests), [], 'and saying nothing');
+	t.notOk(onlyOptional.result.requests.some((r) => r.path.includes(onlyOptional.mainTip)), 'without reading the base’s tip’s CI');
 	t.end();
 });
 
@@ -812,7 +936,9 @@ test('maintain: restoring puts back an input’s comments on lines of their own,
 	const server = setup(t, { [pretest]: commented });
 	const head = server.commit(fixBranch, { [pretest]: `${template('node-pretest.yml')}  again:\n    uses: ljharb/actions/.github/workflows/pretest.yml@main\n` }, { who: bot, from: 'main', message });
 	const { stdout } = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
 	});
 	t.ok(logged(stdout).includes(`${prURL(server)}: its CI failed, so restored \`skip-engines\`, \`skip-pack\` in \`node-pretest.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'says what it restored');
 	const tip = server.tip(`refs/heads/${fixBranch}`);
@@ -824,7 +950,9 @@ test('maintain: restoring puts back an input removed from a job with another id 
 	const server = setup(t, { [pretest]: tapePretest.replace('  tests:', '  pretest:') });
 	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
 	const { stdout } = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
 	});
 	t.ok(logged(stdout).includes(`${prURL(server)}: its CI failed, so restored \`skip-engines\` in \`node-pretest.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'says what it restored');
 	t.equal(`${server.show(server.tip(`refs/heads/${fixBranch}`), pretest)}\n`, tapePretest, 'into the one call of that workflow the PR left');
@@ -837,7 +965,9 @@ test('maintain: restoring keeps a workflow file’s line endings', async (t) => 
 	const server = setup(t, { [pretest]: crlf(tapePretest) });
 	const head = server.commit(fixBranch, { [pretest]: crlf(template('node-pretest.yml')) }, { who: bot, from: 'main', message });
 	const { stdout } = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
 	});
 	t.ok(logged(stdout).includes(`${prURL(server)}: its CI failed, so restored \`skip-engines\` in \`node-pretest.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'restores an input in a file whose every line ends with `\\r\\n`');
 	t.equal(fixtureGit(server.remote, ['cat-file', 'blob', `${server.tip(`refs/heads/${fixBranch}`)}:${pretest}`]), crlf(tapePretest).trimEnd(), 'keeping them');
@@ -846,11 +976,15 @@ test('maintain: restoring keeps a workflow file’s line endings', async (t) => 
 
 test('maintain: restoring keeps what `keep` already has', async (t) => {
 	const server = setup(t, {
-		[pretest]: tapePretest, [aught]: tapeAught, [config]: JSON.stringify({ keep: { 'node-pretest.yml': ['skip-pack'], 'node-aught.yml': 'nope' } }),
+		[pretest]: tapePretest,
+		[aught]: tapeAught,
+		[config]: JSON.stringify({ keep: { 'node-pretest.yml': ['skip-pack'], 'node-aught.yml': 'nope' } }),
 	});
 	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), [aught]: fixedAught }, { who: bot, from: 'main', message });
 	await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest, aught]) }),
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest, aught]) }),
 	});
 	const tip = server.tip(`refs/heads/${fixBranch}`);
 	t.deepEqual(JSON.parse(server.show(tip, config)), { keep: { 'node-pretest.yml': ['skip-pack', 'skip-engines'], 'node-aught.yml': ['skip-ls-check'] } }, 'adding to its inputs, and replacing an entry that isn’t a list');
@@ -860,16 +994,24 @@ test('maintain: restoring keeps what `keep` already has', async (t) => {
 
 test('maintain: restoring keeps `.github/ljharb-actions.json` out of the published package, when it uses `npmignore`', async (t) => {
 	/** @type {(ignore: unknown, extra?: Record<string, unknown>) => string} */
-	const pkg = (ignore, extra = { devDependencies: { npmignore: '^0.3.1' } }) => `${JSON.stringify({
-		name: 'pkg', ...extra, publishConfig: { ignore },
-	}, null, 2)}\n`;
+	const pkg = (ignore, extra = { devDependencies: { npmignore: '^0.3.1' } }) => `${JSON.stringify(
+		{
+			name: 'pkg',
+			...extra,
+			publishConfig: { ignore },
+		},
+		null,
+		2,
+	)}\n`;
 	const restoredLine = 'its CI failed, so restored `skip-engines` in `node-pretest.yml`, and kept them in `.github/ljharb-actions.json`';
 	/** @type {(files: Record<string, string>, label: string) => Promise<{ tip: string, line: string | undefined }>} */
 	const restore = async (files, label) => {
 		const server = setup(t, { [pretest]: tapePretest, ...files });
 		const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
 		const { errors, stdout } = await run(t, {
-			server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+			server,
+			github: installed([{ name: 'r' }]),
+			merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
 		});
 		t.equal(errors, 0, `${label}: nothing failed`);
 		const tip = server.tip(`refs/heads/${fixBranch}`);
@@ -896,17 +1038,22 @@ test('maintain: restoring keeps `.github/ljharb-actions.json` out of the publish
 		['it has `\\r\\n` line endings, which `json-file-plus` would write as `\\n`s', { 'package.json': pkg(['test'], { scripts: { prepack: 'npmignore --auto' } }).replace(/\n/g, '\r\n'), [config]: '{}' }],
 		['it has no final newline, which `json-file-plus` would add', { 'package.json': pkg(['test']).trimEnd() }],
 	];
-	await unchanged.reduce(async (previous, [why, files]) => {
-		await previous;
-		const { tip, line } = await restore(files, why);
-		t.equal(tip, files['package.json'].trimEnd(), `${why}: \`package.json\` is unchanged`);
-		t.ok(String(line).endsWith(`: ${restoredLine}`), `${why}: and not mentioned`);
-	}, Promise.resolve());
+	await unchanged.reduce(
+		async (previous, [why, files]) => {
+			await previous;
+			const { tip, line } = await restore(files, why);
+			t.equal(tip, files['package.json'].trimEnd(), `${why}: \`package.json\` is unchanged`);
+			t.ok(String(line).endsWith(`: ${restoredLine}`), `${why}: and not mentioned`);
+		},
+		Promise.resolve(),
+	);
 
 	const server = setup(t, { [pretest]: tapePretest });
 	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
 	const { errors } = await run(t, {
-		server, github: installed([{ name: 'r' }]), merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
 	});
 	t.equal(errors, 0, 'with no `package.json`, nothing fails');
 	t.notEqual(server.tip(`refs/heads/${fixBranch}`), head, 'the PR is still restored');
@@ -928,24 +1075,27 @@ test('maintain: a failure it can’t restore anything for needs a person', async
 		['restoring an input would change anything else in the file', { [pretest]: `${template('node-pretest.yml')}    with:\n      skip-engines: &a true\n` }, { [pretest]: `env:\n  A: &a x\n${template('node-pretest.yml')}  other:\n    runs-on: *a\n` }, [pretest], 'the App can’t restore inputs this PR removed: in `.github/workflows/node-pretest.yml`, `adding them would change more of the file than those inputs`. It needs a person to look at it.'],
 		['its `keep` isn’t an object', { [config]: '{ "keep": [] }' }, { [pretest]: template('node-pretest.yml') }, [pretest], 'the App would restore inputs this PR removed, but `.github/ljharb-actions.json` isn’t a JSON object (with an object `keep`, if it has one), so it can’t keep them there: it needs a person to look at it. The workflow files that failed: `.github/workflows/node-pretest.yml`.'],
 	];
-	await cases.reduce(async (previous, [label, base, change, failed, why]) => {
-		await previous;
-		const server = setup(t, {
-			[pretest]: tapePretest,
-			[aught]: tapeAught,
-			...base,
-		});
-		const head = server.commit(fixBranch, change, { who: bot, from: 'main', message });
-		const { requests } = await run(t, {
-			server,
-			github: installed([{ name: 'r' }]),
-			merge: shown(server, [[1, fixBranch, head]], {
-				ci: failed.length > 0 ? failedIn(head, failed) : { [head]: { checkRuns: [{ id: 1, name: 'x', status: 'completed', conclusion: 'failure' }] } },
-			}),
-		});
-		t.deepEqual(comments(requests), [`${marker('stuck', head)}\nCI failed on this PR’s head commit, and ${why}`], `${label}: says so`);
-		t.equal(server.tip(`refs/heads/${fixBranch}`), head, `${label}: pushes nothing`);
-	}, Promise.resolve());
+	await cases.reduce(
+		async (previous, [label, base, change, failed, why]) => {
+			await previous;
+			const server = setup(t, {
+				[pretest]: tapePretest,
+				[aught]: tapeAught,
+				...base,
+			});
+			const head = server.commit(fixBranch, change, { who: bot, from: 'main', message });
+			const { requests } = await run(t, {
+				server,
+				github: installed([{ name: 'r' }]),
+				merge: shown(server, [[1, fixBranch, head]], {
+					ci: failed.length > 0 ? failedIn(head, failed) : { [head]: { checkRuns: [{ id: 1, name: 'x', status: 'completed', conclusion: 'failure' }] } },
+				}),
+			});
+			t.deepEqual(comments(requests), [`${marker('stuck', head)}\nCI failed on this PR’s head commit, and ${why}`], `${label}: says so`);
+			t.equal(server.tip(`refs/heads/${fixBranch}`), head, `${label}: pushes nothing`);
+		},
+		Promise.resolve(),
+	);
 	t.end();
 });
 
@@ -955,7 +1105,9 @@ test('maintain: failures', async (t) => {
 	server.commit('main', { 'README.md': 'moved\n' });
 
 	const denied = await run(t, {
-		server, github: installed([{ name: 'r' }], { deniedPermissions: ['checks'] }), merge: shown(server, [[1, fixBranch, head]]),
+		server,
+		github: installed([{ name: 'r' }], { deniedPermissions: ['checks'] }),
+		merge: shown(server, [[1, fixBranch, head]]),
 	});
 	t.equal(denied.errors, 1, 'a public repository that fails counts');
 	t.ok(denied.stdout.includes('::warning::ljharb/r: '), 'and is warned about');
@@ -988,14 +1140,18 @@ test('maintain: a private repository’s PRs are kept up to date, but nothing ab
 	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
 	const mainTip = server.commit('main', { 'README.md': 'moved\n' });
 	const ok = await run(t, {
-		server, github: installed([{ name: 'r', private: true }]), merge: shown(server, [[1, fixBranch, head]]),
+		server,
+		github: installed([{ name: 'r', private: true }]),
+		merge: shown(server, [[1, fixBranch, head]]),
 	});
 	t.equal(ok.errors, 0, 'nothing failed');
 	t.equal(server.tip(`refs/heads/${fixBranch}^`), mainTip, 'it’s rebased');
 	t.deepEqual(logged(ok.stdout), ['Open PRs in private repositories, if any, were also kept up to date; nothing about them is shown here.'], 'with nothing logged about it');
 
 	const failed = await run(t, {
-		server, github: installed([{ name: 'r', private: true }], { deniedPermissions: ['checks'] }), merge: shown(server, [[1, fixBranch, head]]),
+		server,
+		github: installed([{ name: 'r', private: true }], { deniedPermissions: ['checks'] }),
+		merge: shown(server, [[1, fixBranch, head]]),
 	});
 	t.equal(failed.errors, 0, 'its failure doesn’t count');
 	t.notOk(failed.stdout.includes('ljharb/r'), 'nor is it shown');
