@@ -44,7 +44,7 @@ function majMin(v) {
 
 /** @type {(versions: Version[]) => Record<MajMin | Maj, Version[]>} */
 function getMinorsByMajor(versions) {
-	const minorEntries = /** @type {[keyof ReturnType<typeof getMinorsByMajor>, ReturnType<majMin>][]} */ (
+	const minorEntries = /** @type {[keyof ReturnType<typeof getMinorsByMajor>, ReturnType<typeof majMin>][]} */ (
 		versions.map((v) => [`${semver.satisfies(v, '< 1') ? majMin(v) : semver.major(v)}`, majMin(v)])
 	);
 	/** @type {ReturnType<typeof getMinorsByMajor>} */
@@ -135,7 +135,7 @@ export async function getReqOpts(reqRange, optRange, type, isNotable, fullSemver
 						!requireds.includes(/** @type {nvmVersionish} */ (x))
 						&& (
 							opt0x.includes(/** @type {nvmVersionish} */ (x))
-							|| semver.subset(map[/** @type {keyof map} */ (x)][0], optRange)
+							|| semver.subset(map[/** @type {keyof typeof map} */ (x)][0], optRange)
 						)
 					))
 			);
