@@ -1033,8 +1033,9 @@ test('fleet/commands: the App’s PR keeps `.github/ljharb-actions.json` out of 
 	const ignoredLine = '- `package.json`: adds `.github/ljharb-actions.json` to `publishConfig.ignore`, so that `npmignore` keeps it out of the published package';
 	const unignoredLine = '- `package.json`: removes `.github/ljharb-actions.json` from `publishConfig.ignore`, since there’s no such file';
 
-	const dry = fix('/dry-run fix ljharb/adds ljharb/executable ljharb/noconfig ljharb/stale', [
+	const dry = fix('/dry-run fix ljharb/adds ljharb/crlf ljharb/executable ljharb/noconfig ljharb/stale', [
 		'adds',
+		'crlf',
 		'executable',
 		'noconfig',
 		'stale',
@@ -1045,6 +1046,7 @@ test('fleet/commands: the App’s PR keeps `.github/ljharb-actions.json` out of 
 		dryRows,
 		[
 			`| \`ljharb/adds\` | would create a PR<br>\`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted<br>${ignoredLine.slice(2)} |`,
+			`| \`ljharb/crlf\` | would create a PR<br>\`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted<br>${ignoredLine.slice(2)} |`,
 			'| `ljharb/executable` | would create a PR<br>`.github/workflows/rebase.yml`: rewritten from its template, since it has drifted |',
 			'| `ljharb/noconfig` | would create a PR<br>`.github/workflows/rebase.yml`: rewritten from its template, since it has drifted |',
 			`| \`ljharb/stale\` | would create a PR<br>\`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted<br>${unignoredLine.slice(2)} |`,
@@ -1072,10 +1074,14 @@ test('fleet/commands: the App’s PR keeps `.github/ljharb-actions.json` out of 
 	const [unignored] = matching(requests, 'POST', /^\/repos\/ljharb\/stale\/pulls$/);
 	t.ok(unignored.body.body.endsWith(`- \`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted\n${unignoredLine}`), 'saying so in its body');
 
+	t.equal(remotes.show('ljharb/crlf', 'fleet/workflows', 'package.json'), pkg(['test', configFile], 2).replace(/\n/g, '\r\n'), 'keeping `\\r\\n` line endings, throughout');
+	t.equal(remotes.show('ljharb/crlf', 'fleet/workflows', '.github/workflows/rebase.yml'), template('rebase.yml'), 'still fixing the rest');
+	t.deepEqual(remotes.log('ljharb/crlf', 'main..fleet/workflows'), [`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${message}`], 'in the PR’s one commit');
+	const [crlfPR] = matching(requests, 'POST', /^\/repos\/ljharb\/crlf\/pulls$/);
+	t.ok(crlfPR.body.body.endsWith(`- \`.github/workflows/rebase.yml\`: rewritten from its template, since it has drifted\n${ignoredLine}`), 'saying so in its body');
+
 	[
 		['covered', 'already ignored'],
-		// json-file-plus 4.0.1 writes every line ending as `\n`
-		['crlf', 'it has `\\r\\n` line endings, which `json-file-plus` would write as `\\n`s'],
 		['inline', 'an array is on one line, which `json-file-plus` would write on several'],
 		['invalid', 'not JSON'],
 		['plain', 'its package doesn’t use `npmignore`'],

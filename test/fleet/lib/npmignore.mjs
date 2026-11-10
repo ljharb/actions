@@ -28,6 +28,11 @@ function pkgWith(ignore, extra = { devDependencies: { npmignore: '^0.3.1' } }) {
 	}, null, 2)}\n`;
 }
 
+/** @type {(text: string) => string} */
+function crlf(text) {
+	return text.replace(/\n/g, '\r\n');
+}
+
 /** @type {(synced: { content: string } | null) => unknown} */
 function ignoreOf(synced) {
 	return synced === null ? null : JSON.parse(synced.content).publishConfig.ignore;
@@ -112,10 +117,12 @@ test('syncConfigIgnore: when the config file will exist', async (t) => {
 	t.deepEqual(await syncConfigIgnore(tabbed, true), { content: tabbed.replace('".github/workflows",\n', `".github/workflows",\n\t\t\t"${configFile}",\n`), reason: 'ignored' }, 'keeping its indentation, its keys’ order, and its trailing newline');
 	t.deepEqual(await syncConfigIgnore(`${pkgWith(['test'])}\n`, true), { content: `${pkgWith(['test', configFile])}\n`, reason: 'ignored' }, 'and a trailing blank line');
 
+	t.deepEqual(await syncConfigIgnore(crlf(pkgWith(['.github/workflows', 'test'])), true), { content: crlf(pkgWith(['.github/workflows', configFile, 'test'])), reason: 'ignored' }, 'and its `\\r\\n` line endings, throughout');
+
 	const pkg = pkgWith(['.github/workflows']);
 	await Promise.all([
-		// json-file-plus 4.0.1 writes every line ending as `\n`
-		[pkg.replace(/\n/g, '\r\n'), '`\\r\\n` line endings'],
+		[pkg.replace('\n', '\r\n'), 'mostly `\\n` line endings, and a `\\r\\n`'],
+		[crlf(pkg).replace('\r\n', '\n'), 'mostly `\\r\\n` line endings, and a `\\n`'],
 		[pkg.trimEnd(), 'no final newline'],
 		[`${JSON.stringify(JSON.parse(pkg))}\n`, 'minified'],
 		[pkg.replace('[\n      ".github/workflows"\n    ]', '[".github/workflows"]'), 'an array on one line'],
@@ -150,10 +157,12 @@ test('syncConfigIgnore: when the config file won’t exist', async (t) => {
 	t.equal(await syncConfigIgnore(null, false), null, 'nor without a `package.json`');
 	t.equal(await syncConfigIgnore('{ nope', false), null, 'nor with one that isn’t JSON');
 
+	t.deepEqual(await syncConfigIgnore(crlf(pkgWith(['.github/workflows', configFile, 'test'])), false), { content: crlf(pkgWith(['.github/workflows', 'test'])), reason: 'unignored' }, 'keeping its `\\r\\n` line endings, throughout');
+
 	const pkg = pkgWith(['.github/workflows', configFile]);
 	await Promise.all([
-		// json-file-plus 4.0.1 writes every line ending as `\n`
-		[pkg.replace(/\n/g, '\r\n'), '`\\r\\n` line endings'],
+		[pkg.replace('\n', '\r\n'), 'mostly `\\n` line endings, and a `\\r\\n`'],
+		[crlf(pkg).replace('\r\n', '\n'), 'mostly `\\r\\n` line endings, and a `\\n`'],
 		[pkg.trimEnd(), 'no final newline'],
 		[`${JSON.stringify(JSON.parse(pkg))}\n`, 'minified'],
 		[pkg.replace(`[\n      ".github/workflows",\n      "${configFile}"\n    ]`, `[".github/workflows", "${configFile}"]`), 'an array on one line'],

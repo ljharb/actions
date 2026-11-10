@@ -157,7 +157,7 @@ Likewise, so that the entry is there exactly when the file is, when the PR will 
 
 When the App [rebases](#keeping-the-apps-prs-up-to-date) one of its PRs whose change touches `package.json` or `.github/ljharb-actions.json`, it does the same to the rebased result, in its one commit, adding or removing that entry by whether the result has that file: its base may have gained or lost the file since, which would otherwise leave the entry the PR added or removed wrong (eg, a PR that removed a stale entry, rebased after someone added the file, would publish it). A PR whose change touches neither is only replayed.
 
-Either way, `package.json` is re-serialized with [`json-file-plus`](https://www.npmjs.com/package/json-file-plus): as `JSON.stringify` writes it, with the indentation of its first indented line (or 2 spaces), its keys in their order, a final newline, and a blank line after that if it has one; so a `package.json` it wouldn’t write that way (eg, one that’s minified, has an array or object on one line, has no final newline, has an escape like `\u00e9`, or has `\r\n` line endings, which it writes as `\n`s) is left as it is.
+Either way, `package.json` is re-serialized with [`json-file-plus`](https://www.npmjs.com/package/json-file-plus): as `JSON.stringify` writes it, with the indentation of its first indented line (or 2 spaces), its keys in their order, its line endings (`\r\n` throughout, when it has more of those than lone `\n`s; otherwise, `\n`), a final newline, and a blank line after that if it has one; so a `package.json` it wouldn’t write that way (eg, one that’s minified, has an array or object on one line, has no final newline, has an escape like `\u00e9`, or mixes `\r\n` and `\n` line endings) is left as it is.
 
 ### Merging
 

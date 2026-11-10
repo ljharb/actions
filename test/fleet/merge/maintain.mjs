@@ -65,6 +65,16 @@ jobs:
 `;
 const fixedAught = tapeAught.replace('      skip-ls-check: true\n', '');
 
+/**
+ * The ID of the blob that `content` would be, in `server`'s repository: so that a file's every byte can be compared, since `git show` output is trimmed.
+ * @type {(t: Test, server: Server, content: string) => string}
+ */
+function blobOf(t, server, content) {
+	const file = path.join(tempDir(t, 'fleet-blob'), 'blob');
+	writeFileSync(file, content);
+	return fixtureGit(server.remote, ['hash-object', '--no-filters', file]);
+}
+
 /** @type {() => void} */
 let current = () => {};
 
@@ -450,7 +460,7 @@ test('maintain: rebasing keeps `package.json`’s entry for `.github/ljharb-acti
 		[aught]: tapeAught,
 		'README.md': 'readme\n',
 	};
-	/** @type {(initial: Record<string, string>, change: Record<string, string>, moved: Record<string, string | null>, label: string) => Promise<{ pkgJson: string, line: string | undefined }>} */
+	/** @type {(initial: Record<string, string>, change: Record<string, string>, moved: Record<string, string | null>, label: string) => Promise<{ pkgJson: string, blob: string, server: Server, line: string | undefined }>} */
 	const rebased = async (initial, change, moved, label) => {
 		const server = setup(t, { ...files, ...initial });
 		const head = server.commit(fixBranch, { [aught]: fixedAught, ...change }, { who: bot, from: 'main', message });
@@ -464,7 +474,12 @@ test('maintain: rebasing keeps `package.json`’s entry for `.github/ljharb-acti
 		const tip = server.tip(`refs/heads/${fixBranch}`);
 		t.deepEqual(server.log(`main..${tip}`), [`${botLine}|${botLine}|${message}|${mainTip}`], `${label}: one commit by the bot, on the base’s tip`);
 		t.equal(server.show(tip, aught), fixedAught.trim(), `${label}: with its change`);
-		return { pkgJson: `${server.show(tip, 'package.json')}\n`, line: logged(stdout).find((l) => l.startsWith(prURL(server))) };
+		return {
+			pkgJson: `${server.show(tip, 'package.json')}\n`,
+			blob: fixtureGit(server.remote, ['rev-parse', `${tip}:package.json`]),
+			server,
+			line: logged(stdout).find((l) => l.startsWith(prURL(server))),
+		};
 	};
 
 	const gained = await rebased({ 'package.json': pkg(['.github/workflows', config]) }, { 'package.json': pkg(['.github/workflows']) }, { [config]: '{}\n' }, 'a PR that removed the entry, whose base then gained the config file');
@@ -478,6 +493,12 @@ test('maintain: rebasing keeps `package.json`’s entry for `.github/ljharb-acti
 	const kept = await rebased({ 'package.json': pkg(['.github/workflows']), [config]: '{}\n' }, { 'package.json': pkg(['.github/workflows', config]) }, { 'README.md': 'moved\n' }, 'a PR that added the entry, whose base still has the config file');
 	t.equal(kept.pkgJson, pkg(['.github/workflows', config]), 'the entry is kept');
 	t.ok(String(kept.line).endsWith(': rebased onto `main`’s tip'), 'and nothing else is said');
+
+	/** @type {(text: string) => string} */
+	const crlf = (text) => text.replace(/\n/g, '\r\n');
+	const crlfGained = await rebased({ 'package.json': crlf(pkg(['.github/workflows', config])) }, { 'package.json': crlf(pkg(['.github/workflows'])) }, { [config]: '{}\n' }, 'a PR that removed the entry from a `package.json` with `\\r\\n` line endings, whose base then gained the config file');
+	t.equal(crlfGained.blob, blobOf(t, crlfGained.server, crlf(pkg(['.github/workflows', config]))), 'the entry is added back, keeping `\\r\\n` line endings, throughout');
+	t.ok(String(crlfGained.line).endsWith(': rebased onto `main`’s tip, and added `.github/ljharb-actions.json`, which it now has, to `package.json`’s `publishConfig.ignore`'), 'and says so');
 
 	const untouched = await rebased({ 'package.json': pkg(['.github/workflows']) }, {}, { [config]: '{}\n' }, 'a PR that doesn’t touch either, whose base then gained the config file');
 	t.equal(untouched.pkgJson, pkg(['.github/workflows']), 'is only replayed, since what the base has isn’t its change');
@@ -1004,7 +1025,7 @@ test('maintain: restoring keeps `.github/ljharb-actions.json` out of the publish
 		2,
 	)}\n`;
 	const restoredLine = 'its CI failed, so restored `skip-engines` in `node-pretest.yml`, and kept them in `.github/ljharb-actions.json`';
-	/** @type {(files: Record<string, string>, label: string) => Promise<{ tip: string, line: string | undefined }>} */
+	/** @type {(files: Record<string, string>, label: string) => Promise<{ tip: string, blob: string, server: Server, line: string | undefined }>} */
 	const restore = async (files, label) => {
 		const server = setup(t, { [pretest]: tapePretest, ...files });
 		const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
@@ -1019,6 +1040,8 @@ test('maintain: restoring keeps `.github/ljharb-actions.json` out of the publish
 		t.equal(`${server.show(tip, pretest)}\n`, tapePretest, `${label}: putting the input back`);
 		return {
 			tip: fixtureGit(server.remote, ['cat-file', '-p', `${tip}:package.json`]),
+			blob: fixtureGit(server.remote, ['rev-parse', `${tip}:package.json`]),
+			server,
 			line: logged(stdout).find((l) => l.startsWith(prURL(server))),
 		};
 	};
@@ -1027,6 +1050,11 @@ test('maintain: restoring keeps `.github/ljharb-actions.json` out of the publish
 	t.equal(`${adds.tip}\n`, pkg(['.github/workflows', '.github/ljharb-actions.json', 'test']), 'adds the config file it writes to `publishConfig.ignore`, right after `.github/workflows`');
 	t.ok(String(adds.line).endsWith(`: ${restoredLine}, which it added to \`package.json\`’s \`publishConfig.ignore\``), 'and says so');
 
+	const scripts = { scripts: { prepack: 'npmignore --auto' } };
+	const crlf = await restore({ 'package.json': pkg(['test'], scripts).replace(/\n/g, '\r\n'), [config]: '{}' }, 'with `\\r\\n` line endings, and a config file');
+	t.equal(crlf.blob, blobOf(t, crlf.server, pkg(['test', '.github/ljharb-actions.json'], scripts).replace(/\n/g, '\r\n')), 'adds it there too, keeping `\\r\\n` line endings, throughout');
+	t.ok(String(crlf.line).endsWith(`: ${restoredLine}, which it added to \`package.json\`’s \`publishConfig.ignore\``), 'and says so');
+
 	/** @type {[string, Record<string, string>][]} */
 	const unchanged = [
 		['already ignored', { 'package.json': pkg(['.github']) }],
@@ -1034,8 +1062,6 @@ test('maintain: restoring keeps `.github/ljharb-actions.json` out of the publish
 		['its package doesn’t use `npmignore`', { 'package.json': pkg(['test'], {}) }],
 		['it has no `publishConfig.ignore`', { 'package.json': pkg(undefined) }],
 		['it isn’t JSON', { 'package.json': '{ nope' }],
-		// json-file-plus 4.0.1 writes every line ending as `\n`
-		['it has `\\r\\n` line endings, which `json-file-plus` would write as `\\n`s', { 'package.json': pkg(['test'], { scripts: { prepack: 'npmignore --auto' } }).replace(/\n/g, '\r\n'), [config]: '{}' }],
 		['it has no final newline, which `json-file-plus` would add', { 'package.json': pkg(['test']).trimEnd() }],
 	];
 	await unchanged.reduce(
