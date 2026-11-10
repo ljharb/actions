@@ -293,7 +293,15 @@ export function mockGitHub(scenario, record) {
 		if (typeof scenario.commentErrorAfter === 'number' && comments > scenario.commentErrorAfter) {
 			return [500, { message: 'comment failed' }];
 		}
-		return [201, { id: comments, html_url: `https://github.com${path.replace(/\/comments$/, '').replace('/repos/', '/')}#issuecomment-${comments}` }]; // eslint-disable-line camelcase
+		// as the App's bot, as every comment the App makes is
+		return [
+			201,
+			{
+				id: comments,
+				html_url: `https://github.com${path.replace(/\/comments$/, '').replace('/repos/', '/')}#issuecomment-${comments}`, // eslint-disable-line camelcase
+				user: { login: 'fleet-bot[bot]', type: 'Bot' },
+			},
+		];
 	}));
 	// keyed by `owner/name` as requested; unspecified, a repository has no matching commits
 	const listCommits = handle(({ path }) => {

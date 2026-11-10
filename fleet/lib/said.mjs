@@ -87,7 +87,7 @@ function foundNodes(error) {
  * Which of the comments with node `ids` are still there, and not already hidden.
  * @type {(octokit: Octokit, ids: string[]) => Promise<Set<string>>}
  */
-async function hideable(octokit, ids) {
+export async function hideable(octokit, ids) {
 	// as many as GitHub looks up at once
 	const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) => ids.slice(i * 100, (i + 1) * 100));
 	const found = await Promise.all(batches.map(async (batch) => {
@@ -101,6 +101,33 @@ async function hideable(octokit, ids) {
 		return data.nodes.flatMap((n) => (n && !n.isMinimized ? [n.id] : []));
 	}));
 	return new Set(found.flat());
+}
+
+/**
+ * Hides (minimizes) each of the comments with node `id`, as its `classifier`; returns the failures, one for each comment that couldn't be hidden.
+ * @type {(octokit: Octokit, comments: { id: string, classifier: Classifier }[]) => Promise<unknown[]>}
+ */
+export async function minimizeEach(octokit, comments) {
+	/** @type {unknown[]} */
+	const failures = [];
+	// one at a time, as GitHub asks of mutations
+	await comments.reduce(
+		async (previous, { id, classifier }) => {
+			await previous;
+			try {
+				await octokit.graphql(
+					`mutation($id: ID!, $classifier: ReportedContentClassifiers!) {
+				minimizeComment(input: { subjectId: $id, classifier: $classifier }) { minimizedComment { isMinimized } }
+			}`,
+					{ id, classifier },
+				);
+			} catch (error) {
+				failures.push(error);
+			}
+		},
+		Promise.resolve(),
+	);
+	return failures;
 }
 
 /**
@@ -147,25 +174,7 @@ export async function hideStale({
 		warn('could not read the App’s earlier comments on one of its PRs, to hide those that no longer apply', error);
 		return 0;
 	}
-	/** @type {unknown[]} */
-	const failures = [];
-	// one at a time, as GitHub asks of mutations
-	await stale.reduce(
-		async (previous, { id, classifier }) => {
-			await previous;
-			try {
-				await octokit.graphql(
-					`mutation($id: ID!, $classifier: ReportedContentClassifiers!) {
-				minimizeComment(input: { subjectId: $id, classifier: $classifier }) { minimizedComment { isMinimized } }
-			}`,
-					{ id, classifier },
-				);
-			} catch (error) {
-				failures.push(error);
-			}
-		},
-		Promise.resolve(),
-	);
+	const failures = await minimizeEach(octokit, stale);
 	if (failures.length > 0) {
 		warn(`could not hide ${failures.length} of the App’s earlier comments on one of its PRs that no longer apply`, failures[0]);
 	}

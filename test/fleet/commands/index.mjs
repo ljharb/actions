@@ -4,7 +4,8 @@ import { pathToFileURL } from 'url';
 
 import test from 'tape';
 
-import { legend } from '../../../fleet/commands/syntax.mjs';
+import { replyMarker, unmarked } from '../../../fleet/commands/replies.mjs';
+import { legend, parseCommand } from '../../../fleet/commands/syntax.mjs';
 import { marker } from '../../../fleet/drift/marker.mjs';
 import { marker as saidMarker } from '../../../fleet/lib/said.mjs';
 import { runChild } from '../drift/helpers/child.mjs';
@@ -23,6 +24,7 @@ import { makeRemotes } from './helpers/remotes.mjs';
 /** @import { Scenario, CommandsScenario } from './helpers/preload.mjs' */
 /** @import { ChildResult } from '../drift/helpers/child.mjs' */
 /** @import { Test } from 'tape' */
+/** @import { Run } from '../../../fleet/commands/replies.mjs' */
 /** @typedef {{ name: string, text: string | null }[]} Workflows */
 
 const script = path.join('fleet', 'commands', 'index.mjs');
@@ -161,9 +163,29 @@ function asBot(t, requests, label) {
 	return requests.slice(2);
 }
 
+/**
+ * A valid command, as parsed.
+ * @type {(line: string) => Run}
+ */
+function identifiable(line) {
+	const command = parseCommand(line);
+	if (command.type !== 'fix' && command.type !== 'merge') {
+		throw new TypeError(`not a command: ${line}`);
+	}
+	return command;
+}
+
 /** @type {(requests: Recorded[]) => string[]} */
-function replies(requests) {
+function marked(requests) {
 	return matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/9\/comments$/).map((r) => r.body.body);
+}
+
+/**
+ * The reply's comments, as they're shown: without the hidden marker each starts with (see `marked`).
+ * @type {(requests: Recorded[]) => string[]}
+ */
+function replies(requests) {
+	return marked(requests).map(unmarked);
 }
 
 /** @type {(requests: Recorded[]) => string[]} */
@@ -1167,7 +1189,7 @@ test('fleet/commands: a reply that fails partway is still in the run summary, as
 	});
 	t.equal(status, 1, 'fails');
 	t.match(stdout, /^::error::.*comment failed/m, 'with the error');
-	const attempted = requests.filter((r) => r.method === 'POST' && (/\/issues\/9\/comments$/).test(r.path)).map((r) => String(r.body.body));
+	const attempted = requests.filter((r) => r.method === 'POST' && (/\/issues\/9\/comments$/).test(r.path)).map((r) => unmarked(String(r.body.body)));
 	t.equal(attempted.length, 3, 'having posted two comments, and failed on the third');
 	const inSummary = summary.split('\n\n---\n\n');
 	const rest = inSummary.pop();
@@ -1377,5 +1399,91 @@ test('fleet/commands: updating the App’s PR hides what it said on it that no l
 	t.ok(secret.requests.some((r) => r.method === 'PATCH' && r.path === '/repos/ljharb/said/pulls/3'), 'the PR is still updated');
 	t.deepEqual(secret.requests.filter((r) => r.path === '/graphql' && r.body.variables.classifier).map((r) => r.body.variables.id), ['C_conflict', 'C_stuck'], 'it tries to hide them');
 	t.notOk(secret.stdout.includes('::warning::'), 'but its failing to isn’t logged at all');
+	t.end();
+});
+
+test('fleet/commands: replying to a command hides the App’s earlier replies to the same command as outdated', (t) => {
+	const fleetBot = 'fleet-bot[bot]';
+	/** @type {(id: number, body: string, login?: string) => Record<string, unknown>} */
+	const listed = (id, body, login = fleetBot) => ({
+		id,
+		node_id: `IC_${id}`, // eslint-disable-line camelcase
+		body,
+		user: { login },
+	});
+	const dryLine = '`/dry-run fix ljharb/nope` (a dry run, so nothing was changed; see [the run](https://github.com/ljharb/actions/actions/runs/1)):';
+	const realLine = '`/fix LJHarb/Nope` (from each repository’s `fleet/workflows` branch; see [the run](https://github.com/ljharb/actions/actions/runs/2)):';
+	const earlier = [
+		listed(100, '/dry-run fix ljharb/nope', 'maintainer'),
+		// an unmarked reply, from before replies had a marker, in two parts
+		listed(101, `${dryLine}\n\nNo repository matches those filters.\n\n_continued below (2/2)_`),
+		listed(102, '_continued (2/2)_\n\nthe rest'),
+		listed(103, '/fix LJHarb/Nope', 'maintainer'),
+		listed(104, `${realLine}\n\nNo repository matches those filters.`),
+		listed(105, `${dryLine}\n\nquoted by someone else`, 'mallory'),
+		listed(106, '`/dry-run fix ljharb/nope ljharb/other` (a dry run, so nothing was changed; see [the run](https://github.com/ljharb/actions/actions/runs/3)):'),
+		listed(107, '`/dry-run merge ljharb/nope` (a dry run, so nothing was changed or queued; see [the run](https://github.com/ljharb/actions/actions/runs/4)):'),
+		listed(108, `${dryLine}\n\nalready hidden`),
+	];
+	/** @type {(line: string, extra?: Record<string, unknown>[], github?: GitHubScenario) => ChildResult} */
+	const reply = (line, extra = [], github = {}) => run(t, {
+		event: { issue: report, comment: comment(line) },
+		github: { minimized: ['IC_108'], ...github },
+		commands: {
+			permissions: { maintainer: 'write' },
+			comments: { 'ljharb/actions#9': earlier.concat(extra) },
+		},
+	});
+	/** @type {(requests: Recorded[]) => [string, string][]} */
+	const hidden = (requests) => matching(requests, 'POST', /^\/graphql$/).filter((r) => r.body.variables.classifier).map((r) => [r.body.variables.id, r.body.variables.classifier]);
+
+	const dry = reply('/dry-run fix ljharb/nope');
+	t.equal(dry.status, 0, 'a dry run succeeds');
+	t.deepEqual(hidden(dry.requests), [['IC_101', 'OUTDATED'], ['IC_102', 'OUTDATED']], 'hiding, as outdated, every part of the App’s earlier reply to the same dry run, even one without a marker; but never a real run’s reply, a command, anyone else’s comment, a reply to other filters or another verb, or one already hidden');
+	t.equal(marked(dry.requests)[0], `${replyMarker(identifiable('/dry-run fix ljharb/nope'))}\n${replies(dry.requests)[0]}`, 'its own reply starts with a hidden marker, so a later reply can find it');
+	t.match(dry.stdout, /^hid 2 of the App’s earlier replies to this command as outdated$/m, 'logging how many it hid');
+	t.notOk(dry.stdout.includes('nope'), 'never which command it was');
+	t.deepEqual(matching(dry.requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), ['eyes', 'rocket'], 'reacting as it would anyway');
+
+	const real = reply('/FIX ljharb/nope', [listed(109, `${replyMarker(identifiable('/dry-run fix ljharb/nope'))}\n${dryLine}`)]);
+	t.equal(real.status, 0, 'a real run succeeds');
+	t.deepEqual(
+		hidden(real.requests),
+		[
+			['IC_101', 'OUTDATED'],
+			['IC_102', 'OUTDATED'],
+			['IC_104', 'OUTDATED'],
+			['IC_109', 'OUTDATED'],
+		],
+		'hiding the App’s earlier replies to dry runs of it, marked or not, and to real runs of it, whatever case its filters were in',
+	);
+
+	const merge = reply('/dry-run merge ljharb/nope');
+	t.equal(merge.status, 0, '`/dry-run merge` succeeds');
+	t.deepEqual(hidden(merge.requests), [['IC_107', 'OUTDATED']], 'and hides only the App’s earlier replies to it');
+
+	const failing = reply('/dry-run fix ljharb/nope', [], { minimizeFails: ['IC_101'] });
+	t.equal(failing.status, 0, 'failing to hide one fails nothing');
+	t.deepEqual(hidden(failing.requests).map(([id]) => id), ['IC_101', 'IC_102'], 'still trying the rest');
+	t.match(failing.stdout, /^::warning::could not hide 1 of the App’s earlier replies to this command as outdated \(FORBIDDEN\)$/m, 'only warning, without saying which command, or what GitHub said');
+	t.notOk(failing.stdout.includes('nope'), 'never naming what the command names');
+	t.deepEqual(matching(failing.requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/comments\/77\/reactions$/).map((r) => r.body.content), ['eyes', 'rocket'], 'and the command is still done');
+
+	const unreadable = reply('/dry-run fix ljharb/nope', [], { nodesError: { status: 502 } });
+	t.equal(unreadable.status, 0, 'failing to read them fails nothing');
+	t.deepEqual(hidden(unreadable.requests), [], 'hiding nothing');
+	t.match(unreadable.stdout, /^::warning::could not read the App’s earlier replies to this command, to hide them as outdated \(HTTP 502\)$/m, 'only warning');
+
+	const partial = run(t, {
+		event: { issue: report, comment: comment('/dry-run fix ljharb/nope') },
+		github: { commentErrorAfter: 0 },
+		commands: {
+			permissions: { maintainer: 'write' },
+			comments: { 'ljharb/actions#9': earlier },
+		},
+	});
+	t.equal(partial.status, 1, 'a reply that couldn’t be posted fails');
+	t.deepEqual(hidden(partial.requests), [], 'and hides nothing, since nothing replaces them');
+
 	t.end();
 });

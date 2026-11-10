@@ -2,6 +2,7 @@ import { writeFileSync } from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
+import { unmarked } from '../../../../fleet/commands/replies.mjs';
 import { marker } from '../../../../fleet/drift/marker.mjs';
 import { runChild } from '../../drift/helpers/child.mjs';
 import { standardWorkflows } from '../../drift/helpers/states.mjs';
@@ -113,9 +114,12 @@ export function matching(requests, method, pattern) {
 	return requests.filter((r) => r.method === method && pattern.test(r.path));
 }
 
-/** @type {(requests: Recorded[], issue?: number) => string[]} */
+/**
+ * The replies on issue `issue`, as they're shown: without the hidden marker each part of a command's reply starts with.
+ * @type {(requests: Recorded[], issue?: number) => string[]}
+ */
 export function replies(requests, issue = 9) {
-	return matching(requests, 'POST', new RegExp(`^/repos/ljharb/actions/issues/${issue}/comments$`)).map((r) => r.body.body);
+	return matching(requests, 'POST', new RegExp(`^/repos/ljharb/actions/issues/${issue}/comments$`)).map((r) => unmarked(r.body.body));
 }
 
 /** @type {(requests: Recorded[], id?: number) => string[]} */

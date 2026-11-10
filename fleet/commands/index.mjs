@@ -18,6 +18,7 @@ import { code, split } from '../lib/markdown.mjs';
 import { finishQueued, messageOf } from '../lib/merge.mjs';
 import { fixRepo } from './apply.mjs';
 import { runMerge } from './merge.mjs';
+import { hideEarlierReplies, replyMarker, unmarked } from './replies.mjs';
 import { legend, parseCommand, quote } from './syntax.mjs';
 
 /** @import { Octokit, RepoState } from '../lib/app.mjs' */
@@ -26,6 +27,7 @@ import { legend, parseCommand, quote } from './syntax.mjs';
 /** @import { Filters } from './syntax.mjs' */
 /** @import { Candidate, Context } from './apply.mjs' */
 /** @import { Unit } from '../lib/markdown.mjs' */
+/** @import { Run } from './replies.mjs' */
 
 const maxBodyLength = 60e3; // GitHub's limit for a comment is 65536 characters
 const maxSummaryBytes = 100e4; // GitHub's limit for a run summary is 1 MiB
@@ -111,9 +113,9 @@ function privateNote(dryRun) {
 
 /**
  * The reply, as the comments it takes: every row is in one of them, whole, unless it's too long for any comment on its own.
+ * Each starts with the command's marker (see `replyMarker`), so that a later reply to the same command can hide it.
  * @type {(options: {
- *   line: string,
- *   dryRun: boolean,
+ *   command: Run,
  *   what: string,
  *   rows: string[],
  *   failures: number,
@@ -121,30 +123,37 @@ function privateNote(dryRun) {
  * }) => string[]}
  */
 function replyBodies({
-	line,
-	dryRun,
+	command,
 	what,
 	rows,
 	failures,
 	waiting,
 }) {
+	const { line, dryRun } = command;
+	const prefix = `${replyMarker(command)}\n`;
 	const table = { open: '| Repository | Outcome |\n| --- | --- |', close: '' };
-	return split(/** @type {(string | Unit)[]} */ ([]).concat(
-		`${quote(line)} (${dryRun ? what : `from each repository’s ${what}`}; see [the run](${runURL})):`,
-		'',
-		rows.length > 0
-			? [{ text: table.open, group: table }].concat(rows.map((text) => ({ text, group: table })))
-			: ['No repository matches those filters.'],
-		failures > 0
-			? ['', `⚠️ Some repositories could not be read, so they were not considered; see [the run](${runURL}).`]
-			: [],
-		waiting.length > 0
-			? ['', `⏳ Waiting on permission approval: ${waiting.map(code).join(', ')}; until each of these accounts approves the App’s permissions, its repositories are not considered.`]
-			: [],
-		// last, so it's at the very end of the last comment
-		'',
-		privateNote(dryRun),
-	), maxBodyLength);
+	const parts = split(
+		/** @type {(string | Unit)[]} */ ([]).concat(
+			`${quote(line)} (${dryRun ? what : `from each repository’s ${what}`}; see [the run](${runURL})):`,
+			'',
+			rows.length > 0
+				? [{ text: table.open, group: table }].concat(rows.map((text) => ({ text, group: table })))
+				: ['No repository matches those filters.'],
+			failures > 0
+				? ['', `⚠️ Some repositories could not be read, so they were not considered; see [the run](${runURL}).`]
+				: [],
+			waiting.length > 0
+				? ['', `⏳ Waiting on permission approval: ${waiting.map(code).join(', ')}; until each of these accounts approves the App’s permissions, its repositories are not considered.`]
+				: [],
+			// last, so it's at the very end of the last comment
+			'',
+			privateNote(dryRun),
+		),
+		maxBodyLength,
+		prefix,
+	);
+	// every part but the first already starts with it
+	return [`${prefix}${parts[0]}`].concat(parts.slice(1));
 }
 
 /**
@@ -170,8 +179,8 @@ async function installed(auth) {
 	};
 }
 
-/** @type {(context: Context, filters: Filters, line: string) => Promise<{ bodies: string[], failed: number }>} */
-async function run(context, filters, line) {
+/** @type {(context: Context, command: Run) => Promise<{ bodies: string[], failed: number }>} */
+async function run(context, command) {
 	const {
 		states,
 		unread,
@@ -182,7 +191,7 @@ async function run(context, filters, line) {
 	/** @type {Candidate[]} */
 	const candidates = (await Promise.all(checked.map(async (state) => {
 		const result = await checkSafely(state);
-		const files = select(state, result, filters);
+		const files = select(state, result, command.filters);
 		return files === null ? [] : [
 			{
 				state, result, files,
@@ -205,8 +214,7 @@ async function run(context, filters, line) {
 
 	return {
 		bodies: replyBodies({
-			line,
-			dryRun: context.dryRun,
+			command,
 			what: context.dryRun
 				? 'a dry run, so nothing was changed'
 				: `\`${fixBranch}\` branch`,
@@ -325,23 +333,23 @@ async function finish({
 	}
 }
 
-/** @typedef {{ auth: ReturnType<typeof appAuth>, comment: Record<string, any>, issueNumber: number, reply: (bodies: string[], posted?: string[]) => Promise<void>, finishOther: (commentId: number, ok: boolean) => Promise<void>, progress: { queued: boolean } }} PerformOptions */
+/** @typedef {{ auth: ReturnType<typeof appAuth>, comment: Record<string, any>, issueNumber: number, reply: (bodies: string[], posted?: string[]) => Promise<void>, hideEarlier: (command: Run) => Promise<void>, finishOther: (commentId: number, ok: boolean) => Promise<void>, progress: { queued: boolean } }} PerformOptions */
 
 /**
  * Runs `/merge` (or `/dry-run merge`), and the parts of its reply.
  * @type {(options: PerformOptions, command: Extract<ReturnType<typeof parseCommand>, { type: 'merge' }>) => Promise<{ bodies: string[], ok: boolean }>}
  */
-async function merge({
-	auth,
-	comment,
-	issueNumber,
-	finishOther,
-	progress,
-}, {
-	dryRun,
-	filters,
-	line,
-}) {
+async function merge(
+	{
+		auth,
+		comment,
+		issueNumber,
+		finishOther,
+		progress,
+	},
+	command,
+) {
+	const { dryRun, filters } = command;
 	const {
 		states,
 		unread,
@@ -357,8 +365,7 @@ async function merge({
 	}, states, filters);
 	return {
 		bodies: replyBodies({
-			line,
-			dryRun,
+			command,
 			what: dryRun
 				? 'a dry run, so nothing was changed or queued'
 				: `\`${fixBranch}\` and \`${relockBranch}\` PRs by the App’s bot`,
@@ -379,6 +386,7 @@ async function perform(options) {
 		command,
 		comment,
 		reply,
+		hideEarlier,
 	} = options;
 	if (command.type === 'error') {
 		await reply(split(
@@ -406,8 +414,7 @@ async function perform(options) {
 				categories: command.filters.categories,
 				link: comment.html_url,
 			},
-			command.filters,
-			command.line,
+			command,
 		);
 		if (failed > 0) {
 			core.setFailed(`${failed} ${plural(failed, 'repository', 'repositories')} could not be fixed`);
@@ -420,8 +427,10 @@ async function perform(options) {
 		await reply(result.bodies, posted);
 	} finally {
 		// even when replying fails, so the outcome is still in the run
-		await core.summary.addRaw(summaryOf(result.bodies, posted)).write();
+		await core.summary.addRaw(summaryOf(result.bodies.map(unmarked), posted)).write();
 	}
+	// only once the whole reply is posted, so that what it replaces is never hidden while any of it is missing
+	await hideEarlier(command);
 	return result.ok;
 }
 
@@ -446,7 +455,9 @@ async function main() {
 	const [owner, repo] = GITHUB_REPOSITORY.split('/');
 	// the App's bot reacts and replies, and reads the commenter's permission (which only needs the token's Metadata permission)
 	const octokit = await issueOctokit(auth, owner, repo);
-	// a reply too long for one comment goes on in the next ones, in order; `posted` gets each one's link as it's posted
+	/** @type {{ id: number, author?: string }[]} */
+	const ours = [];
+	// a reply too long for one comment goes on in the next ones, in order; `posted` gets each one's link as it's posted, and `ours` its ID and author (the App's bot)
 	/** @type {(bodies: string[], posted?: string[]) => Promise<void>} */
 	const reply = async (bodies, posted = []) => {
 		await bodies.reduce(async (previous, body) => {
@@ -458,7 +469,19 @@ async function main() {
 				body,
 			});
 			posted.push(data.html_url);
+			ours.push({ id: data.id, author: data.user?.login });
 		}, Promise.resolve());
+	};
+	/** @type {(command: Run) => Promise<void>} */
+	const hideEarlier = async (replied) => {
+		await hideEarlierReplies({
+			octokit,
+			owner,
+			repo,
+			number: issue.number,
+			command: replied,
+			ours,
+		});
 	};
 
 	const eyes = await authorize({
@@ -489,6 +512,7 @@ async function main() {
 			comment,
 			issueNumber: issue.number,
 			reply,
+			hideEarlier,
 			finishOther,
 			progress,
 		});
