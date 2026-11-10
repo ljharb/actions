@@ -22,11 +22,21 @@ export const maxPRCommits = 250;
  * Else, how many commits it has, and the parents of its first, for `assess` to check that it's the one commit on its base's tip that every PR of the App's is.
  * @type {(octokit: Octokit, target: Target, bot: string) => Promise<{ reason: string } | { count: number, parents: string[] }>}
  */
-export async function commitsRefusal(octokit, {
-	owner, name, number, head,
-}, bot) {
+export async function commitsRefusal(
+	octokit,
+	{
+		owner,
+		name,
+		number,
+		head,
+	},
+	bot,
+) {
 	const commits = await octokit.paginate(octokit.rest.pulls.listCommits, {
-		owner, repo: name, pull_number: number, per_page: 100, // eslint-disable-line camelcase
+		owner,
+		repo: name,
+		pull_number: number, // eslint-disable-line camelcase
+		per_page: 100, // eslint-disable-line camelcase
 	});
 	if (commits.length >= maxPRCommits) {
 		return { reason: `it has at least ${maxPRCommits} commits, more than GitHub lists, so they can’t all be checked to be the App’s own; review and merge it yourself` };
@@ -79,21 +89,32 @@ function suiteState(suite) {
 }
 
 /**
- * Every check suite on `head`, as `suiteState` counts each one: whether any is pending, when each `unreported` one was created, and how each that failed did.
- * @type {(octokit: Octokit, commit: { owner: string, name: string, head: string }) => Promise<{ pending: boolean, unreported: (string | null | undefined)[], failures: string[] }>}
+ * Every check suite on `head`, as `suiteState` counts each one: whether any is pending, when each `unreported` one was created, and how each that failed did: its `name` (its ID, and its app's name, if it has one), and its conclusion (`message`), as plain text.
+ * @type {(octokit: Octokit, commit: { owner: string, name: string, head: string }) => Promise<{ pending: boolean, unreported: (string | null | undefined)[], failures: { name: string, message: string }[] }>}
  */
-export async function checkSuites(octokit, {
-	owner, name, head,
-}) {
+export async function checkSuites(
+	octokit,
+	{
+		owner,
+		name,
+		head,
+	},
+) {
 	/** @type {CheckSuite[]} */
 	const suites = await octokit.paginate(octokit.rest.checks.listSuitesForRef, {
-		owner, repo: name, ref: head, per_page: 100, // eslint-disable-line camelcase
+		owner,
+		repo: name,
+		ref: head,
+		per_page: 100, // eslint-disable-line camelcase
 	});
 	const states = suites.map((suite) => ({ suite, state: suiteState(suite) }));
 	return {
 		pending: states.some(({ state }) => state === 'pending'),
 		unreported: states.filter(({ state }) => state === 'unreported').map(({ suite }) => suite.created_at),
-		failures: states.filter(({ state }) => state === 'failed').map(({ suite }) => `check suite ${suite.id}${suite.app?.name ? ` (${code(suite.app.name)})` : ''}: ${suite.conclusion ?? 'no conclusion'}`),
+		failures: states.filter(({ state }) => state === 'failed').map(({ suite }) => ({
+			name: `check suite ${suite.id}${suite.app?.name ? ` (${suite.app.name})` : ''}`,
+			message: suite.conclusion ?? 'no conclusion',
+		})),
 	};
 }
 
@@ -119,14 +140,22 @@ export function unreportedPending(unreported, others, now = Date.now()) {
  * Whether a PR whose commits `commitsRefusal` checked is the App's: exactly one commit, whose only parent is `base`'s current tip, so that fast-forwarding `base` to it merges exactly that commit.
  * @type {(octokit: Octokit, target: Target, commits: { count: number, parents: string[] }) => Promise<boolean>}
  */
-export async function isSingleOnBase(octokit, {
-	owner, name, base,
-}, { count, parents }) {
+export async function isSingleOnBase(
+	octokit,
+	{
+		owner,
+		name,
+		base,
+	},
+	{ count, parents },
+) {
 	if (count !== 1 || parents.length !== 1) {
 		return false;
 	}
 	const { data: ref } = await octokit.rest.git.getRef({
-		owner, repo: name, ref: `heads/${base}`,
+		owner,
+		repo: name,
+		ref: `heads/${base}`,
 	});
 	return parents[0] === ref.object.sha;
 }
@@ -158,9 +187,14 @@ export function excerpt(text) {
 /** @typedef {{ state: string, context: string, updated_at?: string | null }} CommitStatus */
 
 /** @type {(octokit: Octokit, commit: { owner: string, name: string, head: string }) => Promise<CommitStatus[]>} */
-export async function commitStatuses(octokit, {
-	owner, name, head: sha,
-}) {
+export async function commitStatuses(
+	octokit,
+	{
+		owner,
+		name,
+		head: sha,
+	},
+) {
 	/** @type {CommitStatus[]} */
 	const statuses = [];
 	// the combined status pages its `statuses`, but isn't a list that `paginate` knows how to page
@@ -169,7 +203,11 @@ export async function commitStatuses(octokit, {
 	do {
 		page += 1;
 		const { data } = await octokit.rest.repos.getCombinedStatusForRef({ // eslint-disable-line no-await-in-loop
-			owner, repo: name, ref: sha, per_page: 100, page, // eslint-disable-line camelcase
+			owner,
+			repo: name,
+			ref: sha,
+			per_page: 100, // eslint-disable-line camelcase
+			page,
 		});
 		statuses.push(...data.statuses);
 		count = data.statuses.length;

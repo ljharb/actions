@@ -252,8 +252,8 @@ test('fleet/optional: lists the failures `continue-on-error` hides, in a new sec
 		'<details><summary><b>ljharb</b>: 1 repository</summary>',
 		'',
 		`- [\`ljharb/flaky\`](${server}/ljharb/flaky/commit/sha-flaky)`,
-		`  - [\`.github/workflows/node.yml\`](${server}/ljharb/flaky/blob/sha-flaky/.github/workflows/node.yml), \`hidden\`: failure`,
-		`  - [\`.github/workflows/tests.yml\`](${server}/ljharb/flaky/blob/sha-flaky/.github/workflows/tests.yml), \`tests\`: step \`lint\`: failure, \`Process completed with exit code 1.\``,
+		`  - [\`.github/workflows/node.yml\`](${server}/ljharb/flaky/blob/sha-flaky/.github/workflows/node.yml), \`hidden\`: \`failure\``,
+		`  - [\`.github/workflows/tests.yml\`](${server}/ljharb/flaky/blob/sha-flaky/.github/workflows/tests.yml), \`tests\`: \`step lint: failure\`, \`Process completed with exit code 1.\``,
 		'',
 		'</details>',
 	].join('\n');

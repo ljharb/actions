@@ -5,6 +5,7 @@ import { issueOctokit } from '../lib/issues.mjs';
 import { code, split } from '../lib/markdown.mjs';
 import {
 	assess,
+	assessmentDetails,
 	behindReason,
 	fastForward,
 	finishQueued,
@@ -23,11 +24,12 @@ import {
 import { maintain } from './maintain.mjs';
 
 /** @import { Entry } from '../lib/merge.mjs' */
+/** @import { Unit } from '../lib/markdown.mjs' */
 /** @typedef {{ auth: ReturnType<typeof appAuth>, bot: () => Promise<string> }} App */
 /**
- * What checking one queued PR came to: kept, to check again next time, or dropped, with whether it was merged (`ok`), and what to say about it (`null`: nothing, since it's private, or can't be shown to be public).
+ * What checking one queued PR came to: kept, to check again next time, or dropped, with whether it was merged (`ok`), and what to say about it (`null`: nothing, since it's private, or can't be shown to be public), and what to list about it below the reply's table (`details`: see `assessmentDetails`), only when there's something to say about it.
  * `error` is whether it's a public failure that fails the run.
- * @typedef {{ entry: Entry, keep: boolean, ok: boolean, text: string | null, error: boolean }} Result
+ * @typedef {{ entry: Entry, keep: boolean, ok: boolean, text: string | null, details: string[], error: boolean }} Result
  */
 
 const maxBodyLength = 60000; // GitHub's limit for a comment is 65536 characters
@@ -41,12 +43,13 @@ const runURL = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_
 
 const privateNote = 'Queued PRs in private repositories, if any, were also checked; nothing about them is shown here.';
 
-/** @type {(entry: Entry, outcome: { ok: boolean, text: string | null, error?: boolean }) => Result} */
+/** @type {(entry: Entry, outcome: { ok: boolean, text: string | null, details?: string[], error?: boolean }) => Result} */
 function drop(
 	entry,
 	{
 		ok,
 		text,
+		details = [],
 		error = false,
 	},
 ) {
@@ -55,6 +58,7 @@ function drop(
 		keep: false,
 		ok,
 		text,
+		details: text ? details : [],
 		error,
 	};
 }
@@ -66,6 +70,7 @@ function keep(entry, error = false) {
 		keep: true,
 		ok: true,
 		text: null,
+		details: [],
 		error,
 	};
 }
@@ -91,10 +96,11 @@ async function recheck({ auth, bot }, entry, visibility) {
 	});
 	// a repository made private since is private now
 	visibility.shown &&= !pr.base.repo.private; // eslint-disable-line no-param-reassign
-	/** @type {(ok: boolean, text: string, error?: boolean) => Result} */
-	const done = (ok, text, error) => drop(entry, {
+	/** @type {(ok: boolean, text: string, options?: { error?: boolean, details?: string[] }) => Result} */
+	const done = (ok, text, { error, details } = {}) => drop(entry, {
 		ok,
 		text: visibility.shown ? text : null,
+		details,
 		error: error && visibility.shown,
 	});
 	if (pr.state !== 'open') {
@@ -125,15 +131,15 @@ async function recheck({ auth, bot }, entry, visibility) {
 		return done(false, `not merged ${url}: ${behindReason(target.base)}`);
 	}
 	if (assessment.kind === 'failed') {
-		return done(false, `not merged ${url}: its checks failed: ${assessment.failures.join(', ')}${optionalNote(assessment)}`);
+		return done(false, `not merged ${url}: its checks failed (see below)${optionalNote(assessment)}`, { details: assessmentDetails({ ...entry, url }, assessment) });
 	}
 	const write = await repoOctokit(auth, repo, writePermissions);
 	try {
 		await fastForward(write, target);
 	} catch (error) {
-		return done(false, `not merged ${url}: ${messageOf(error)}`, true);
+		return done(false, `not merged ${url}: ${messageOf(error)}`, { error: true });
 	}
-	return done(true, `merged ${url}${optionalNote(assessment)}`);
+	return done(true, `merged ${url}${optionalNote(assessment)}`, { details: assessmentDetails({ ...entry, url }, assessment) });
 }
 
 /**
@@ -160,30 +166,39 @@ async function check(app, accounts, entry) {
 }
 
 /**
- * One reply per issue the resolved PRs were queued from (in practice, the report): only public ones are listed, and every reply ends the same way, whether or not any private one was resolved.
+ * One reply per issue the resolved PRs were queued from (in practice, the report): only public ones are listed, each in a row of its table, and with what's listed about it below that table (see `assessmentDetails`); every reply ends the same way, whether or not any private one was resolved.
  * @type {(results: Result[]) => Map<number, string[]>}
  */
 function replies(results) {
-	/** @type {Map<number, string[]>} */
-	const rows = new Map();
-	results.forEach(({ entry, text }) => {
+	/** @type {Map<number, { rows: string[], details: string[] }>} */
+	const issues = new Map();
+	results.forEach(({
+		entry,
+		text,
+		details,
+	}) => {
 		if (text) {
 			const comment = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/${entry.issueNumber}#issuecomment-${entry.commentId}`;
-			rows.set(entry.issueNumber, [...rows.get(entry.issueNumber) ?? [], `| ${code(entry.repository)} | ${text} (queued by [this comment](${comment})) |`]);
+			const issue = issues.get(entry.issueNumber) ?? { rows: [], details: [] };
+			issues.set(entry.issueNumber, {
+				rows: issue.rows.concat(`| ${code(entry.repository)} | ${text} (queued by [this comment](${comment})) |`),
+				details: issue.details.concat(details),
+			});
 		}
 	});
 	const table = { open: '| Repository | Outcome |\n| --- | --- |', close: '' };
-	return new Map([...rows].map(([issueNumber, lines]) => [
+	return new Map(Array.from(issues).map(([issueNumber, { rows, details }]) => [
 		issueNumber,
 		split(
-			[
+			/** @type {(string | Unit)[]} */ ([]).concat(
 				`The merge queue, as of [this run](${runURL}):`,
 				'',
 				{ text: table.open, group: table },
-				...lines.map((text) => ({ text, group: table })),
+				rows.map((text) => ({ text, group: table })),
+				details.flatMap((text) => ['', text]),
 				'',
 				privateNote,
-			],
+			),
 			maxBodyLength,
 		),
 	]));

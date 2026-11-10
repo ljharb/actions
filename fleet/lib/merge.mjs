@@ -10,12 +10,13 @@ import {
 import { botBranches } from './branches.mjs';
 import { ciStatus } from './ci.mjs';
 import { commitsRefusal, isSingleOnBase } from './merge-guards.mjs';
-import { code } from './markdown.mjs';
+import { code, fence, html } from './markdown.mjs';
 
 export { ciStatus };
 export { behindReason, maxPRCommits } from './merge-guards.mjs';
 
 /** @import { Octokit, appAuth } from './app.mjs' */
+/** @import { Failed } from './ci.mjs' */
 /** @typedef {ReturnType<typeof appAuth>} Auth */
 /**
  * A PR waiting for its checks to finish, as the merge queue stores it: `headSha` and `base` are what `/merge` saw, and only that is ever merged. `private` is whether its repository was private when it was queued, and `commandFailed` whether anything else the same command did already failed, so that its reaction says so once its last PR is resolved.
@@ -31,8 +32,8 @@ export { behindReason, maxPRCommits } from './merge-guards.mjs';
  *   commandFailed?: boolean,
  * }} Entry
  */
-// a failure's `files` are the workflow files (eg, `.github/workflows/tests.yml`) whose runs or jobs failed; `optional`, when there is any, says what failed that `continue-on-error` hides, which never keeps a PR from being merged (see `ciStatus`)
-/** @typedef {{ kind: 'ready', optional?: string[] } | { kind: 'pending' } | { kind: 'failed', failures: string[], files: string[], optional?: string[] } | { kind: 'behind' } | { kind: 'refused', reason: string }} Assessment */
+// a failure's `failures` are what failed, and its `files` the workflow files (eg, `.github/workflows/tests.yml`) whose runs or jobs failed; `optional`, when there is any, is what failed that `continue-on-error` hides, which never keeps a PR from being merged (see `ciStatus`)
+/** @typedef {{ kind: 'ready', optional?: Failed[] } | { kind: 'pending' } | { kind: 'failed', failures: Failed[], files: string[], optional?: Failed[] } | { kind: 'behind' } | { kind: 'refused', reason: string }} Assessment */
 /** @typedef {{ owner: string, name: string, number: number, base: string, head: string }} Target */
 /** @typedef {{ number: number, head: { sha: string, ref: string, repo: { full_name: string } | null }, base: { ref: string }, user: { login: string } | null }} PR */
 
@@ -172,11 +173,58 @@ export async function assess(octokit, target, bot) {
 }
 
 /**
- * What a reply about a PR says, after what happened to it, about the failures of its CI that `continue-on-error` hides (see `ciStatus`), when there are any: they never keep it from being merged.
- * @type {(assessment: { optional?: string[] }) => string}
+ * What a reply about a PR says, after what happened to it, about the failures of its CI that `continue-on-error` hides (see `ciStatus`), when there are any: they never keep it from being merged, and they're listed below its table (see `failureDetails`).
+ * @type {(assessment: { optional?: Failed[] }) => string}
  */
 export function optionalNote({ optional = [] }) {
-	return optional.length > 0 ? `; optional jobs failed, which doesn’t block merging: ${optional.join('; ')}` : '';
+	return optional.length > 0 ? '; optional jobs failed, which doesn’t block merging (see below)' : '';
+}
+
+// a line of a fenced block that a name, which is never more than one line, can't spill out of
+/** @type {(text: string) => string} */
+function oneLine(text) {
+	return text.replace(/[\r\n]+/g, ' ');
+}
+
+// each line of a message, indented below what it's about
+/** @type {(message: string) => string[]} */
+function indented(message) {
+	return message.split(/\r\n|\r|\n/).map((line) => `  ${line}`);
+}
+
+/**
+ * What a reply lists below its table about one PR's `failed` (see `Failed`), collapsed, with `what` they are as its summary, after the PR (linked, since GitHub would link a bare `#N` to an issue of the repository the reply is in): each by its name, with each of its messages, verbatim, indented below it, in a fenced block (see `fence`), so that however many there are, the table stays readable, and third-party text in them stays inert.
+ * @type {(pr: { repository: string, number: number, url: string }, what: string, failed: Failed[]) => string}
+ */
+export function failureDetails(
+	{
+		repository,
+		number,
+		url,
+	},
+	what,
+	failed,
+) {
+	const lines = failed.flatMap(({ name, messages }) => [oneLine(name)].concat(messages.flatMap(indented)));
+	// GitHub renders Markdown inside HTML only with blank lines around it
+	return [
+		`<details><summary><code>${html(repository)}</code> <a href="${html(url)}">#${number}</a>: ${html(what)}</summary>`,
+		'',
+		fence(lines.join('\n')),
+		'',
+		'</details>',
+	].join('\n');
+}
+
+/**
+ * What a reply lists below its table about a PR, from what `assess` found: what failed on its CI, if it did, and what failed that `continue-on-error` hides, if anything did (see `failureDetails`).
+ * @type {(pr: { repository: string, number: number, url: string }, assessment: { kind: string, failures?: Failed[], optional?: Failed[] }) => string[]}
+ */
+export function assessmentDetails(pr, { failures = [], optional = [] }) {
+	return /** @type {string[]} */ ([]).concat(
+		failures.length > 0 ? failureDetails(pr, 'the checks that failed', failures) : [],
+		optional.length > 0 ? failureDetails(pr, 'optional jobs that failed, which don’t block merging', optional) : [],
+	);
 }
 
 /**

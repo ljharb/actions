@@ -13,8 +13,10 @@ import {
 	assess,
 	behindReason,
 	candidatePRs,
+	assessmentDetails,
 	ciStatus,
 	entryKey,
+	failureDetails,
 	fastForward,
 	fits,
 	maxQueueBytes,
@@ -42,6 +44,12 @@ import { mockGitHub, privateKey } from './helpers/github.mjs';
 /** @import { MergeScenario, CI } from '../commands/helpers/merge.mjs' */
 /** @import { Test } from 'tape' */
 /** @import { Octokit } from '../../../fleet/lib/app.mjs' */
+/** @import { Failed } from '../../../fleet/lib/ci.mjs' */
+
+/** @type {(name: string, ...messages: string[]) => Failed} */
+function f(name, ...messages) {
+	return { name, messages };
+}
 
 /** @type {() => void} */
 let current = () => {};
@@ -186,11 +194,11 @@ test('ciStatus: failed', async (t) => {
 	await ['failure', 'timed_out', 'cancelled', 'action_required', 'stale', 'neutral', 'startup_failure'].reduce(
 		async (previous, conclusion) => {
 			await previous;
-			t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'success'), checkRun('b`x', conclusion)] }), { kind: 'failed', failures: [`\`\`b\`x\`\`: ${conclusion}`], files: [] }, `a check run that concluded \`${conclusion}\`, named inertly`);
+			t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'success'), checkRun('b`x', conclusion)] }), { kind: 'failed', failures: [f('b`x', conclusion)], files: [] }, `a check run that concluded \`${conclusion}\`, named as it is`);
 		},
 		Promise.resolve(),
 	);
-	t.deepEqual(await classify(t, { checkRuns: [checkRun('a', null)] }), { kind: 'failed', failures: ['`a`: no conclusion'], files: [] }, 'a completed check run without a conclusion');
+	t.deepEqual(await classify(t, { checkRuns: [checkRun('a', null)] }), { kind: 'failed', failures: [f('a', 'no conclusion')], files: [] }, 'a completed check run without a conclusion');
 	t.deepEqual(
 		await classify(t, {
 			checkRuns: [checkRun('a', 'success')],
@@ -209,7 +217,7 @@ test('ciStatus: failed', async (t) => {
 				},
 			],
 		}),
-		{ kind: 'failed', failures: ['`CI`: failure'], files: [] },
+		{ kind: 'failed', failures: [f('CI', 'failure')], files: [] },
 		'a workflow run that failed, though every check run listed passed (eg, one that `latest` left out)',
 	);
 	t.deepEqual(
@@ -230,13 +238,13 @@ test('ciStatus: failed', async (t) => {
 				},
 			],
 		}),
-		{ kind: 'failed', failures: ['`workflow run 7`: no conclusion', '`workflow run 8`: action_required'], files: [] },
+		{ kind: 'failed', failures: [f('workflow run 7', 'no conclusion'), f('workflow run 8', 'action_required')], files: [] },
 		'a completed workflow run without a conclusion, or that needs approval, named by its ID when it has no name',
 	);
 	await ['error', 'failure'].reduce(
 		async (previous, state) => {
 			await previous;
-			t.deepEqual(await classify(t, { statuses: [{ context: 'ci/x', state }] }), { kind: 'failed', failures: [`\`ci/x\`: ${state}`], files: [] }, `a commit status that is \`${state}\``);
+			t.deepEqual(await classify(t, { statuses: [{ context: 'ci/x', state }] }), { kind: 'failed', failures: [f('ci/x', state)], files: [] }, `a commit status that is \`${state}\``);
 		},
 		Promise.resolve(),
 	);
@@ -245,7 +253,7 @@ test('ciStatus: failed', async (t) => {
 			checkRuns: [checkRun('a', 'failure'), checkRun('b', null, { status: 'in_progress' })],
 			statuses: [{ context: 'ci/x', state: 'pending' }],
 		}),
-		{ kind: 'failed', failures: ['`a`: failure'], files: [] },
+		{ kind: 'failed', failures: [f('a', 'failure')], files: [] },
 		'a failure, even with others still pending',
 	);
 });
@@ -262,12 +270,12 @@ test('ciStatus: check suites', async (t) => {
 	await ['failure', 'timed_out', 'cancelled', 'action_required', 'stale', 'startup_failure', 'neutral'].reduce(
 		async (previous, conclusion) => {
 			await previous;
-			t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(1, 'success'), suite(2, conclusion)] }), { kind: 'failed', failures: [`check suite 2 (\`CI app\`): ${conclusion}`], files: [] }, `a completed check suite with check runs that concluded \`${conclusion}\` fails`);
+			t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(1, 'success'), suite(2, conclusion)] }), { kind: 'failed', failures: [f('check suite 2 (CI app)', conclusion)], files: [] }, `a completed check suite with check runs that concluded \`${conclusion}\` fails`);
 		},
 		Promise.resolve(),
 	);
-	t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(3, null, { app: null })] }), { kind: 'failed', failures: ['check suite 3: no conclusion'], files: [] }, 'as does one with check runs and no conclusion, named by its ID alone without an app');
-	t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(4, 'failure', { latest_check_runs_count: 0 })] }), { kind: 'failed', failures: ['check suite 4 (`CI app`): failure'], files: [] }, 'and an empty one that failed'); // eslint-disable-line camelcase
+	t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(3, null, { app: null })] }), { kind: 'failed', failures: [f('check suite 3', 'no conclusion')], files: [] }, 'as does one with check runs and no conclusion, named by its ID alone without an app');
+	t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(4, 'failure', { latest_check_runs_count: 0 })] }), { kind: 'failed', failures: [f('check suite 4 (CI app)', 'failure')], files: [] }, 'and an empty one that failed'); // eslint-disable-line camelcase
 	t.deepEqual(
 		await classify(t, {
 			checkRuns: runs,
@@ -281,7 +289,7 @@ test('ciStatus: check suites', async (t) => {
 		{ kind: 'passed' },
 		'an empty completed suite that’s `neutral` or has no conclusion (an app that never reports on the commit) is ignored; success and skipped pass',
 	);
-	t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(9, 'neutral', { latest_check_runs_count: void undefined })] }), { kind: 'failed', failures: ['check suite 9 (`CI app`): neutral'], files: [] }, 'a `neutral` suite not known to be empty is not'); // eslint-disable-line camelcase
+	t.deepEqual(await classify(t, { checkRuns: runs, checkSuites: [suite(9, 'neutral', { latest_check_runs_count: void undefined })] }), { kind: 'failed', failures: [f('check suite 9 (CI app)', 'neutral')], files: [] }, 'a `neutral` suite not known to be empty is not'); // eslint-disable-line camelcase
 	t.deepEqual(await classify(t, { checkSuites: [suite(10, null, { status: 'queued', latest_check_runs_count: 0 })] }), { kind: 'pending' }, 'an unfinished suite alone is pending'); // eslint-disable-line camelcase
 
 	const longAgo = '2026-01-01T00:00:00Z';
@@ -317,7 +325,7 @@ test('ciStatus: check suites', async (t) => {
 	);
 	t.deepEqual(await classify(t, { checkRuns: quiet, checkSuites: [...stuckSuites, stuck(14, 'New app', justNow)] }), { kind: 'pending' }, 'nor while such a suite was created only just now');
 	t.deepEqual(await classify(t, { checkRuns: quiet, checkSuites: [suite(15, null, { status: 'in_progress', latest_check_runs_count: 2, created_at: longAgo })] }), { kind: 'pending' }, 'an unfinished suite with check runs is pending, however long ago it was created'); // eslint-disable-line camelcase
-	t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'failure', { completed_at: longAgo })], checkSuites: stuckSuites }), { kind: 'failed', failures: ['`a`: failure'], files: [] }, 'and a failure still fails'); // eslint-disable-line camelcase
+	t.deepEqual(await classify(t, { checkRuns: [checkRun('a', 'failure', { completed_at: longAgo })], checkSuites: stuckSuites }), { kind: 'failed', failures: [f('a', 'failure')], files: [] }, 'and a failure still fails'); // eslint-disable-line camelcase
 });
 
 test('unreportedPending', (t) => {
@@ -345,7 +353,7 @@ test('ciStatus: a step whose failure `continue-on-error` hides', async (t) => {
 			],
 			runs: [{ id: 7, jobs: [job('test', [{ name: 'flaky', conclusion: 'success', status: 'completed' }])] }],
 		}),
-		{ kind: 'passed', optional: ['`test`: `Process completed with exit code 1.`'] },
+		{ kind: 'passed', optional: [f('test', 'Process completed with exit code 1.')] },
 		'a hidden failure, which only its check run’s `failure` annotation shows, never fails CI, as GitHub doesn’t count it either, but is noted; only GitHub Actions’ check runs’ annotations count',
 	);
 	t.deepEqual(
@@ -353,7 +361,7 @@ test('ciStatus: a step whose failure `continue-on-error` hides', async (t) => {
 			checkRuns: [checkRun('test', 'success', { ...actions, annotations: [{ annotation_level: 'failure', message: `  ${'x'.repeat(120)}\nsecond line` }, { annotation_level: 'failure', message: null }] })], // eslint-disable-line camelcase
 			runs: [{ id: 7, jobs: [job('test', [])] }],
 		}),
-		{ kind: 'passed', optional: [`\`test\`: \`${'x'.repeat(99)}…\`, \`\``] },
+		{ kind: 'passed', optional: [f('test', `${'x'.repeat(99)}…`, '')] },
 		'each one, by the first line of its message, shortened, all in its job’s one note',
 	);
 	const counted = setup(t, {
@@ -378,7 +386,7 @@ test('ciStatus: a step whose failure `continue-on-error` hides', async (t) => {
 			},
 		},
 	});
-	t.deepEqual(await ciStatus(octokit, commit), { kind: 'passed', optional: ['`a`: `m149`'] }, 'an annotation past the first page is noted');
+	t.deepEqual(await ciStatus(octokit, commit), { kind: 'passed', optional: [f('a', 'm149')] }, 'an annotation past the first page is noted');
 	t.deepEqual(paging.filter((r) => r.path.includes('/annotations')).map((r) => r.path), ['/repos/o/r/check-runs/1/annotations?per_page=100', '/repos/o/r/check-runs/1/annotations?per_page=100&page=2'], 'reading every page of them, 100 at a time');
 	// should the API ever report a hidden step's own failure, that's noted too
 	t.deepEqual(
@@ -386,7 +394,7 @@ test('ciStatus: a step whose failure `continue-on-error` hides', async (t) => {
 			checkRuns: [checkRun('test', 'success', actions), checkRun('other', 'success')],
 			runs: [{ id: 7, jobs: [job('test', [{ name: 'flaky', conclusion: 'failure', status: 'completed' }, { name: 'after', conclusion: 'success' }])] }],
 		}),
-		{ kind: 'passed', optional: ['`test`: step `flaky`: failure'] },
+		{ kind: 'passed', optional: [f('test', 'step flaky: failure')] },
 		'a step whose own conclusion is a failure, in a job that succeeded, is noted',
 	);
 	t.deepEqual(
@@ -394,7 +402,7 @@ test('ciStatus: a step whose failure `continue-on-error` hides', async (t) => {
 			checkRuns: [checkRun('test', 'success', actions)],
 			runs: [{ id: 7, jobs: [job('test', [{ name: 'a', conclusion: 'success', outcome: 'failure' }, { name: 'b', conclusion: 'timed_out' }, { name: 'c', conclusion: 'cancelled' }])] }],
 		}),
-		{ kind: 'passed', optional: ['`test`: step `a`: failure, step `b`: timed_out, step `c`: cancelled'] },
+		{ kind: 'passed', optional: [f('test', 'step a: failure', 'step b: timed_out', 'step c: cancelled')] },
 		'a step’s `outcome` counts too, as do timing out and being cancelled',
 	);
 	t.deepEqual(
@@ -402,7 +410,7 @@ test('ciStatus: a step whose failure `continue-on-error` hides', async (t) => {
 			checkRuns: [checkRun('test', 'success', { ...actions, annotations: [{ annotation_level: 'failure', message: 'boom' }] })], // eslint-disable-line camelcase
 			runs: [{ id: 7, jobs: [job('elsewhere', [{ name: 'a', conclusion: 'failure' }])] }],
 		}),
-		{ kind: 'passed', optional: ['`test`: `boom`'] },
+		{ kind: 'passed', optional: [f('test', 'boom')] },
 		'a GitHub Actions check run whose job can’t be found succeeded, as GitHub says: only its annotations are noted',
 	);
 	t.deepEqual(
@@ -423,9 +431,9 @@ test('ciStatus: a step whose failure `continue-on-error` hides', async (t) => {
 		}),
 		{
 			kind: 'failed',
-			failures: ['`real`: failure'],
+			failures: [f('real', 'failure')],
 			files: [],
-			optional: ['`test`: `hidden`'],
+			optional: [f('test', 'hidden')],
 		},
 		'with a real failure too, CI failed, and the hidden one is noted alongside it',
 	);
@@ -441,7 +449,7 @@ test('ciStatus: a step whose failure `continue-on-error` hides', async (t) => {
 			},
 		},
 	});
-	t.deepEqual(await ciStatus(octokit, commit), { kind: 'failed', failures: ['`real`: failure'], files: [] }, 'a real failure fails CI while something’s still pending, with nothing noted yet');
+	t.deepEqual(await ciStatus(octokit, commit), { kind: 'failed', failures: [f('real', 'failure')], files: [] }, 'a real failure fails CI while something’s still pending, with nothing noted yet');
 	t.notOk(early.some((r) => (/\/(?:jobs|annotations)\b/).test(r.path)), 'without inspecting any job’s steps');
 });
 
@@ -463,7 +471,7 @@ test('ciStatus: a job whose failure `continue-on-error` hides', async (t) => {
 			checkSuites: [suite(500, 'success')],
 			runs: [workflowRun()],
 		}),
-		{ kind: 'passed', optional: ['`job 1`: failure', '`job 2`: timed_out', '`job 4`: no conclusion'] },
+		{ kind: 'passed', optional: [f('job 1', 'failure'), f('job 2', 'timed_out'), f('job 4', 'no conclusion')] },
 		'a GitHub Actions job that failed (or completed without a conclusion) in a workflow run that succeeded never fails CI, but is noted',
 	);
 	await [
@@ -481,7 +489,7 @@ test('ciStatus: a job whose failure `continue-on-error` hides', async (t) => {
 				}),
 				{
 					kind: 'failed',
-					failures: [`\`CI\`: ${conclusion ?? 'no conclusion'}`, '`job 1`: failure'],
+					failures: [f('CI', conclusion ?? 'no conclusion'), f('job 1', 'failure')],
 					files: ['.github/workflows/node-aught.yml'],
 				},
 				`one whose workflow run concluded \`${conclusion}\` fails it, as a job that failed that run does`,
@@ -494,7 +502,7 @@ test('ciStatus: a job whose failure `continue-on-error` hides', async (t) => {
 			checkRuns: [actionsRun(1, 'failure', { app: { slug: 'some-ci' } })],
 			runs: [workflowRun()],
 		}),
-		{ kind: 'failed', failures: ['`job 1`: failure'], files: ['.github/workflows/node-aught.yml'] },
+		{ kind: 'failed', failures: [f('job 1', 'failure')], files: ['.github/workflows/node-aught.yml'] },
 		'another app’s check run that failed fails it, even in a workflow run’s check suite',
 	);
 	t.deepEqual(
@@ -502,7 +510,7 @@ test('ciStatus: a job whose failure `continue-on-error` hides', async (t) => {
 			checkRuns: [actionsRun(1, 'failure', { check_suite: { id: 999 } }), actionsRun(2, 'failure', { check_suite: null })], // eslint-disable-line camelcase
 			runs: [workflowRun()],
 		}),
-		{ kind: 'failed', failures: ['`job 1`: failure', '`job 2`: failure'], files: [] },
+		{ kind: 'failed', failures: [f('job 1', 'failure'), f('job 2', 'failure')], files: [] },
 		'as does a GitHub Actions one in a check suite no workflow run is of, or in none, which can’t be shown to be hidden',
 	);
 	const running = setup(t, {
@@ -520,7 +528,7 @@ test('ciStatus: a job whose failure `continue-on-error` hides', async (t) => {
 			checkRuns: [actionsRun(1, 'failure'), checkRun('real', 'failure')],
 			runs: [workflowRun({ status: 'in_progress', conclusion: null })],
 		}),
-		{ kind: 'failed', failures: ['`real`: failure'], files: [] },
+		{ kind: 'failed', failures: [f('real', 'failure')], files: [] },
 		'but a real failure fails it meanwhile, without that one',
 	);
 });
@@ -569,8 +577,8 @@ test('ciStatus: each failure, and each note, once', async (t) => {
 		{
 			kind: 'passed',
 			optional: [
-				'`tests / non-latest - 0.9`: `Process completed with exit code 1.`, `console # time=240ms`, `should be equivalent`, `console # time=180ms`',
-				'`tests / non-latest - 8.7`: `Process completed with exit code 1.`, `should be equivalent`',
+				f('tests / non-latest - 0.9', 'Process completed with exit code 1.', 'console # time=240ms', 'should be equivalent', 'console # time=180ms'),
+				f('tests / non-latest - 8.7', 'Process completed with exit code 1.', 'should be equivalent'),
 			],
 		},
 		'each job’s messages once, however many runs of its workflow said them, keeping each that differs; a job that says exactly the same in another workflow file, once',
@@ -590,10 +598,10 @@ test('ciStatus: each failure, and each note, once', async (t) => {
 		}),
 		{
 			kind: 'failed',
-			failures: ['`Tests`: failure', '`tests / build`: failure', '`tests / build`: cancelled'],
+			failures: [f('Tests', 'failure'), f('tests / build', 'failure', 'cancelled')],
 			files: [aught],
 		},
-		'each failure once, however many runs of its workflow had it, keeping each that differs',
+		'each thing that failed once, however many runs of its workflow had it, with each of its failures that differs',
 	);
 });
 
@@ -608,7 +616,7 @@ test('ciStatus: every page', async (t) => {
 			},
 		},
 	});
-	t.deepEqual(await ciStatus(octokit, commit), { kind: 'failed', failures: ['check suite 119 (`CI app`): failure', '`c149`: failure', '`s129`: error'], files: [] }, 'the last check run, check suite, and status, past the first page of each, are read');
+	t.deepEqual(await ciStatus(octokit, commit), { kind: 'failed', failures: [f('check suite 119 (CI app)', 'failure'), f('c149', 'failure'), f('s129', 'error')], files: [] }, 'the last check run, check suite, and status, past the first page of each, are read');
 	t.deepEqual(
 		requests.map((r) => r.path.replace(/\?.*$/, '')),
 		[
@@ -634,7 +642,7 @@ test('ciStatus: every page', async (t) => {
 			},
 		},
 	});
-	t.deepEqual(await ciStatus(octokit, commit), { kind: 'passed', optional: ['`j149`: step `x`: failure'] }, 'a job past the first page is inspected');
+	t.deepEqual(await ciStatus(octokit, commit), { kind: 'passed', optional: [f('j149', 'step x: failure')] }, 'a job past the first page is inspected');
 	const jobRequests = jobs.filter((r) => (/\/jobs\?/).test(r.path));
 	t.equal(jobRequests.length, 2, 'reading every page of jobs');
 	t.equal(new URLSearchParams(jobRequests[0].path.split('?')[1]).get('filter'), 'latest', 'of the latest attempt');
@@ -657,7 +665,7 @@ test('ciStatus: the workflow files that failed', async (t) => {
 		}),
 		{
 			kind: 'failed',
-			failures: ['`workflow 1`: failure', '`workflow 2`: failure', '`workflow 3`: failure', '`workflow 4`: failure', '`workflow 6`: failure'],
+			failures: [f('workflow 1', 'failure'), f('workflow 2', 'failure'), f('workflow 3', 'failure'), f('workflow 4', 'failure'), f('workflow 6', 'failure')],
 			files: ['.github/workflows/node-pretest.yml', '.github/workflows/node-aught.yml'],
 		},
 		'each failed run’s workflow file, once, without the ref its path names: never a path that isn’t a workflow file’s',
@@ -698,9 +706,9 @@ test('ciStatus: the workflow files that failed', async (t) => {
 		[
 			{ file: '.github/workflows/node-aught.yml', job: 'optional', messages: ['failure'] },
 			{ file: null, job: 'unknown', messages: ['failure'] },
-			{ file: '.github/workflows/node-pretest.yml', job: 'engines', messages: ['`Process completed with exit code 1.`'] },
-			{ file: null, job: 'lost', messages: ['`lost`'] },
-			{ file: null, job: 'nowhere', messages: ['step `a`: failure'] },
+			{ file: '.github/workflows/node-pretest.yml', job: 'engines', messages: ['Process completed with exit code 1.'] },
+			{ file: null, job: 'lost', messages: ['lost'] },
+			{ file: null, job: 'nowhere', messages: ['step a: failure'] },
 		],
 		'each job’s failure that `continue-on-error` hides, by job: a job’s own (its workflow file is its check suite’s run’s), then its steps’ (its job’s run’s), with no file when that’s not known, or isn’t a workflow file',
 	);
@@ -726,7 +734,7 @@ test('ciStatus: a failed check run’s workflow file is that of the workflow run
 		}),
 		{
 			kind: 'failed',
-			failures: ['`engines`: failure', '`elsewhere`: failure', '`suiteless`: failure'],
+			failures: [f('engines', 'failure'), f('elsewhere', 'failure'), f('suiteless', 'failure')],
 			files: ['.github/workflows/node-pretest.yml'],
 		},
 		'a check run in a workflow run’s check suite adds that run’s file; one in a check suite no workflow run is of, or in none, adds none',
@@ -771,7 +779,7 @@ test('assess', async (t) => {
 	await assess(octokit, target, botUser);
 	t.ok(tipRead.some((r) => r.path === '/repos/o/r/git/ref/heads%2Fmain'), 'reads the base branch’s current tip');
 	setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h1', { parents: ['tip'] })] }, ci: { h1: { checkRuns: [checkRun('a', 'failure')] } } });
-	t.deepEqual(await assess(octokit, target, botUser), { kind: 'failed', failures: ['`a`: failure'], files: [] }, 'one whose CI failed is not ready');
+	t.deepEqual(await assess(octokit, target, botUser), { kind: 'failed', failures: [f('a', 'failure')], files: [] }, 'one whose CI failed is not ready');
 	setup(t, {
 		refs: { 'o/r': 'tip' },
 		commits: { 'o/r#1': [prCommit('h1', { parents: ['tip'] })] },
@@ -782,11 +790,85 @@ test('assess', async (t) => {
 			},
 		},
 	});
-	t.deepEqual(await assess(octokit, target, botUser), { kind: 'ready', optional: ['`a`: failure'] }, 'one whose only failure is a job’s that `continue-on-error` hides is ready, noting it');
-	t.equal(optionalNote({ optional: ['`a`: failure', '`b`: `boom`'] }), '; optional jobs failed, which doesn’t block merging: `a`: failure; `b`: `boom`', 'which a reply notes');
+	t.deepEqual(await assess(octokit, target, botUser), { kind: 'ready', optional: [f('a', 'failure')] }, 'one whose only failure is a job’s that `continue-on-error` hides is ready, noting it');
+	t.equal(optionalNote({ optional: [f('a', 'failure'), f('b', 'boom')] }), '; optional jobs failed, which doesn’t block merging (see below)', 'which a reply notes, listing them below its table');
 	t.equal(optionalNote({}), '', 'saying nothing when there’s nothing to note');
 	t.equal(optionalNote({ optional: [] }), '', 'even when it’s empty');
 	t.equal(behindReason('main'), 'it needs updating: the App’s PRs must be one commit, on `main`’s tip, and the App rebases them onto it every 10 minutes, so run `/merge` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so `/merge` would never take it)', 'a PR that needs updating must be updated by the App, since `/merge` takes only its commits');
+});
+
+test('failureDetails', (t) => {
+	const pr = {
+		repository: 'o/r',
+		number: 625,
+		url: 'https://github.com/o/r/pull/625',
+	};
+	t.equal(
+		failureDetails(pr, 'the checks that failed', [f('tests / non-latest - 0.9', 'Process completed with exit code 1.', 'should be equivalent'), f('lint', 'failure')]),
+		[
+			'<details><summary><code>o/r</code> <a href="https://github.com/o/r/pull/625">#625</a>: the checks that failed</summary>',
+			'',
+			'```',
+			'tests / non-latest - 0.9',
+			'  Process completed with exit code 1.',
+			'  should be equivalent',
+			'lint',
+			'  failure',
+			'```',
+			'',
+			'</details>',
+		].join('\n'),
+		'collapsed, after the PR (linked, so that its number isn’t taken for an issue’s here): each job, with each of its messages, verbatim, indented below it, in a fenced block',
+	);
+	const sneaky = failureDetails(pr, 'x', [f('a\n```\r\nb', 'one ```` four `', 'two\nlines\r\nthree\rfour', '</details>')]);
+	const ticks = '`'.repeat(5);
+	t.equal(
+		sneaky.split('</summary>')[1],
+		[
+			'',
+			'',
+			ticks,
+			'a ``` b',
+			'  one ```` four `',
+			'  two',
+			'  lines',
+			'  three',
+			'  four',
+			'  </details>',
+			ticks,
+			'',
+			'</details>',
+		].join('\n'),
+		'a fence longer than any backtick run in it, so nothing can close it early; a name on one line, and every line of a message indented, so none can pass for a name; nothing else escaped',
+	);
+	t.equal(
+		failureDetails(
+			{
+				repository: 'o/<r>',
+				number: 1,
+				url: 'https://example.com/"<a>',
+			},
+			'a & <b>',
+			[f('j', 'm')],
+		).split('\n')[0],
+		'<details><summary><code>o/&#60;r&#62;</code> <a href="https://example.com/&#34;&#60;a&#62;">#1</a>: a &#38; &#60;b&#62;</summary>',
+		'its summary is HTML-escaped',
+	);
+
+	const optional = [f('tests / 8.7', 'should be equivalent')];
+	t.deepEqual(
+		assessmentDetails(pr, {
+			kind: 'failed',
+			failures: [f('lint', 'failure')],
+			optional,
+		}),
+		[failureDetails(pr, 'the checks that failed', [f('lint', 'failure')]), failureDetails(pr, 'optional jobs that failed, which don’t block merging', optional)],
+		'a PR whose CI failed: what failed, then what failed that doesn’t block merging',
+	);
+	t.deepEqual(assessmentDetails(pr, { kind: 'ready', optional }), [failureDetails(pr, 'optional jobs that failed, which don’t block merging', optional)], 'a PR that’s ready: what failed that doesn’t block merging');
+	t.deepEqual(assessmentDetails(pr, { kind: 'ready' }), [], 'nothing, when nothing failed');
+	t.deepEqual(assessmentDetails(pr, { kind: 'pending' }), [], 'nor for a PR whose CI is pending');
+	t.end();
 });
 
 test('assess: only the App’s bot’s own commits', async (t) => {

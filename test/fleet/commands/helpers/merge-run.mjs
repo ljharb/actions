@@ -31,7 +31,10 @@ export const report = {
 /** @type {(body: string, id?: number) => Record<string, unknown>} */
 export function comment(body, id = 77) {
 	return {
-		id, body, user: { login: 'maintainer' }, html_url: `https://github.com/ljharb/actions/issues/9#issuecomment-${id}`, // eslint-disable-line camelcase
+		id,
+		body,
+		user: { login: 'maintainer' },
+		html_url: `https://github.com/ljharb/actions/issues/9#issuecomment-${id}`, // eslint-disable-line camelcase
 	};
 }
 
@@ -65,7 +68,12 @@ export function pr(repository, number, branch, { sha = `${repository.split('/')[
 /** @type {(name: string, conclusion?: string | null, status?: string) => Record<string, unknown>} */
 export function checkRun(name, conclusion = 'success', status = 'completed') {
 	return {
-		id: 1, name, status, conclusion, url: `https://api.github.com/check-runs/${name}`, app: { slug: 'other-ci' },
+		id: 1,
+		name,
+		status,
+		conclusion,
+		url: `https://api.github.com/check-runs/${name}`,
+		app: { slug: 'other-ci' },
 	};
 }
 
@@ -84,14 +92,26 @@ export const failing = { checkRuns: [checkRun('tests', 'failure')] };
  *   throwStringOnSplit?: string,
  * }) => ChildResult}
  */
-export function runScript(t, script, {
-	event = {}, github = {}, commands = { permissions: { maintainer: 'write' } }, merge = {}, env = {}, throwStringOnSplit,
-}) {
+export function runScript(
+	t,
+	script,
+	{
+		event = {},
+		github = {},
+		commands = { permissions: { maintainer: 'write' } },
+		merge = {},
+		env = {},
+		throwStringOnSplit,
+	},
+) {
 	const eventPath = path.join(tempDir(t, 'fleet-merge-event'), 'event.json');
 	writeFileSync(eventPath, JSON.stringify(event));
 	/** @type {Scenario} */
 	const scenario = {
-		github, commands, merge, ...throwStringOnSplit ? { throwStringOnSplit } : {},
+		github,
+		commands,
+		merge,
+		...throwStringOnSplit ? { throwStringOnSplit } : {},
 	};
 	return runChild([script], {
 		scenario,
@@ -154,11 +174,26 @@ export function writtenQueue(requests) {
  * A queue entry, as written: `queuedAt` is left out, as `writtenQueue` leaves it out.
  * @type {(repository: string, number: number, options?: { headSha?: string, base?: string, commentId?: number, isPrivate?: boolean, commandFailed?: boolean }) => Record<string, unknown>}
  */
-export function entry(repository, number, {
-	headSha = `${repository.split('/')[1]}-${number}`, base = 'main', commentId = 77, isPrivate = false, commandFailed,
-} = {}) {
+export function entry(
+	repository,
+	number,
+	{
+		headSha = `${repository.split('/')[1]}-${number}`,
+		base = 'main',
+		commentId = 77,
+		isPrivate = false,
+		commandFailed,
+	} = {},
+) {
 	return {
-		repository, number, headSha, base, commentId, issueNumber: 9, private: isPrivate, ...commandFailed ? { commandFailed } : {},
+		repository,
+		number,
+		headSha,
+		base,
+		commentId,
+		issueNumber: 9,
+		private: isPrivate,
+		...commandFailed ? { commandFailed } : {},
 	};
 }
 
@@ -167,13 +202,30 @@ export function privateNote(dryRun) {
 	return `Private repositories matching these filters, if any, ${dryRun ? 'would also be' : 'were also'} processed; nothing about them is shown here.`;
 }
 
-/** @type {(line: string, rows: string[], dryRun: boolean) => string} */
-export function expectedReply(line, rows, dryRun) {
-	return [
+/**
+ * What a reply lists below its table about one PR, collapsed: each of `jobs` (a name, then its messages), in a block fenced with three backticks.
+ * @type {(repository: string, number: number, what: 'failed' | 'optional', jobs: [string, ...string[]][]) => string}
+ */
+export function expectedDetails(repository, number, what, jobs) {
+	return /** @type {string[]} */ ([]).concat(
+		`<details><summary><code>${repository}</code> <a href="https://github.com/${repository}/pull/${number}">#${number}</a>: ${what === 'failed' ? 'the checks that failed' : 'optional jobs that failed, which don’t block merging'}</summary>`,
+		'',
+		'```',
+		jobs.flatMap(([name, ...messages]) => [name].concat(messages.map((message) => `  ${message}`))),
+		'```',
+		'',
+		'</details>',
+	).join('\n');
+}
+
+/** @type {(line: string, rows: string[], dryRun: boolean, details?: string[]) => string} */
+export function expectedReply(line, rows, dryRun, details = []) {
+	return /** @type {string[]} */ ([]).concat(
 		`\`${line}\` (${dryRun ? 'a dry run, so nothing was changed or queued' : 'from each repository’s `fleet/workflows` and `actions-lock/relock` PRs by the App’s bot'}; see [the run](${runURL})):`,
 		'',
-		...rows.length > 0 ? ['| Repository | Outcome |', '| --- | --- |', ...rows] : ['No repository matches those filters.'],
+		rows.length > 0 ? ['| Repository | Outcome |', '| --- | --- |'].concat(rows) : 'No repository matches those filters.',
+		details.flatMap((text) => ['', text]),
 		'',
 		privateNote(dryRun),
-	].join('\n');
+	).join('\n');
 }

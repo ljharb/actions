@@ -5,7 +5,6 @@ import {
 	unreportedPending,
 	workflowFile,
 } from './merge-guards.mjs';
-import { code } from './markdown.mjs';
 
 /** @import { Octokit } from './app.mjs' */
 /** @import { Assessment } from './merge.mjs' */
@@ -22,17 +21,22 @@ const failingSteps = new Set([
 /** @typedef {{ id: number, name?: string | null, path?: string | null, status: string | null, conclusion: string | null, updated_at?: string | null, check_suite_id?: number }} WorkflowRun */
 /** @typedef {{ id: number, name: string, url: string, status: string, conclusion: string | null, completed_at?: string | null, check_suite?: { id: number } | null, app?: { slug?: string } | null, output?: { annotations_count?: number } }} CheckRun */
 /**
- * One failure of CI on a commit: what it says, and, for a GitHub Actions workflow run's or job's, its workflow file (see `workflowFile`); for a job's, also its check run's name (`job`), which is what the same job on another commit has too; for a workflow run's own, its `conclusion` (eg, `startup_failure`, for a run that never got to any job), since that's all that tells one such failure from another.
- * @typedef {{ text: string, file: string | null, job: string | null, conclusion?: string | null }} CIFailure
+ * One failure of CI on a commit: what failed (`name`: eg, a check run's name), and what it says (`message`: eg, its conclusion), each as plain text; and, for a GitHub Actions workflow run's or job's, its workflow file (see `workflowFile`); for a job's, also its check run's name (`job`), which is what the same job on another commit has too; for a workflow run's own, its `conclusion` (eg, `startup_failure`, for a run that never got to any job), since that's all that tells one such failure from another.
+ * @typedef {{ name: string, message: string, file: string | null, job: string | null, conclusion?: string | null }} CIFailure
  */
 
 /**
- * One failure of a GitHub Actions job that its `continue-on-error` hides, so that GitHub doesn't count it as CI failing: the job's workflow file (see `workflowFile`), its check run's name (`job`), and what it says (`message`).
+ * One failure of a GitHub Actions job that its `continue-on-error` hides, so that GitHub doesn't count it as CI failing: the job's workflow file (see `workflowFile`), its check run's name (`job`), and what it says (`message`), as plain text.
  * @typedef {{ file: string | null, job: string, message: string }} HiddenFailure
  */
 /**
- * Every failure of one GitHub Actions job, in one workflow file, that `continue-on-error` hides (see `optionalFailures`): its workflow file, its check run's name (`job`), and what each says (`messages`), each only once, however many runs of that file on the commit (eg, one for a `push`, and one for a `pull_request`) said it.
+ * Every failure of one GitHub Actions job, in one workflow file, that `continue-on-error` hides (see `optionalFailures`): its workflow file, its check run's name (`job`), and what each says (`messages`), as plain text, each only once, however many runs of that file on the commit (eg, one for a `push`, and one for a `pull_request`) said it.
  * @typedef {{ file: string | null, job: string, messages: string[] }} OptionalFailure
+ */
+
+/**
+ * What a reply lists about each thing on a PR's CI that failed (eg, a job), by its `name`, with what each of its failures said (`messages`), as plain text, each once.
+ * @typedef {{ name: string, messages: string[] }} Failed
  */
 
 /** @type {(run: WorkflowRun | undefined) => string | null} */
@@ -87,7 +91,7 @@ async function hiddenFailures(octokit, { owner, name }, { runs, checkRuns }) {
 			(job?.steps ?? []).forEach((step) => {
 				const failed = [step.conclusion, 'outcome' in step ? step.outcome : null].find((c) => typeof c === 'string' && failingSteps.has(c));
 				if (failed) {
-					fail(`step ${code(step.name)}: ${failed}`);
+					fail(`step ${step.name}: ${failed}`);
 				}
 			});
 			if ((checkRun.output?.annotations_count ?? 0) > 0) {
@@ -98,7 +102,7 @@ async function hiddenFailures(octokit, { owner, name }, { runs, checkRuns }) {
 					per_page: 100, // eslint-disable-line camelcase
 				});
 				annotations.filter((a) => a.annotation_level === 'failure').forEach((annotation) => {
-					fail(code(excerpt(annotation.message ?? '')));
+					fail(excerpt(annotation.message ?? ''));
 				});
 			}
 		},
@@ -166,8 +170,9 @@ async function readCI(octokit, commit) {
 	const suites = await checkSuites(octokit, commit);
 	const statuses = await commitStatuses(octokit, commit);
 	/** @type {CIFailure[]} */
-	const failures = suites.failures.map((text) => ({
-		text,
+	const failures = suites.failures.map(({ name: suite, message }) => ({
+		name: suite,
+		message,
 		file: null,
 		job: null,
 	}));
@@ -179,7 +184,8 @@ async function readCI(octokit, commit) {
 			pending = true;
 		} else if (!passing.has(String(run.conclusion))) {
 			failures.push({
-				text: `${code(run.name || `workflow run ${run.id}`)}: ${run.conclusion ?? 'no conclusion'}`,
+				name: run.name || `workflow run ${run.id}`,
+				message: run.conclusion ?? 'no conclusion',
 				file: fileOf(run),
 				job: null,
 				conclusion: run.conclusion,
@@ -201,7 +207,8 @@ async function readCI(octokit, commit) {
 				});
 			} else if (!actions || workflowRun.status === 'completed') {
 				failures.push({
-					text: `${code(run.name)}: ${run.conclusion ?? 'no conclusion'}`,
+					name: run.name,
+					message: run.conclusion ?? 'no conclusion',
 					file: fileOf(workflowRun),
 					job: run.name,
 				});
@@ -213,7 +220,8 @@ async function readCI(octokit, commit) {
 			pending = true;
 		} else if (status.state !== 'success') {
 			failures.push({
-				text: `${code(status.context)}: ${status.state}`,
+				name: status.context,
+				message: status.state,
 				file: null,
 				job: null,
 			});
@@ -281,30 +289,55 @@ export async function ciFailures(octokit, commit) {
 }
 
 /**
- * What a reply says about each job in `optional` (see `OptionalFailure`): its name, and its messages; a job that says exactly the same in another workflow file is only said once.
- * @type {(optional: OptionalFailure[]) => string[]}
+ * What a reply lists about each job in `optional` (see `OptionalFailure`, `Failed`): its name, and its messages; a job that says exactly the same in another workflow file is only listed once.
+ * @type {(optional: OptionalFailure[]) => Failed[]}
  */
-function optionalTexts(optional) {
-	return Array.from(new Set(optional.map(({ job, messages }) => `${code(job)}: ${messages.join(', ')}`)));
+function optionalFailed(optional) {
+	/** @type {Map<string, Failed>} */
+	const jobs = new Map();
+	optional.forEach(({ job, messages }) => {
+		const key = JSON.stringify([job, messages]);
+		if (!jobs.has(key)) {
+			jobs.set(key, { name: job, messages });
+		}
+	});
+	return Array.from(jobs.values());
+}
+
+/**
+ * What a reply lists about `failures` (see `Failed`): each thing that failed once, by its name, in the order it first failed, with each of its messages once, however many runs (eg, of the same workflow) had it.
+ * @type {(failures: CIFailure[]) => Failed[]}
+ */
+function byName(failures) {
+	/** @type {Map<string, Failed>} */
+	const named = new Map();
+	failures.forEach(({ name, message }) => {
+		const entry = named.get(name) ?? { name, messages: [] };
+		named.set(name, entry);
+		if (!entry.messages.includes(message)) {
+			entry.messages.push(message);
+		}
+	});
+	return Array.from(named.values());
 }
 
 /**
  * Whether CI has fully finished, successfully, on `sha`, as GitHub decides it: every workflow run on it completed as a success or skipped, every check suite completed (as `suiteState` and `unreportedPending` count it), every check run (of every check suite) completed as a success or skipped (except a job's whose failure `continue-on-error` hides: see `readCI`), and every commit status a success.
- * With no check runs and no statuses at all, CI hasn't even started, so it's pending. A failure says which workflow files failed, as far as that can be told; each failure is said only once (eg, the same job's, in two runs of the same workflow).
+ * With no check runs and no statuses at all, CI hasn't even started, so it's pending. A failure says which workflow files failed, as far as that can be told; each thing that failed is listed once, with each of its failures once (eg, the same job's, in two runs of the same workflow: see `Failed`).
  * Once nothing's pending, the failures `continue-on-error` hides (see `optionalFailures`), which never fail it, are in `optional`, by job, when there are any.
- * @type {(octokit: Octokit, commit: Commit) => Promise<Extract<Assessment, { kind: 'pending' | 'failed' }> | { kind: 'passed', optional?: string[] }>}
+ * @type {(octokit: Octokit, commit: Commit) => Promise<Extract<Assessment, { kind: 'pending' | 'failed' }> | { kind: 'passed', optional?: Failed[] }>}
  */
 export async function ciStatus(octokit, commit) {
 	const ci = await ciFailures(octokit, commit);
 	if (ci.kind === 'pending') {
 		return ci;
 	}
-	const optional = optionalTexts(ci.optional);
+	const optional = optionalFailed(ci.optional);
 	const notes = optional.length > 0 ? { optional } : {};
 	return ci.kind === 'failed'
 		? {
 			kind: 'failed',
-			failures: Array.from(new Set(ci.failures.map((f) => f.text))),
+			failures: byName(ci.failures),
 			files: Array.from(new Set(ci.failures.flatMap((f) => f.file ?? []))),
 			...notes,
 		}

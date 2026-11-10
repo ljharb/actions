@@ -7,6 +7,7 @@ import { botEmail, prCommit } from '../commands/helpers/merge.mjs';
 import {
 	bot,
 	entry,
+	expectedDetails,
 	failing,
 	issueToken,
 	matching,
@@ -44,17 +45,18 @@ function row(commentId) {
 	return `(queued by [this comment](https://github.com/ljharb/actions/issues/9#issuecomment-${commentId}))`;
 }
 
-/** @type {(rows: string[]) => string} */
-function expectedReply(rows) {
-	return [
+/** @type {(rows: string[], details?: string[]) => string} */
+function expectedReply(rows, details = []) {
+	return /** @type {string[]} */ ([]).concat(
 		`The merge queue, as of [this run](${runURL}):`,
 		'',
 		'| Repository | Outcome |',
 		'| --- | --- |',
-		...rows,
+		rows,
+		details.flatMap((text) => ['', text]),
 		'',
 		privateNote,
-	].join('\n');
+	).join('\n');
 }
 
 test('fleet/merge: an empty queue is only read, and then there are no PRs to keep up to date', (t) => {
@@ -166,16 +168,19 @@ test('fleet/merge: re-checks each queued PR, merging, keeping, or dropping it', 
 		'keeps the pending one, and the one that could not be checked (each of whose commands has now failed); drops the rest',
 	);
 
-	const body = expectedReply([
-		`| \`ljharb/a\` | already merged https://github.com/ljharb/a/pull/1 ${row(77)} |`,
-		`| \`ljharb/a\` | not merged https://github.com/ljharb/a/pull/2: the PR changed after \`/merge\`; run \`/merge\` again ${row(77)} |`,
-		`| \`ljharb/b\` | not merged https://github.com/ljharb/b/pull/1: its checks failed: \`tests\`: failure ${row(66)} |`,
-		`| \`ljharb/d\` | merged https://github.com/ljharb/d/pull/1 ${row(55)} |`,
-		`| \`ljharb/e\` | not merged https://github.com/ljharb/e/pull/1: it needs updating: the App’s PRs must be one commit, on \`main\`’s tip, and the App rebases them onto it every 10 minutes, so run \`/merge\` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so \`/merge\` would never take it) ${row(44)} |`,
-		`| \`ljharb/f\` | not merged https://github.com/ljharb/f/pull/1: it was closed ${row(33)} |`,
-		`| \`ljharb/gone\` | not merged https://github.com/ljharb/gone/pull/1: it could not be read (HTTP 404) ${row(10)} |`,
-		`| \`ljharb/refused\` | not merged https://github.com/ljharb/refused/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422), eg because of a branch protection rule ${row(10)} |`,
-	]);
+	const body = expectedReply(
+		[
+			`| \`ljharb/a\` | already merged https://github.com/ljharb/a/pull/1 ${row(77)} |`,
+			`| \`ljharb/a\` | not merged https://github.com/ljharb/a/pull/2: the PR changed after \`/merge\`; run \`/merge\` again ${row(77)} |`,
+			`| \`ljharb/b\` | not merged https://github.com/ljharb/b/pull/1: its checks failed (see below) ${row(66)} |`,
+			`| \`ljharb/d\` | merged https://github.com/ljharb/d/pull/1 ${row(55)} |`,
+			`| \`ljharb/e\` | not merged https://github.com/ljharb/e/pull/1: it needs updating: the App’s PRs must be one commit, on \`main\`’s tip, and the App rebases them onto it every 10 minutes, so run \`/merge\` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so \`/merge\` would never take it) ${row(44)} |`,
+			`| \`ljharb/f\` | not merged https://github.com/ljharb/f/pull/1: it was closed ${row(33)} |`,
+			`| \`ljharb/gone\` | not merged https://github.com/ljharb/gone/pull/1: it could not be read (HTTP 404) ${row(10)} |`,
+			`| \`ljharb/refused\` | not merged https://github.com/ljharb/refused/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422), eg because of a branch protection rule ${row(10)} |`,
+		],
+		[expectedDetails('ljharb/b', 1, 'failed', [['tests', 'failure']])],
+	);
 	t.deepEqual(replies(requests), [body], 'one reply, on the issue they were queued from, listing what happened to each public PR it resolved');
 	t.equal(summary, body, 'which is also the run summary');
 	t.ok(matching(requests, 'POST', /^\/repos\/ljharb\/actions\/issues\/9\/comments$/).every((r) => r.authorization === issueToken), 'as the App’s bot');
@@ -240,15 +245,39 @@ test('fleet/merge: failures that `continue-on-error` hides never keep a queued P
 	});
 	t.equal(status, 0, 'exits successfully');
 	t.deepEqual(matching(requests, 'PATCH', /\/git\/refs\//).map((r) => r.path), ['/repos/ljharb/g/git/refs/heads%2Fmain'], 'merging the one whose only failure is hidden');
-	const note = '; optional jobs failed, which doesn’t block merging: `optional`: failure';
+	const note = '; optional jobs failed, which doesn’t block merging (see below)';
 	t.deepEqual(
 		replies(requests),
-		[expectedReply([
-			`| \`ljharb/g\` | merged https://github.com/ljharb/g/pull/1${note} ${row(66)} |`,
-			`| \`ljharb/h\` | not merged https://github.com/ljharb/h/pull/1: its checks failed: \`tests\`: failure${note} ${row(66)} |`,
-		])],
+		[expectedReply(
+			[
+				`| \`ljharb/g\` | merged https://github.com/ljharb/g/pull/1${note} ${row(66)} |`,
+				`| \`ljharb/h\` | not merged https://github.com/ljharb/h/pull/1: its checks failed (see below)${note} ${row(66)} |`,
+			],
+			[
+				expectedDetails('ljharb/g', 1, 'optional', [['optional', 'failure']]),
+				expectedDetails('ljharb/h', 1, 'failed', [['tests', 'failure']]),
+				expectedDetails('ljharb/h', 1, 'optional', [['optional', 'failure']]),
+			],
+		)],
 		'noting the hidden failures of each, beside the other’s real one',
 	);
+	t.end();
+});
+
+test('fleet/merge: what failed on a private queued PR is never listed', (t) => {
+	const { status, stdout, requests } = run(t, {
+		queue: queue(entry('ljharb/b', 1), entry('ljharb/secret', 1, { isPrivate: true, commentId: 22 })),
+		prs: { 'ljharb/b#1': pr('ljharb/b', 1, fixBranch), 'ljharb/secret#1': pr('ljharb/secret', 1, fixBranch) },
+		ci: { 'b-1': failing, 'secret-1': failing },
+	});
+	t.equal(status, 0, 'exits successfully');
+	t.ok(matching(requests, 'GET', /^\/repos\/ljharb\/secret\/commits\/secret-1\/check-runs/).length > 0, 'the private one’s CI is read');
+	t.deepEqual(
+		replies(requests),
+		[expectedReply([`| \`ljharb/b\` | not merged https://github.com/ljharb/b/pull/1: its checks failed (see below) ${row(77)} |`], [expectedDetails('ljharb/b', 1, 'failed', [['tests', 'failure']])])],
+		'only the public one is listed, with what failed on it below the table',
+	);
+	t.notOk([stdout].concat(replies(requests)).join('\n').includes('secret'), 'the private one, whose checks failed too, is never mentioned, nor what failed on it');
 	t.end();
 });
 
@@ -432,15 +461,18 @@ test('fleet/merge: only the App’s bot’s own commits are merged, once every c
 	t.deepEqual(writtenQueue(requests), [entry('ljharb/suite-pending', 1, { commentId: 66, commandFailed: true })], 'keeps the one with an unfinished check suite (noting that its command has now failed); drops the rest, the private one too');
 	t.deepEqual(
 		replies(requests),
-		[expectedReply([
-			`| \`ljharb/author\` | not merged https://github.com/ljharb/author/pull/1: ${someoneElse} ${row(66)} |`,
-			`| \`ljharb/committer\` | not merged https://github.com/ljharb/committer/pull/1: ${someoneElse} ${row(66)} |`,
-			`| \`ljharb/email\` | merged https://github.com/ljharb/email/pull/1 ${row(66)} |`,
-			`| \`ljharb/many\` | not merged https://github.com/ljharb/many/pull/1: it has at least 250 commits, more than GitHub lists, so they can’t all be checked to be the App’s own; review and merge it yourself ${row(66)} |`,
-			`| \`ljharb/suite-failed\` | not merged https://github.com/ljharb/suite-failed/pull/1: its checks failed: check suite 2 (\`Other CI\`): failure ${row(66)} |`,
-			`| \`ljharb/suite-empty\` | merged https://github.com/ljharb/suite-empty/pull/1 ${row(66)} |`,
-			`| \`ljharb/suite-stuck\` | merged https://github.com/ljharb/suite-stuck/pull/1 ${row(66)} |`,
-		])],
+		[expectedReply(
+			[
+				`| \`ljharb/author\` | not merged https://github.com/ljharb/author/pull/1: ${someoneElse} ${row(66)} |`,
+				`| \`ljharb/committer\` | not merged https://github.com/ljharb/committer/pull/1: ${someoneElse} ${row(66)} |`,
+				`| \`ljharb/email\` | merged https://github.com/ljharb/email/pull/1 ${row(66)} |`,
+				`| \`ljharb/many\` | not merged https://github.com/ljharb/many/pull/1: it has at least 250 commits, more than GitHub lists, so they can’t all be checked to be the App’s own; review and merge it yourself ${row(66)} |`,
+				`| \`ljharb/suite-failed\` | not merged https://github.com/ljharb/suite-failed/pull/1: its checks failed (see below) ${row(66)} |`,
+				`| \`ljharb/suite-empty\` | merged https://github.com/ljharb/suite-empty/pull/1 ${row(66)} |`,
+				`| \`ljharb/suite-stuck\` | merged https://github.com/ljharb/suite-stuck/pull/1 ${row(66)} |`,
+			],
+			[expectedDetails('ljharb/suite-failed', 1, 'failed', [['check suite 2 (Other CI)', 'failure']])],
+		)],
 		'saying why each public one wasn’t merged',
 	);
 	t.notOk(stdout.includes('secret'), 'never mentioning the private one');

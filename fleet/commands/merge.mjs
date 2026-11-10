@@ -4,6 +4,7 @@ import { botLogin } from '../lib/app.mjs';
 import { code } from '../lib/markdown.mjs';
 import {
 	assess,
+	assessmentDetails,
 	behindReason,
 	candidatePRs,
 	entryKey,
@@ -34,8 +35,8 @@ import {
  * }} MergeContext
  */
 /**
- * What happened to one PR: `ok` is whether it went as asked (merged, or queued, or, in a dry run, anything that isn't an error); `entry`, a PR to queue.
- * @typedef {{ text: string, ok: boolean, error?: boolean, key?: string, url?: string, entry?: Entry }} Outcome
+ * What happened to one PR: `ok` is whether it went as asked (merged, or queued, or, in a dry run, anything that isn't an error); `entry`, a PR to queue; `details`, what the reply lists about it below its table (see `assessmentDetails`).
+ * @typedef {{ text: string, ok: boolean, error?: boolean, key?: string, url?: string, entry?: Entry, details?: string[] }} Outcome
  */
 /** @typedef {{ state: RepoState, named: boolean, outcomes: Outcome[] }} Row */
 
@@ -77,6 +78,14 @@ async function mergePR(
 		head: pr.head.sha,
 	};
 	const assessment = await assess(read, target, bot);
+	const details = assessmentDetails(
+		{
+			repository: state.repository,
+			number: pr.number,
+			url,
+		},
+		assessment,
+	);
 	const not = tense(context.dryRun, 'not merged', 'would not merge');
 	if (assessment.kind === 'refused') {
 		return { text: `${not} ${url}: ${assessment.reason}`, ok: context.dryRun };
@@ -85,7 +94,11 @@ async function mergePR(
 		return { text: `${not} ${url}: ${behindReason(target.base)}`, ok: context.dryRun };
 	}
 	if (assessment.kind === 'failed') {
-		return { text: `${not} ${url}: its checks failed: ${assessment.failures.join(', ')}${optionalNote(assessment)}`, ok: context.dryRun };
+		return {
+			text: `${not} ${url}: its checks failed (see below)${optionalNote(assessment)}`,
+			ok: context.dryRun,
+			details,
+		};
 	}
 	if (assessment.kind === 'pending' && context.dryRun) {
 		return { text: `would queue ${url}: its checks haven’t all finished, so it would be merged once they pass`, ok: true };
@@ -108,7 +121,11 @@ async function mergePR(
 		};
 	}
 	if (context.dryRun) {
-		return { text: `would merge ${url}${optionalNote(assessment)}`, ok: true };
+		return {
+			text: `would merge ${url}${optionalNote(assessment)}`,
+			ok: true,
+			details,
+		};
 	}
 	const octokit = await write();
 	try {
@@ -120,7 +137,11 @@ async function mergePR(
 			error: true,
 		};
 	}
-	return { text: `merged ${url}${optionalNote(assessment)}`, ok: true };
+	return {
+		text: `merged ${url}${optionalNote(assessment)}`,
+		ok: true,
+		details,
+	};
 }
 
 /**
@@ -230,9 +251,9 @@ async function enqueue(context, resolved, wanted) {
 }
 
 /**
- * Runs `/merge` (or `/dry-run merge`), failing the run if any public repository failed, or the queue can't be used: the rows of its reply, and whether it went as asked; whether it queued a public PR is in `context.progress`.
+ * Runs `/merge` (or `/dry-run merge`), failing the run if any public repository failed, or the queue can't be used: the rows of its reply, what it lists below them (`details`: see `assessmentDetails`), and whether it went as asked; whether it queued a public PR is in `context.progress`.
  * Whether any private repository matched, or was queued, never shows in any of them.
- * @type {(context: MergeContext, states: RepoState[], filters: Pick<Filters, 'repositories' | 'accounts'>) => Promise<{ rows: string[], ok: boolean }>}
+ * @type {(context: MergeContext, states: RepoState[], filters: Pick<Filters, 'repositories' | 'accounts'>) => Promise<{ rows: string[], details: string[], ok: boolean }>}
  */
 export async function runMerge(context, states, { repositories, accounts }) {
 	const selected = states.filter((s) => !s.external
@@ -298,6 +319,7 @@ export async function runMerge(context, states, { repositories, accounts }) {
 	const shown = settledRows.filter((r) => !r.state.private && (r.outcomes.length > 0 || r.named));
 	return {
 		rows: shown.map((r) => `| ${code(r.state.repository)} | ${r.outcomes.length > 0 ? r.outcomes.map((o) => o.text).join('<br>') : 'nothing to merge'} |`),
+		details: shown.flatMap((r) => r.outcomes.flatMap((o) => o.details ?? [])),
 		ok: failed === 0 && !queueError && publicSettled.every((o) => o.ok),
 	};
 }

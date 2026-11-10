@@ -112,12 +112,13 @@ function privateNote(dryRun) {
 }
 
 /**
- * The reply, as the comments it takes: every row is in one of them, whole, unless it's too long for any comment on its own.
- * Each starts with the command's marker (see `replyMarker`), so that a later reply to the same command can hide it.
+ * The reply, as the comments it takes: every row, and every collapsed section below the table (`details`), is in one of them, whole, unless it's too long for any comment on its own.
+ * Each starts with the command’s marker (see `replyMarker`), so that a later reply to the same command can hide it.
  * @type {(options: {
  *   command: Run,
  *   what: string,
  *   rows: string[],
+ *   details?: string[],
  *   failures: number,
  *   waiting: string[],
  * }) => string[]}
@@ -126,6 +127,7 @@ function replyBodies({
 	command,
 	what,
 	rows,
+	details = [],
 	failures,
 	waiting,
 }) {
@@ -139,6 +141,7 @@ function replyBodies({
 			rows.length > 0
 				? [{ text: table.open, group: table }].concat(rows.map((text) => ({ text, group: table })))
 				: ['No repository matches those filters.'],
+			details.flatMap((text) => ['', text]),
 			failures > 0
 				? ['', `⚠️ Some repositories could not be read, so they were not considered; see [the run](${runURL}).`]
 				: [],
@@ -194,7 +197,9 @@ async function run(context, command) {
 		const files = select(state, result, command.filters);
 		return files === null ? [] : [
 			{
-				state, result, files,
+				state,
+				result,
+				files,
 			},
 		];
 	}))).flat();
@@ -203,14 +208,17 @@ async function run(context, command) {
 	const rows = [];
 	let failed = 0;
 	// one at a time, to stay clear of secondary rate limits; private repositories last, so that where one falls among the public ones' log lines, or how long one takes, says nothing about it
-	await candidates.filter((c) => !c.state.private).concat(candidates.filter((c) => c.state.private)).reduce(async (previous, candidate) => {
-		await previous;
-		const { outcome, failed: didFail } = await attempt(context, candidate);
-		failed += Number(didFail);
-		if (!candidate.state.private) {
-			rows.push(`| ${code(candidate.state.repository)} | ${outcome} |`);
-		}
-	}, Promise.resolve());
+	await candidates.filter((c) => !c.state.private).concat(candidates.filter((c) => c.state.private)).reduce(
+		async (previous, candidate) => {
+			await previous;
+			const { outcome, failed: didFail } = await attempt(context, candidate);
+			failed += Number(didFail);
+			if (!candidate.state.private) {
+				rows.push(`| ${code(candidate.state.repository)} | ${outcome} |`);
+			}
+		},
+		Promise.resolve(),
+	);
 
 	return {
 		bodies: replyBodies({
@@ -292,11 +300,17 @@ function skipReason(issue, comment) {
  * @type {(options: { octokit: Octokit, owner: string, repo: string, comment: Record<string, any>, reply: (bodies: string[]) => Promise<void> }) => Promise<number | null>}
  */
 async function authorize({
-	octokit, owner, repo, comment, reply,
+	octokit,
+	owner,
+	repo,
+	comment,
+	reply,
 }) {
 	// `author_association` says nothing about permissions on this repository, so ask
 	const { data: { permission } } = await octokit.rest.repos.getCollaboratorPermissionLevel({
-		owner, repo, username: comment.user.login,
+		owner,
+		repo,
+		username: comment.user.login,
 	});
 	if (permission !== 'admin' && permission !== 'write') {
 		await reply(['Only people with write access to this repository can run fleet commands, so nothing was done.']);
@@ -304,7 +318,10 @@ async function authorize({
 		return null;
 	}
 	const { data: { id } } = await octokit.rest.reactions.createForIssueComment({
-		owner, repo, comment_id: comment.id, content: 'eyes', // eslint-disable-line camelcase
+		owner,
+		repo,
+		comment_id: comment.id, // eslint-disable-line camelcase
+		content: 'eyes',
 	});
 	return id;
 }
@@ -315,18 +332,29 @@ async function authorize({
  * @type {(options: { octokit: Octokit, owner: string, repo: string, comment: Record<string, any>, eyes: number, ok: boolean }) => Promise<void>}
  */
 async function finish({
-	octokit, owner, repo, comment, eyes, ok,
+	octokit,
+	owner,
+	repo,
+	comment,
+	eyes,
+	ok,
 }) {
 	try {
 		await octokit.rest.reactions.deleteForIssueComment({
-			owner, repo, comment_id: comment.id, reaction_id: eyes, // eslint-disable-line camelcase
+			owner,
+			repo,
+			comment_id: comment.id, // eslint-disable-line camelcase
+			reaction_id: eyes, // eslint-disable-line camelcase
 		}).catch((error) => {
 			if (!error || typeof error !== 'object' || !('status' in error) || error.status !== 404) {
 				throw error;
 			}
 		});
 		await octokit.rest.reactions.createForIssueComment({
-			owner, repo, comment_id: comment.id, content: ok ? 'rocket' : 'confused', // eslint-disable-line camelcase
+			owner,
+			repo,
+			comment_id: comment.id, // eslint-disable-line camelcase
+			content: ok ? 'rocket' : 'confused',
 		});
 	} catch (error) {
 		core.warning(`could not mark the command as ${ok ? 'done' : 'failed'}: ${failureMessage(error)}`);
@@ -355,14 +383,22 @@ async function merge(
 		unread,
 		waiting,
 	} = await installed(auth);
-	const { rows, ok } = await runMerge({
-		auth,
-		dryRun,
-		commentId: comment.id,
-		issueNumber,
-		finishOther,
-		progress,
-	}, states, filters);
+	const {
+		rows,
+		details,
+		ok,
+	} = await runMerge(
+		{
+			auth,
+			dryRun,
+			commentId: comment.id,
+			issueNumber,
+			finishOther,
+			progress,
+		},
+		states,
+		filters,
+	);
 	return {
 		bodies: replyBodies({
 			command,
@@ -370,6 +406,7 @@ async function merge(
 				? 'a dry run, so nothing was changed or queued'
 				: `\`${fixBranch}\` and \`${relockBranch}\` PRs by the App’s bot`,
 			rows,
+			details,
 			failures: unread,
 			waiting,
 		}),
@@ -460,17 +497,20 @@ async function main() {
 	// a reply too long for one comment goes on in the next ones, in order; `posted` gets each one's link as it's posted, and `ours` its ID and author (the App's bot)
 	/** @type {(bodies: string[], posted?: string[]) => Promise<void>} */
 	const reply = async (bodies, posted = []) => {
-		await bodies.reduce(async (previous, body) => {
-			await previous;
-			const { data } = await octokit.rest.issues.createComment({
-				owner,
-				repo,
-				issue_number: issue.number, // eslint-disable-line camelcase
-				body,
-			});
-			posted.push(data.html_url);
-			ours.push({ id: data.id, author: data.user?.login });
-		}, Promise.resolve());
+		await bodies.reduce(
+			async (previous, body) => {
+				await previous;
+				const { data } = await octokit.rest.issues.createComment({
+					owner,
+					repo,
+					issue_number: issue.number, // eslint-disable-line camelcase
+					body,
+				});
+				posted.push(data.html_url);
+				ours.push({ id: data.id, author: data.user?.login });
+			},
+			Promise.resolve(),
+		);
 	};
 	/** @type {(command: Run) => Promise<void>} */
 	const hideEarlier = async (replied) => {

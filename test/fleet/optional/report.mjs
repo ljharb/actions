@@ -15,7 +15,7 @@ function results(accounts, repos, jobs) {
 		jobs: Array.from({ length: jobs }, (___, j) => ({
 			file: `.github/workflows/w${j}.yml`,
 			job: `job ${j}`,
-			messages: ['failure', `step \`s${j}\`: failure`],
+			messages: ['failure', `step s${j}: failure`],
 		})),
 	}))).flat();
 }
@@ -59,7 +59,7 @@ test('optional report: the summary always fits, and the full report always has e
 test('optional report: the summary lists every job when it fits, then each account’s counts, then only how many accounts', (t) => {
 	const small = report(results(2, 1, 1), 0, [], { installed: 4, external: 1 });
 	const listed = small.summary(gist, true);
-	t.ok(listed.includes('<details><summary><b>account-0</b>: 1 repository</summary>\n\n- [`account-0/repo-0`](https://github.com/account-0/repo-0/commit/sha0x0)\n  - [`.github/workflows/w0.yml`](https://github.com/account-0/repo-0/blob/sha0x0/.github/workflows/w0.yml), `job 0`: failure, step `s0`: failure\n\n</details>'), 'grouped by account, then repository, each job with its workflow file, linked at that commit, and its messages');
+	t.ok(listed.includes('<details><summary><b>account-0</b>: 1 repository</summary>\n\n- [`account-0/repo-0`](https://github.com/account-0/repo-0/commit/sha0x0)\n  - [`.github/workflows/w0.yml`](https://github.com/account-0/repo-0/blob/sha0x0/.github/workflows/w0.yml), `job 0`: `failure`, `step s0: failure`\n\n</details>'), 'grouped by account, then repository, each job with its workflow file, linked at that commit, and its messages, each inert code');
 	t.ok(listed.includes('checked CI on the tip of the default branch of 4 repositories the fleet App is installed on, and 1 sources of forks it’s installed on, for failures that `continue-on-error` hides'), 'counting the sources of forks');
 	t.notOk(listed.includes('⚠️'), 'complete, with nothing that couldn’t be checked');
 
@@ -97,7 +97,7 @@ test('optional report: third-party names are inert, and a job whose workflow fil
 			head: 'abc',
 			jobs: [
 				{ file: '.github/workflows/a (b).yml', job: 'x`y', messages: ['failure'] },
-				{ file: null, job: 'lost', messages: ['`boom`'] },
+				{ file: null, job: 'lost', messages: ['boom | `b`'] },
 			],
 		}],
 		0,
@@ -107,9 +107,9 @@ test('optional report: third-party names are inert, and a job whose workflow fil
 	);
 	const full = found.parts.join('\n');
 	t.ok(full.includes('<details><summary><b>o&#60;b&#62;</b>: 1 repository</summary>'), 'the account is escaped in HTML');
-	t.ok(full.includes(', ``x`y``: failure'), 'a job’s name is inert code');
+	t.ok(full.includes(', ``x`y``: `failure`'), 'a job’s name is inert code');
 	t.ok(full.includes('/blob/abc/.github/workflows/a%20%28b%29.yml)'), 'a workflow file’s path is encoded, parentheses too, so its link never ends early');
-	t.ok(full.includes('  - an unknown workflow file, `lost`: `boom`'), 'a job whose workflow file is unknown says so');
+	t.ok(full.includes('  - an unknown workflow file, `lost`: `` boom \\| `b` ``'), 'a job whose workflow file is unknown says so; a message is inert code too');
 	t.ok(full.includes('⏳ Waiting on permission approval: `waiter`.'), 'an account waiting on permission approval is listed');
 	t.end();
 });

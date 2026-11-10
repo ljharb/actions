@@ -32,7 +32,7 @@ function urlPath(path) {
 /** @type {(result: Result, failure: OptionalFailure) => string} */
 function jobItem({ repository, head }, failure) {
 	const where = failure.file ? `[${code(failure.file)}](${serverURL}/${repository}/blob/${head}/${urlPath(failure.file)})` : 'an unknown workflow file';
-	return `  - ${where}, ${code(failure.job)}: ${failure.messages.join(', ')}`;
+	return `  - ${where}, ${code(failure.job)}: ${failure.messages.map(code).join(', ')}`;
 }
 
 // a repository, linked to its default branch's tip, with each of its jobs whose failures `continue-on-error` hides

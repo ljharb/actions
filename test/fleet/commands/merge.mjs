@@ -11,6 +11,7 @@ import {
 	checkRun,
 	comment,
 	entry,
+	expectedDetails,
 	expectedReply,
 	failing,
 	issueToken,
@@ -28,7 +29,7 @@ import {
 import { botEmail, prCommit } from './helpers/merge.mjs';
 
 /** @import { Scenario as GitHubScenario, Recorded } from '../lib/helpers/github.mjs' */
-/** @import { MergeScenario } from './helpers/merge.mjs' */
+/** @import { CI, MergeScenario } from './helpers/merge.mjs' */
 /** @import { Test } from 'tape' */
 
 const script = path.join('fleet', 'commands', 'index.mjs');
@@ -126,10 +127,11 @@ test('fleet/commands: `/dry-run merge`', (t) => {
 		'/dry-run merge ljharb',
 		[
 			`| \`ljharb/a\` | would merge ${url(1)}<br>would queue ${url(2)}: its checks haven’t all finished, so it would be merged once they pass |`,
-			'| `ljharb/b` | would not merge https://github.com/ljharb/b/pull/1: its checks failed: `tests`: failure |',
+			'| `ljharb/b` | would not merge https://github.com/ljharb/b/pull/1: its checks failed (see below) |',
 			`| \`ljharb/c\` | would not merge https://github.com/ljharb/c/pull/1: ${needsUpdating} |`,
 		],
 		true,
+		[expectedDetails('ljharb/b', 1, 'failed', [['tests', 'failure']])],
 	);
 	t.deepEqual(replies(requests), [body], 'says what it would do with each PR the bot opened from its own branches; the others, an archived repository, one without any (unless named), and a private one, aren’t mentioned');
 	t.equal(summary, body, 'the run summary has the same');
@@ -211,12 +213,13 @@ test('fleet/commands: `/merge` fast-forwards what passed, queues what’s pendin
 			line,
 			[
 				`| \`ljharb/a\` | merged ${url(1)}<br>queued ${url(2)}: ${queuedText} |`,
-				'| `ljharb/b` | not merged https://github.com/ljharb/b/pull/1: its checks failed: `tests`: failure |',
+				'| `ljharb/b` | not merged https://github.com/ljharb/b/pull/1: its checks failed (see below) |',
 				`| \`ljharb/c\` | not merged https://github.com/ljharb/c/pull/1: ${needsUpdating} |`,
 				'| `ljharb/none` | nothing to merge |',
 				'| `ljharb/refused` | not merged https://github.com/ljharb/refused/pull/1: GitHub refused to fast-forward `main` to it (HTTP 422), eg because of a branch protection rule |',
 			],
 			false,
+			[expectedDetails('ljharb/b', 1, 'failed', [['tests', 'failure']])],
 		)],
 		'replies with what happened to each public PR, a named repository without any too, and never the refusal’s own message',
 	);
@@ -441,7 +444,8 @@ test('fleet/commands: `/merge` notes failures that `continue-on-error` hides, wh
 		})),
 		runs: [5, 6].map((id) => ({ id, jobs: [{ name: 'tests / non-latest - 0.9', check_run_url: `https://api.github.com/check-runs/${id}`, steps: [{ name: 'tests', conclusion: 'success' }] }] })), // eslint-disable-line camelcase
 	};
-	const note = '; optional jobs failed, which doesn’t block merging: `tests / non-latest - 0.9`: `Process completed with exit code 1.`';
+	const note = '; optional jobs failed, which doesn’t block merging (see below)';
+	const hiddenDetails = expectedDetails('ljharb/a', 1, 'optional', [['tests / non-latest - 0.9', 'Process completed with exit code 1.']]);
 	const dryRun = command(t, '/dry-run merge ljharb', {
 		merge: {
 			openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch), pr('ljharb/a', 2, relockBranch), pr('ljharb/a', 3, fixBranch)] },
@@ -460,9 +464,14 @@ test('fleet/commands: `/merge` notes failures that `continue-on-error` hides, wh
 		[expectedReply(
 			'/dry-run merge ljharb',
 			[
-				`| \`ljharb/a\` | would merge ${url(1)}${note}<br>would queue ${url(2)}: its checks haven’t all finished, so it would be merged once they pass<br>would not merge ${url(3)}: its checks failed: \`tests\`: failure; optional jobs failed, which doesn’t block merging: \`optional\`: failure |`,
+				`| \`ljharb/a\` | would merge ${url(1)}${note}<br>would queue ${url(2)}: its checks haven’t all finished, so it would be merged once they pass<br>would not merge ${url(3)}: its checks failed (see below)${note} |`,
 			],
 			true,
+			[
+				hiddenDetails,
+				expectedDetails('ljharb/a', 3, 'failed', [['tests', 'failure']]),
+				expectedDetails('ljharb/a', 3, 'optional', [['optional', 'failure']]),
+			],
 		)],
 		'a step that failed under `continue-on-error` doesn’t fail CI, and is noted once; nor does a job that did, which is noted beside a real failure; no checks at all is pending',
 	);
@@ -470,7 +479,62 @@ test('fleet/commands: `/merge` notes failures that `continue-on-error` hides, wh
 	const merged = command(t, '/merge ljharb/a', { merge: { openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch)] }, ci: { 'a-1': hidden } } });
 	t.equal(merged.status, 0, 'exits successfully');
 	t.deepEqual(refUpdates(merged.requests), ['/repos/ljharb/a/git/refs/heads%2Fmain a-1 force=false'], 'merging it');
-	t.deepEqual(replies(merged.requests), [expectedReply('/merge ljharb/a', [`| \`ljharb/a\` | merged ${url(1)}${note} |`], false)], 'noting what failed that doesn’t block it');
+	t.deepEqual(replies(merged.requests), [expectedReply('/merge ljharb/a', [`| \`ljharb/a\` | merged ${url(1)}${note} |`], false, [hiddenDetails])], 'noting what failed that doesn’t block it');
+	t.end();
+});
+
+test('fleet/commands: `/merge`’s reply is split only between whole collapsed sections, or a section too long for any comment is shown in pieces', (t) => {
+	// each short enough to be noted whole
+	/** @type {(id: number, count: number) => string[]} */
+	const messages = (id, count) => Array.from({ length: count }, (_, i) => `${id}.${i} ${'`'.repeat(4)} ${'x'.repeat(80)}`);
+	/** @type {(id: number, count: number) => CI} */
+	const hidden = (id, count) => ({
+		checkRuns: [
+			{
+				...checkRun(`job ${id}`),
+				id,
+				app: { slug: 'github-actions' },
+				annotations: messages(id, count).map((message) => ({ annotation_level: 'failure', message })), // eslint-disable-line camelcase
+			},
+		],
+	});
+
+	const several = command(t, '/dry-run merge ljharb/a', {
+		merge: {
+			openPulls: { 'ljharb/a': [1, 2, 3].map((n) => pr('ljharb/a', n, fixBranch)) },
+			ci: {
+				'a-1': hidden(11, 250),
+				'a-2': hidden(12, 250),
+				'a-3': hidden(13, 250),
+			},
+		},
+	});
+	const parts = replies(several.requests);
+	t.ok(parts.length > 1, `too long for one comment, the reply is in ${parts.length}`);
+	t.ok(parts.every((part) => part.length <= 60e3), 'each of which fits');
+	[1, 2, 3].forEach((n) => {
+		const job = /** @type {[string, ...string[]]} */ ([`job ${n + 10}`].concat(messages(n + 10, 250)));
+		const block = expectedDetails('ljharb/a', n, 'optional', [job]).replace(/^```$/gm, '`````');
+		t.equal(parts.filter((part) => part.includes(block)).length, 1, `#${n}’s collapsed section is whole, in one comment, fenced longer than any backtick run in it`);
+	});
+	t.ok(parts.every((part) => (part.match(/^<details>/gm) ?? []).length === (part.match(/^<\/details>$/gm) ?? []).length), 'no comment has a section that another one finishes');
+
+	const huge = command(t, '/dry-run merge ljharb/a', {
+		merge: {
+			openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch)] },
+			ci: { 'a-1': hidden(21, 700) },
+		},
+	});
+	const hugeParts = replies(huge.requests);
+	const job = /** @type {[string, ...string[]]} */ (['job 21'].concat(messages(21, 700)));
+	const block = expectedDetails('ljharb/a', 1, 'optional', [job]).replace(/^```$/gm, '`````');
+	t.ok(hugeParts[0].includes(`| \`ljharb/a\` | would merge ${url(1)}; optional jobs failed, which doesn’t block merging (see below) |`), 'a section too long for any comment still leaves the table in the first');
+	const sources = hugeParts.flatMap((part) => {
+		const match = part.match(/_✂️ This item is too long to fit in one part, so it’s shown as its source, in \d+ pieces: this is piece \d+ of \d+\._\n\n(?<ticks>`{3,})\n(?<source>[^]*)\n\k<ticks>/u);
+		return match ? [match.groups?.source ?? ''] : [];
+	});
+	t.ok(sources.length > 1, `and is shown as its source, in ${sources.length} pieces, each in a comment of its own`);
+	t.equal(sources.join(''), block, 'which are the whole section, in order');
 	t.end();
 });
 
@@ -539,11 +603,12 @@ test('fleet/commands: `/merge` takes only PRs of the App’s bot’s own commits
 				'| `ljharb/email` | merged https://github.com/ljharb/email/pull/1 |',
 				'| `ljharb/many` | not merged https://github.com/ljharb/many/pull/1: it has at least 250 commits, more than GitHub lists, so they can’t all be checked to be the App’s own; review and merge it yourself |',
 				'| `ljharb/suite-empty` | merged https://github.com/ljharb/suite-empty/pull/1 |',
-				'| `ljharb/suite-failed` | not merged https://github.com/ljharb/suite-failed/pull/1: its checks failed: check suite 2: timed_out |',
+				'| `ljharb/suite-failed` | not merged https://github.com/ljharb/suite-failed/pull/1: its checks failed (see below) |',
 				`| \`ljharb/suite-pending\` | queued https://github.com/ljharb/suite-pending/pull/1: ${queuedText} |`,
 				'| `ljharb/suite-stuck` | merged https://github.com/ljharb/suite-stuck/pull/1 |',
 			],
 			false,
+			[expectedDetails('ljharb/suite-failed', 1, 'failed', [['check suite 2', 'timed_out']])],
 		)],
 		'saying why each public one wasn’t merged',
 	);
