@@ -147,6 +147,7 @@ async function closeMatching(
 		head: pr.head.sha,
 		base: pr.base.ref,
 		author: context.bot,
+		isPrivate: repo.private,
 	});
 	return { kind: 'matches', text: `${how} would change only ${code(configFile)} or ${code(packageJson)}, since ${code(pr.base.ref)}’s workflow files already match, so it’s closed; said why on it` };
 }

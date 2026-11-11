@@ -1314,3 +1314,123 @@ test('closePR', (t) => {
 
 	t.end();
 });
+
+test('closePR: hiding what the App said on it', (t) => {
+	const head = 'a'.repeat(40);
+	const listed = [
+		{ node_id: 'C_stuck', user: { login: bot.name }, body: `<!-- fleet:stuck:${head} -->\nstuck` }, // eslint-disable-line camelcase
+		{ node_id: 'C_older', user: { login: bot.name }, body: `<!-- fleet:matches:${'b'.repeat(40)} -->\nabout an older head` }, // eslint-disable-line camelcase
+		{ node_id: 'C_why', user: { login: bot.name }, body: `<!-- fleet:matches:${head} -->\nwhy it’s closed` }, // eslint-disable-line camelcase
+		{ node_id: 'C_theirs', user: { login: mallory.name }, body: `<!-- fleet:stuck:${head} -->\nnot the bot` }, // eslint-disable-line camelcase
+		{ node_id: 'C_plain', user: { login: bot.name }, body: 'no marker' }, // eslint-disable-line camelcase
+	];
+	/** @type {(requests: { path: string, body: any }[]) => [string, string][]} */
+	const hidden = (requests) => requests.filter((r) => r.path === '/graphql' && r.body.variables.classifier).map((r) => [r.body.variables.id, r.body.variables.classifier]);
+	/** @type {(fn: () => Promise<void>) => Promise<string>} */
+	const output = async (fn) => {
+		let stdout = '';
+		const { write } = process.stdout;
+		process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+			stdout += String(chunk);
+			return true;
+		});
+		try {
+			await fn();
+		} finally {
+			process.stdout.write = write;
+		}
+		return stdout;
+	};
+
+	t.test('hides the App’s, as resolved, but what says why it’s closed', async (st) => {
+		const requests = mockAPI(st, [
+			['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated],
+			['GET', /^\/repos\/o\/r\/issues\/4\/comments\?/, () => [200, listed]],
+			['POST', /^\/graphql$/, ({ body }) => [200, { data: body.variables.ids ? { nodes: body.variables.ids.map((/** @type {string} */ id) => ({ id, isMinimized: false })) } : { minimizeComment: { minimizedComment: { isMinimized: true } } } }]],
+		]);
+
+		await closePR({
+			octokit: getOctokit('ghs_test'),
+			owner,
+			name,
+			number: 4,
+			said: {
+				author: bot.name,
+				isPrivate: false,
+				kept: { kind: 'matches', head },
+			},
+		});
+
+		st.deepEqual(writes(requests)[0], ['PATCH /repos/o/r/pulls/4', { state: 'closed' }], 'closes it first');
+		st.deepEqual(
+			hidden(requests),
+			[
+				['C_stuck', 'RESOLVED'],
+				['C_older', 'RESOLVED'],
+			],
+			'then hides what the App said on it, about any head commit; never what says why it’s closed, anyone else’s, or a comment without a marker',
+		);
+		st.end();
+	});
+
+	t.test('without anything to keep, hides all of it', async (st) => {
+		const requests = mockAPI(st, [
+			['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated],
+			['GET', /^\/repos\/o\/r\/issues\/4\/comments\?/, () => [200, listed]],
+			['POST', /^\/graphql$/, ({ body }) => [200, { data: body.variables.ids ? { nodes: body.variables.ids.map((/** @type {string} */ id) => ({ id, isMinimized: false })) } : { minimizeComment: { minimizedComment: { isMinimized: true } } } }]],
+		]);
+
+		await closePR({
+			octokit: getOctokit('ghs_test'),
+			owner,
+			name,
+			number: 4,
+			said: { author: bot.name, isPrivate: false },
+		});
+
+		st.deepEqual(hidden(requests).map(([id]) => id), ['C_stuck', 'C_older', 'C_why'], 'every one of the App’s');
+		st.end();
+	});
+
+	t.test('failing to hide only warns, and, in a private repository, not even that', async (st) => {
+		/** @type {(isPrivate: boolean) => Promise<string>} */
+		const close = (isPrivate) => {
+			mockAPI(st, [
+				['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated],
+				['GET', /^\/repos\/o\/r\/issues\/4\/comments\?/, () => [200, listed.slice(0, 1)]],
+				['POST', /^\/graphql$/, ({ body }) => [200, body.variables.ids ? { data: { nodes: body.variables.ids.map((/** @type {string} */ id) => ({ id, isMinimized: false })) } } : { data: { minimizeComment: null }, errors: [{ type: 'FORBIDDEN', message: 'Resource not accessible by integration: o/r' }] }]],
+			]);
+			return output(() => closePR({
+				octokit: getOctokit('ghs_test'),
+				owner,
+				name,
+				number: 4,
+				said: { author: bot.name, isPrivate },
+			}));
+		};
+
+		st.match(await close(false), /^::warning::could not hide 1 of the App’s comments on a PR it closed as resolved \(FORBIDDEN\)$/m, 'warns, without saying where');
+		st.equal(await close(true), '', 'says nothing about a private one');
+		st.end();
+	});
+
+	t.test('failing to read its comments only warns', async (st) => {
+		mockAPI(st, [
+			['PATCH', /^\/repos\/o\/r\/pulls\/\d+$/, updated],
+			['GET', /^\/repos\/o\/r\/issues\/4\/comments\?/, () => [502, {}]],
+		]);
+
+		const stdout = await output(() => closePR({
+			octokit: getOctokit('ghs_test'),
+			owner,
+			name,
+			number: 4,
+			said: { author: bot.name, isPrivate: false },
+		}));
+
+		st.match(stdout, /^::warning::could not read the App’s comments on a PR it closed, to hide them as resolved/m, 'warns');
+		st.end();
+	});
+
+	t.end();
+});

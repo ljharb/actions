@@ -6,9 +6,14 @@ import { exec, gitAuthEnv } from './exec.mjs';
 import { configFile } from './kept.mjs';
 import { code } from './markdown.mjs';
 import { packageJson } from './npmignore.mjs';
-import { hideStale, marker as saidMarker } from './said.mjs';
+import {
+	hideSaid,
+	hideStale,
+	marker as saidMarker,
+} from './said.mjs';
 
 /** @import { Octokit, appAuth } from './app.mjs' */
+/** @import { Marked } from './said.mjs' */
 /** @import { ExecResult } from './exec.mjs' */
 /** @typedef {{ name: string, email: string }} Identity */
 /** @typedef {{ mode: 'create' } | { mode: 'update' | 'reopen', number: number, head: string }} PRState */
@@ -520,14 +525,25 @@ export async function commentOnce({
 	return true;
 }
 
-// a closed (not deleted) branch and PR are what a later run reopens, so the history and discussion stay in one place
-/** @type {(options: { octokit: Octokit, owner: string, name: string, number: number, comment?: string }) => Promise<void>} */
+/**
+ * A closed (not deleted) branch and PR are what a later run reopens, so the history and discussion stay in one place.
+ * With `said`, once it's closed, what its `author` said on it (see `hideSaid`) is hidden as `RESOLVED`, since a closed PR has nothing left to say about, but for what says why it's closed (`kept`); for a private repository (`isPrivate`), never warning.
+ * @type {(options: {
+ *   octokit: Octokit,
+ *   owner: string,
+ *   name: string,
+ *   number: number,
+ *   comment?: string,
+ *   said?: { author: string, isPrivate: boolean, kept?: Marked },
+ * }) => Promise<void>}
+ */
 export async function closePR({
 	octokit,
 	owner,
 	name,
 	number,
 	comment,
+	said,
 }) {
 	if (comment) {
 		await octokit.rest.issues.createComment({
@@ -543,12 +559,30 @@ export async function closePR({
 		pull_number: number, // eslint-disable-line camelcase
 		state: 'closed',
 	});
+	if (said) {
+		const {
+			author,
+			isPrivate,
+			kept,
+		} = said;
+		await hideSaid({
+			octokit,
+			owner,
+			name,
+			number,
+			author,
+			isPrivate,
+			classifierOf: ({ kind, head }) => (kind === kept?.kind && head === kept.head ? null : 'RESOLVED'),
+			unread: 'could not read the App’s comments on a PR it closed, to hide them as resolved',
+			unhidden: (count) => `could not hide ${count} of the App’s comments on a PR it closed as resolved`,
+		});
+	}
 }
 
 /**
- * Closes the App's PR `number` into `base`, whose head commit is `head`, and that changes nothing on `base` but the App's bookkeeping (see `onlyBookkeeping`), which is never a PR on its own, saying why, once for that head commit (see `commentOnce`).
+ * Closes the App's PR `number` into `base`, whose head commit is `head`, and that changes nothing on `base` but the App's bookkeeping (see `onlyBookkeeping`), which is never a PR on its own, saying why, once for that head commit (see `commentOnce`); what else the App said on it is hidden as resolved (see `closePR`).
  * Never for a PR with anyone else's commits: that's for its caller to have checked.
- * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, head: string, base: string, author: string }) => Promise<void>}
+ * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, head: string, base: string, author: string, isPrivate: boolean }) => Promise<void>}
  */
 export async function closeBookkeeping({
 	octokit,
@@ -558,6 +592,7 @@ export async function closeBookkeeping({
 	head,
 	base,
 	author,
+	isPrivate,
 }) {
 	await commentOnce({
 		octokit,
@@ -573,5 +608,10 @@ export async function closeBookkeeping({
 		owner,
 		name,
 		number,
+		said: {
+			author,
+			isPrivate,
+			kept: { kind: 'matches', head },
+		},
 	});
 }

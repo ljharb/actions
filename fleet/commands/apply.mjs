@@ -253,6 +253,7 @@ async function closeMatched({
 		head: prState.head,
 		base,
 		author: identity.name,
+		isPrivate: state.private,
 	});
 	return `closed ${prURL(state, prState.number)}: ${matched(base)}`;
 }

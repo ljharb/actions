@@ -1360,6 +1360,29 @@ function hiddenComments(requests) {
 	return requests.filter((r) => r.path === '/graphql' && r.body.variables.classifier).map((r) => [r.body.variables.id, r.body.variables.classifier]);
 }
 
+test('maintain: closing a PR that would change only the App’s bookkeeping hides what the App said on it, as resolved', async (t) => {
+	const keepBoth = `${JSON.stringify({ keep: { 'node-pretest.yml': ['skip-engines'], 'node-aught.yml': ['skip-ls-check'] } }, null, 2)}\n`;
+	// tape-testing/tape#625, as it was: the App said it needed a person, before restoring both inputs left only the config
+	const server = setup(t);
+	const head = server.commit(fixBranch, { [config]: keepBoth }, { who: bot, from: 'main', message });
+	const key = '/repos/ljharb/r/issues/1';
+	const { errors, requests } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+		posted: [
+			{ key, node_id: 'C_stuck', user: { login: bot.name }, body: `${marker('stuck', head)}\nit needs a person` }, // eslint-disable-line camelcase
+			{ key, node_id: 'C_why', user: { login: bot.name }, body: `${marker('matches', head)}\nwhy it’s closed` }, // eslint-disable-line camelcase
+			{ key, node_id: 'C_theirs', user: { login: mallory.name }, body: `${marker('stuck', head)}\nnot the bot` }, // eslint-disable-line camelcase
+		],
+		offline: true,
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.deepEqual(prUpdates(requests), [['/repos/ljharb/r/pulls/1', { state: 'closed' }]], 'it’s closed');
+	t.deepEqual(hiddenComments(requests), [['C_stuck', 'RESOLVED']], 'then that it needed a person is hidden as resolved; never what says why it’s closed, nor anyone else’s');
+	t.end();
+});
+
 test('maintain: once it rebases a PR, hides what it said on it that no longer applies', async (t) => {
 	const server = setup(t);
 	const oldTip = server.tip('main');
