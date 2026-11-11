@@ -1484,6 +1484,84 @@ test('fleet/commands: replying to a command hides the App’s earlier replies to
 	});
 	t.equal(partial.status, 1, 'a reply that couldn’t be posted fails');
 	t.deepEqual(hidden(partial.requests), [], 'and hides nothing, since nothing replaces them');
+	t.end();
+});
 
+test('fleet/commands: `/fix` never makes a PR that only changes the App’s bookkeeping, and closes one that would', (t) => {
+	const configFile = '.github/ljharb-actions.json';
+	// the drift check doesn't tolerate an input whose value isn't a scalar, but `keep` keeps it, so rewriting the file leaves it as it is
+	const pretest = `${template('node-pretest.yml')}    with:\n      skip-engines: [true]\n`;
+	const keepConfig = `${JSON.stringify({ keep: { 'node-pretest.yml': ['skip-engines'] } }, null, 2)}\n`;
+	const pkg = `${JSON.stringify({ name: 'pkg', scripts: { prepack: 'npmignore --auto' }, publishConfig: { ignore: ['.github/workflows'] } }, null, '\t')}\n`;
+	const workflows = replacing('node-pretest.yml', pretest);
+	const names = ['open', 'none', 'foreign', 'filtered'];
+	const remotes = makeRemotes(t, Object.fromEntries(names.map((n) => [`ljharb/${n}`, { ...files(workflows), [configFile]: keepConfig, 'package.json': pkg }])));
+	// as tape-testing/tape#625 is: only the config that keeps what its CI needed
+	const heads = Object.fromEntries(['open', 'foreign', 'filtered'].map((n) => [n, remotes.commit(`ljharb/${n}`, 'fleet/workflows', { [configFile]: `${keepConfig}\n` }, { who: bot, from: 'main' })]));
+	heads.foreign = remotes.commit('ljharb/foreign', 'fleet/workflows', { 'README.md': 'theirs\n' }, { who: mallory });
+	const why = '`main` already matches';
+	const body = `\`main\`’s workflow files already match what this PR would make them, so all it would change is the App’s own bookkeeping (\`${configFile}\`, or \`package.json\`’s \`publishConfig.ignore\`), which is never a PR on its own: the App closes it, since the repository already matches the templates.`;
+
+	/** @type {(line: string, only?: string[]) => ChildResult} */
+	const fix = (line, only = names) => run(t, {
+		event: { issue: report, comment: comment(line) },
+		github: {
+			installations: [{ id: 1, account: { login: 'ljharb' } }],
+			installationRepos: { 1: only.map((n) => installedRepo('ljharb', n)) },
+			repos: Object.fromEntries(only.map((n) => [`ljharb/${n}`, repo({ workflows, config: keepConfig, packageJson: pkg })])),
+		},
+		commands: {
+			permissions: { maintainer: 'write' },
+			serverURL: remotes.serverURL,
+			pulls: Object.fromEntries(Object.entries(heads).map(([n, sha]) => [
+				`ljharb/${n}`,
+				[{
+					number: 3,
+					state: 'open',
+					merged_at: null, // eslint-disable-line camelcase
+					head: { sha },
+				}],
+			])),
+		},
+		env: { GITHUB_SERVER_URL: remotes.serverURL },
+	});
+	/** @type {(requests: Recorded[]) => string[]} */
+	const rows = (requests) => replies(requests)[0].split('\n').filter((l) => l.startsWith('| `'));
+
+	const dry = fix('/dry-run fix ljharb/open ljharb/none', ['open', 'none']);
+	t.equal(dry.status, 0, 'a dry run succeeds');
+	t.deepEqual(
+		rows(dry.requests),
+		[
+			`| \`ljharb/none\` | nothing to fix: ${why} |`,
+			`| \`ljharb/open\` | would close ${remotes.serverURL}/ljharb/open/pull/3: ${why} |`,
+		],
+		'saying it would close the App’s open PR, since rewriting the file would change nothing',
+	);
+	t.deepEqual(changes(dry.requests), [], 'changing nothing');
+
+	const filtered = fix('/fix ljharb/filtered drifted', ['filtered']);
+	t.equal(filtered.status, 0, 'a filtered `/fix` succeeds');
+	t.deepEqual(rows(filtered.requests), [`| \`ljharb/filtered\` | nothing to fix: ${why} |`], 'but never closes the PR, since what it didn’t plan may not match');
+	t.deepEqual(changes(filtered.requests), [], 'nor updates it with only bookkeeping');
+	t.equal(remotes.tip('ljharb/filtered', 'refs/heads/fleet/workflows'), heads.filtered, 'pushing nothing');
+
+	const { status, stdout, requests } = fix(`/fix ${['open', 'none', 'foreign'].map((n) => `ljharb/${n}`).join(' ')}`, ['open', 'none', 'foreign']);
+	t.equal(status, 1, 'fails, since one PR has someone else’s commits');
+	t.match(stdout, /^::warning::ljharb\/foreign: `fleet\/workflows` has 1 commit\(s\) by someone else, so it is never overwritten/m, 'which is never closed');
+	t.deepEqual(
+		rows(requests).slice(1),
+		[
+			`| \`ljharb/none\` | nothing to fix: ${why} |`,
+			`| \`ljharb/open\` | closed ${remotes.serverURL}/ljharb/open/pull/3: ${why} |`,
+		],
+		'with no PR, makes none; with one, closes it: saying the same as a dry run',
+	);
+	t.deepEqual(changes(requests), ['POST /repos/ljharb/open/issues/3/comments', 'PATCH /repos/ljharb/open/pulls/3'], 'saying why, then closing it; nothing else');
+	t.deepEqual(matching(requests, 'POST', /^\/repos\/ljharb\/open\/issues\/3\/comments$/).map((r) => r.body.body), [`${saidMarker('matches', heads.open)}\n${body}`], 'once for its head commit');
+	t.deepEqual(matching(requests, 'PATCH', /^\/repos\/ljharb\/open\/pulls\/3$/).map((r) => r.body), [{ state: 'closed' }], 'closing it');
+	names.forEach((n) => {
+		t.equal(remotes.tip(`ljharb/${n}`, 'refs/heads/fleet/workflows'), heads[n] ?? '', `nothing is pushed to \`ljharb/${n}\``);
+	});
 	t.end();
 });

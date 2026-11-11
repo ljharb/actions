@@ -36,7 +36,7 @@ const message = '[actions] update workflow files to match ljharb/actions’ temp
 const pretest = '.github/workflows/node-pretest.yml';
 const aught = '.github/workflows/node-aught.yml';
 const config = '.github/ljharb-actions.json';
-// so that a PR that's restored also changes something besides what restoring puts back
+// so that a PR that's restored also changes something besides what restoring puts back (one that changes nothing else is closed instead)
 const added = { '.github/workflows/rebase.yml': template('rebase.yml') };
 const botLine = `${bot.name} <${bot.email}>`;
 
@@ -114,9 +114,21 @@ async function run(
 		});
 		return [200, posted.filter((c) => c.key === pathname.replace(/\/comments$/, ''))];
 	}));
+	const updatePR = scope.patch(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/);
+	updatePR.reply(/** @type {any} */ (async (/** @type {Request} */ req) => {
+		const body = JSON.parse(await req.text());
+		requests.push({
+			method: 'PATCH',
+			path: new URL(req.url).pathname,
+			body,
+			authorization: '',
+		});
+		return [200, body];
+	}));
 	const teardowns = [mockMerge(merge, (r) => requests.push(r)), mockGitHub(github, (r) => requests.push(r))];
 	current = () => {
 		nock.removeInterceptor(listComments);
+		nock.removeInterceptor(updatePR);
 		teardowns.forEach((teardown) => teardown());
 		current = () => {};
 	};
@@ -194,13 +206,14 @@ function commitsOf(server, head) {
 }
 
 /**
- * What the API shows of `server` now: its open PRs (each `[number, branch, head]`), with their commits, and `main`'s tip; and `extra`.
+ * What the API shows of `server` now: its open PRs (each `[number, branch, head]`), with their commits and the files their head commit changes (from its parent, as GitHub lists them), and `main`'s tip; and `extra`.
  * @type {(server: Server, pulls: [number, string, string][], extra?: MergeScenario) => MergeScenario}
  */
 function shown(server, pulls, extra = {}) {
 	return {
 		openPulls: { [repository]: pulls.map(([number, branch, sha]) => pr(repository, number, branch, { sha })) },
 		commits: Object.fromEntries(pulls.map(([number, , sha]) => [`${repository}#${number}`, commitsOf(server, sha)])),
+		files: Object.fromEntries(pulls.map(([, , sha]) => [`${repository}@${sha}`, fixtureGit(server.remote, ['diff', '--name-only', `${sha}^`, sha]).split('\n').filter(Boolean)])),
 		refs: { [repository]: server.tip('main') },
 		...extra,
 	};
@@ -209,6 +222,11 @@ function shown(server, pulls, extra = {}) {
 /** @type {(requests: Recorded[]) => string[]} */
 function comments(requests) {
 	return requests.filter((r) => r.method === 'POST' && (/\/issues\/\d+\/comments$/).test(r.path)).map((r) => r.body.body);
+}
+
+/** @type {(requests: Recorded[]) => [string, unknown][]} */
+function prUpdates(requests) {
+	return requests.filter((r) => r.method === 'PATCH' && (/\/pulls\/\d+$/).test(r.path)).map((r) => [r.path, r.body]);
 }
 
 /** @type {(stdout: string) => string[]} */
@@ -785,6 +803,122 @@ test('maintain: an up-to-date PR', async (t) => {
 	t.ok(logged(passed.stdout).includes(`${prURL(server)}: up to date; its CI passed`), 'one whose CI passed is left alone');
 	t.equal(server.tip(`refs/heads/${fixBranch}`), fix, 'pushing nothing');
 	t.deepEqual([...comments(pending.requests), ...comments(passed.requests)], [], 'saying nothing');
+	t.end();
+});
+
+test('maintain: a `fleet/workflows` PR that would change only the App’s bookkeeping is closed, saying why once', async (t) => {
+	const keepBoth = `${JSON.stringify({ keep: { 'node-pretest.yml': ['skip-engines'], 'node-aught.yml': ['skip-ls-check'] } }, null, 2)}\n`;
+	/** @type {(base?: string) => string} */
+	const why = (base = 'main') => `\`${base}\`’s workflow files already match what this PR would make them, so all it would change is the App’s own bookkeeping (\`.github/ljharb-actions.json\`, or \`package.json\`’s \`publishConfig.ignore\`), which is never a PR on its own: the App closes it, since the repository already matches the templates.`;
+	const closed = [['/repos/ljharb/r/pulls/1', { state: 'closed' }]];
+
+	// tape-testing/tape#625, as it is: restoring both inputs it removed left only the config that keeps them
+	const server = setup(t);
+	const head = server.commit(fixBranch, { [config]: keepBoth }, { who: bot, from: 'main', message });
+	/** @type {Comment[]} */
+	const posted = [];
+	const scenario = {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: { [head]: { checkRuns: [{ id: 1, name: 'tests', status: 'completed', conclusion: 'success' }] } } }),
+		posted,
+		offline: true,
+	};
+	const first = await run(t, scenario);
+	t.equal(first.errors, 0, 'nothing failed, with nothing cloned: it’s decided from the API');
+	t.ok(logged(first.stdout).includes(`${prURL(server)}: it would change only \`.github/ljharb-actions.json\` or \`package.json\`, since \`main\`’s workflow files already match, so it’s closed; said why on it`), 'says so');
+	t.deepEqual(comments(first.requests), [`${marker('matches', head)}\n${why()}`], 'saying why on the PR');
+	t.deepEqual(prUpdates(first.requests), closed, 'and closing it');
+	t.notOk(first.requests.some((r) => r.path.includes('/check-runs') || r.path.includes('/actions/runs')), 'without reading its CI');
+	t.equal(server.tip(`refs/heads/${fixBranch}`), head, 'pushing nothing');
+	const again = await run(t, scenario);
+	t.deepEqual(comments(again.requests), [], 'if it’s open again (eg, reopened by hand), it’s only closed again: why is said once for each head commit');
+	t.deepEqual(prUpdates(again.requests), closed, 'but it’s still closed');
+
+	const synced = setup(t, {
+		[pretest]: tapePretest,
+		[aught]: tapeAught,
+		'package.json': `${JSON.stringify({ name: 'pkg', devDependencies: { npmignore: '^0.3.1' }, publishConfig: { ignore: ['.github/workflows'] } }, null, 2)}\n`,
+	});
+	const syncedHead = synced.commit(fixBranch, { [config]: keepBoth, 'package.json': `${JSON.stringify({ name: 'pkg', devDependencies: { npmignore: '^0.3.1' }, publishConfig: { ignore: ['.github/workflows', config] } }, null, 2)}\n` }, { who: bot, from: 'main', message });
+	const withPackage = await run(t, {
+		server: synced,
+		github: installed([{ name: 'r' }]),
+		merge: shown(synced, [[1, fixBranch, syncedHead]]),
+		offline: true,
+	});
+	t.deepEqual(prUpdates(withPackage.requests), closed, 'as is one that also only adds the config file to `package.json`’s `publishConfig.ignore`');
+
+	const theirs = setup(t);
+	theirs.commit(fixBranch, { [config]: keepBoth }, { who: bot, from: 'main', message });
+	const foreignHead = theirs.commit(fixBranch, { [config]: `${keepBoth}\n` }, { who: mallory });
+	const foreign = await run(t, {
+		server: theirs,
+		github: installed([{ name: 'r' }]),
+		merge: shown(theirs, [[1, fixBranch, foreignHead]]),
+		offline: true,
+	});
+	t.deepEqual(prUpdates(foreign.requests), [], 'one with someone else’s commits is never closed');
+	t.deepEqual(comments(foreign.requests), [`${marker('foreign', foreignHead)}\nThe App never updates this PR (nor merges it): it has commits by someone else; review and merge it yourself.`], 'only said to be left alone');
+
+	const relock = setup(t, { [config]: '{}\n' });
+	const relockHead = relock.commit(relockBranch, { [config]: keepBoth }, { who: bot, from: 'main', message: 'relock' });
+	const notFix = await run(t, {
+		server: relock,
+		github: installed([{ name: 'r', open: [0, 1] }]),
+		merge: shown(relock, [[2, relockBranch, relockHead]]),
+		offline: true,
+	});
+	t.deepEqual(prUpdates(notFix.requests), [], 'nor is any but a `fleet/workflows` PR');
+
+	const secret = setup(t);
+	const secretHead = secret.commit(fixBranch, { [config]: keepBoth }, { who: bot, from: 'main', message });
+	const hidden = await run(t, {
+		server: secret,
+		github: installed([{ name: 'r', private: true }]),
+		merge: shown(secret, [[1, fixBranch, secretHead]]),
+		offline: true,
+	});
+	t.deepEqual(prUpdates(hidden.requests), closed, 'a private repository’s is closed too');
+	t.notOk(hidden.stdout.includes(secret.serverURL), 'but nothing about it is logged');
+	t.end();
+});
+
+test('maintain: a `fleet/workflows` PR that rebasing would leave changing only the App’s bookkeeping is closed instead', async (t) => {
+	const server = setup(t);
+	const keepAught = `${JSON.stringify({ keep: { 'node-aught.yml': ['skip-ls-check'] } }, null, 2)}\n`;
+	const head = server.commit(fixBranch, { [aught]: fixedAught, [config]: keepAught }, { who: bot, from: 'main', message });
+	// its base then got the same change
+	server.commit('main', { [aught]: fixedAught });
+	const { errors, stdout, requests } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.ok(logged(stdout).includes(`${prURL(server)}: rebased onto its base’s tip, it would change only \`.github/ljharb-actions.json\` or \`package.json\`, since \`main\`’s workflow files already match, so it’s closed; said why on it`), 'says so');
+	t.equal(comments(requests).length, 1, 'saying why on it');
+	t.ok(comments(requests)[0].startsWith(`${marker('matches', head)}\n`), 'about its head commit');
+	t.deepEqual(prUpdates(requests), [['/repos/ljharb/r/pulls/1', { state: 'closed' }]], 'and closing it');
+	t.equal(server.tip(`refs/heads/${fixBranch}`), head, 'without pushing the rebased commit');
+	t.end();
+});
+
+test('maintain: a `fleet/workflows` PR whose CI failed, that restoring would leave changing only the App’s bookkeeping, is closed instead', async (t) => {
+	const server = setup(t);
+	// as tape-testing/tape#625 first was, but dropping only `skip-engines`
+	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
+	const { errors, stdout, requests } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.ok(logged(stdout).includes(`${prURL(server)}: its CI failed, and with what it removed restored, it would change only \`.github/ljharb-actions.json\` or \`package.json\`, since \`main\`’s workflow files already match, so it’s closed; said why on it`), 'says so');
+	t.equal(comments(requests).length, 1, 'saying why on it');
+	t.ok(comments(requests)[0].startsWith(`${marker('matches', head)}\n`), 'about its head commit');
+	t.deepEqual(prUpdates(requests), [['/repos/ljharb/r/pulls/1', { state: 'closed' }]], 'and closing it');
+	t.equal(server.tip(`refs/heads/${fixBranch}`), head, 'without pushing a commit that only keeps what it restored');
 	t.end();
 });
 

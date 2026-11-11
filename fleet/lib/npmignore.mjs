@@ -8,6 +8,17 @@ export const packageJson = 'package.json';
 
 const workflows = '.github/workflows';
 
+// what the App's PRs write only to keep track of what they keep (the config file), and to keep that out of the published package (`package.json`): never worth a PR on its own
+const bookkeeping = new Set([configFile, packageJson]);
+
+/**
+ * Whether every one of `files` (by path) is only the App's bookkeeping (see above); so, for the files a PR changes, whether its base already has everything else.
+ * @type {(files: string[]) => boolean}
+ */
+export function onlyBookkeeping(files) {
+	return files.every((file) => bookkeeping.has(file));
+}
+
 // what, in `publishConfig.ignore`, ignores the config file: its directory, or itself
 const covering = new Set(['.github', configFile]);
 
@@ -141,9 +152,12 @@ export function packageJsonAt(git, rev) {
 
 /** @type {(git: Git, rev: string) => boolean} */
 export function hasConfig(git, rev) {
-	return git([
-		'cat-file',
-		'-e',
-		`${rev}:${configFile}`,
-	], { allowFailure: true }).status === 0;
+	return git(
+		[
+			'cat-file',
+			'-e',
+			`${rev}:${configFile}`,
+		],
+		{ allowFailure: true },
+	).status === 0;
 }

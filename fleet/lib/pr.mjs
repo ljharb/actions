@@ -3,7 +3,10 @@ import * as core from '@actions/core';
 import { botLogin, installationToken, octokitFor } from './app.mjs';
 import { isBotBranch } from './branches.mjs';
 import { exec, gitAuthEnv } from './exec.mjs';
-import { hideStale } from './said.mjs';
+import { configFile } from './kept.mjs';
+import { code } from './markdown.mjs';
+import { packageJson } from './npmignore.mjs';
+import { hideStale, marker as saidMarker } from './said.mjs';
 
 /** @import { Octokit, appAuth } from './app.mjs' */
 /** @import { ExecResult } from './exec.mjs' */
@@ -220,9 +223,10 @@ export function isSingleOnBase(git, { base, tip }) {
 }
 
 /**
- * Stages everything under `paths`, and commits it on top of `base`'s tip, where the clone is: unless it has nothing to commit, or (refused) anything that isn't `allowed`.
+ * Stages everything under `paths`, and commits it on top of `base`'s tip, where the clone is: unless it has nothing to commit, or what it has isn't `worth` a commit (unspecified: anything is), or (refused) anything that isn't `allowed`.
+ * `worth` is given every staged file's path.
  * Returns whether it committed.
- * @type {(git: Git, options: { base: string, message: string, paths: string[], allowed: PathFilter }) => boolean}
+ * @type {(git: Git, options: { base: string, message: string, paths: string[], allowed: PathFilter, worth?: (files: string[]) => boolean }) => boolean}
  */
 export function commitChanges(
 	git,
@@ -231,6 +235,7 @@ export function commitChanges(
 		message,
 		paths: staged,
 		allowed,
+		worth = () => true,
 	},
 ) {
 	if (revParse(git, 'HEAD') !== revParse(git, `origin/${base}`)) {
@@ -252,7 +257,7 @@ export function commitChanges(
 	if (outside.length > 0) {
 		throw new Error(`refusing to commit changes to files this job doesn’t write: ${outside.map((file) => `\`${file}\``).join(', ')}`);
 	}
-	if (files.length === 0) {
+	if (files.length === 0 || !worth(files)) {
 		return false;
 	}
 	git([
@@ -438,7 +443,7 @@ export async function publish({
 		update: pushed === 'pushed' ? 'updated' : 'already up to date:',
 		reopen: 'reopened and updated',
 	}[state.mode];
-	// it's now one commit, of only the App's, that changes something on its base's tip: so the head it replaced no longer conflicts, isn't empty, and has nobody else's commits
+	// it's now one commit, of only the App's, that changes something on its base's tip (more than the App's bookkeeping): so the head it replaced no longer conflicts, isn't empty or only bookkeeping, and has nobody else's commits
 	const hidden = state.mode === 'create' ? 0 : await hideStale({
 		octokit,
 		owner,
@@ -454,6 +459,7 @@ export async function publish({
 				'foreign',
 				'conflict',
 				'empty',
+				'matches',
 			],
 		},
 	});
@@ -536,5 +542,36 @@ export async function closePR({
 		repo: name,
 		pull_number: number, // eslint-disable-line camelcase
 		state: 'closed',
+	});
+}
+
+/**
+ * Closes the App's PR `number` into `base`, whose head commit is `head`, and that changes nothing on `base` but the App's bookkeeping (see `onlyBookkeeping`), which is never a PR on its own, saying why, once for that head commit (see `commentOnce`).
+ * Never for a PR with anyone else's commits: that's for its caller to have checked.
+ * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, head: string, base: string, author: string }) => Promise<void>}
+ */
+export async function closeBookkeeping({
+	octokit,
+	owner,
+	name,
+	number,
+	head,
+	base,
+	author,
+}) {
+	await commentOnce({
+		octokit,
+		owner,
+		name,
+		number,
+		author,
+		marker: saidMarker('matches', head),
+		body: `${code(base)}’s workflow files already match what this PR would make them, so all it would change is the App’s own bookkeeping (${code(configFile)}, or ${code(packageJson)}’s \`publishConfig.ignore\`), which is never a PR on its own: the App closes it, since the repository already matches the templates.`,
+	});
+	await closePR({
+		octokit,
+		owner,
+		name,
+		number,
 	});
 }

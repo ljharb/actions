@@ -10,7 +10,8 @@ import { failureDetails } from './app.mjs';
  * - `conflict`: it conflicts with its base, so it can't be rebased
  * - `empty`: its base already has everything it changes
  * - `stuck`: its CI failed (not only in ways `continue-on-error` hides, which never make it stuck), and the App has nothing it can restore
- * @typedef {'foreign' | 'conflict' | 'empty' | 'stuck'} Said
+ * - `matches`: all it would change on its base is the App's bookkeeping (see `onlyBookkeeping`), since its base's workflow files already match, so the App closed it
+ * @typedef {'foreign' | 'conflict' | 'empty' | 'stuck' | 'matches'} Said
  */
 /** @typedef {{ kind: Said, head: string, base?: string }} Marked */
 /** @typedef {'RESOLVED' | 'OUTDATED'} Classifier */
@@ -36,7 +37,7 @@ export function marker(kind, head, base) {
  * @type {(body: string | null | undefined) => Marked | null}
  */
 export function parseMarker(body) {
-	const groups = (/^<!-- fleet:(?<kind>foreign|conflict|empty|stuck):(?<head>[0-9a-f]+)(?::(?<base>[0-9a-f]+))? -->\n/).exec(body ?? '')?.groups;
+	const groups = (/^<!-- fleet:(?<kind>foreign|conflict|empty|stuck|matches):(?<head>[0-9a-f]+)(?::(?<base>[0-9a-f]+))? -->\n/).exec(body ?? '')?.groups;
 	if (!groups || aboutBase.has(groups.kind) !== (typeof groups.base === 'string')) {
 		return null;
 	}

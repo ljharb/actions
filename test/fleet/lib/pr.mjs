@@ -584,6 +584,31 @@ test('commitChanges', (t) => {
 		st.end();
 	});
 
+	t.test('changes that aren’t `worth` a commit', (st) => {
+		const server = setup(st);
+		const { git, dir } = clone(st, server);
+		writeFiles(dir, { [lockfile]: 'new lock\n', '.github/workflows/new.yml': 'on: pull_request\n' });
+		/** @type {string[][]} */
+		const seen = [];
+		st.equal(
+			commitChanges(git, {
+				base,
+				message: 'm',
+				paths: ['.github/workflows'],
+				allowed: isWorkflow,
+				worth(changed) {
+					seen.push(changed);
+					return false;
+				},
+			}),
+			false,
+			'commits nothing',
+		);
+		st.deepEqual(seen, [['.github/workflows/actions.lock', '.github/workflows/new.yml']], 'given every staged file');
+		st.equal(git(['rev-parse', 'HEAD']).stdout.trim(), server.tip('main'), 'still at the base');
+		st.end();
+	});
+
 	t.test('changes to anything else: refused', (st) => {
 		const server = setup(st);
 		const { git, dir } = clone(st, server);

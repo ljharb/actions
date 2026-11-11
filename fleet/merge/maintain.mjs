@@ -19,6 +19,7 @@ import { candidatePRs, messageOf } from '../lib/merge.mjs';
 import { changedReason, commitsRefusal, isSingleOnBase } from '../lib/merge-guards.mjs';
 import {
 	hasConfig,
+	onlyBookkeeping,
 	packageJson,
 	packageJsonAt,
 	syncConfigIgnore,
@@ -26,6 +27,7 @@ import {
 import {
 	botIdentity,
 	checkout,
+	closeBookkeeping,
 	commentOnce,
 	findMarked,
 	ownCommits,
@@ -53,8 +55,9 @@ import { reposWithAppPRs } from './repos.mjs';
  * - `pending`, `passed`: it's one commit on its base's tip, and its CI is still running (or has failed only as its base's tip's has, so far), or passed (or, for a relock PR, isn't looked at); CI that failed only in ways `continue-on-error` hides passed (see `optionalFailures`)
  * - `restored`: its CI failed, and inputs it removed from a workflow file that failed in a way its base's tip doesn't were put back, and kept
  * - `stuck`: its CI failed, and there's nothing left to put back (or where to put it back is ambiguous, or every workflow file that failed only failed as on its base's tip), so it needs a person (which it says, once per head)
+ * - `matches`: a `fleet/workflows` PR that would change nothing on its base's tip but the App's bookkeeping (see `onlyBookkeeping`), as it is, or once rebased, or once what it removed is put back: so it was closed (saying why, once per head), since its base's workflow files already match
  * Once it's said a PR is `stuck`, that's what it is until its head changes; once it's said it's `conflict` or `empty`, that's what it is until its head, or its base's tip, changes: later runs find what was said on it, and never clone it again to decide it again.
- * @typedef {{ kind: 'changed' | 'foreign' | 'rebased' | 'conflict' | 'empty' | 'pending' | 'passed' | 'restored' | 'stuck', text: string }} Outcome
+ * @typedef {{ kind: 'changed' | 'foreign' | 'rebased' | 'conflict' | 'empty' | 'pending' | 'passed' | 'restored' | 'stuck' | 'matches', text: string }} Outcome
  */
 /** @typedef {{ auth: Auth, bot: string, serverURL: string, identities: Map<number, Promise<Identity>> }} Context */
 
@@ -111,6 +114,42 @@ function commitOnBase(
 
 /** @typedef {{ context: Context, repo: Repo, pr: PR, octokit: Octokit, token: string }} Target */
 /** @typedef {Target & { git: Git, tip: string, identity: Identity }} Job */
+
+/** @type {(git: Git, from: string, to: string) => string[]} */
+function changedFiles(git, from, to) {
+	return git([
+		'diff',
+		'--name-only',
+		'-z',
+		from,
+		to,
+	]).stdout.split('\0').filter(Boolean);
+}
+
+/**
+ * Closes a `fleet/workflows` PR that would change nothing on its base but the App's bookkeeping (see `closeBookkeeping`); `how` says, for its outcome, when that's so (eg, once it's rebased).
+ * @type {(target: Target, how: string) => Promise<Outcome>}
+ */
+async function closeMatching(
+	{
+		context,
+		repo,
+		pr,
+		octokit,
+	},
+	how,
+) {
+	await closeBookkeeping({
+		octokit,
+		owner: repo.owner,
+		name: repo.name,
+		number: pr.number,
+		head: pr.head.sha,
+		base: pr.base.ref,
+		author: context.bot,
+	});
+	return { kind: 'matches', text: `${how} would change only ${code(configFile)} or ${code(packageJson)}, since ${code(pr.base.ref)}’s workflow files already match, so it’s closed; said why on it` };
+}
 
 /**
  * Once the App has pushed `head` to the PR's branch, in place of `previous`, on `base`'s tip, hides what it said on the PR that no longer applies (see `hideStale`; for a private repository, never warning); `resolved` is what that push resolved. Returns how that's said in the PR's outcome.
@@ -236,6 +275,9 @@ async function rebase(job) {
 		await say(job, { kind: 'empty', base: onto }, `${code(base)} already has everything this PR changes, so the App leaves it as it is: it can be closed.`);
 		return { kind: 'empty', text: `${code(base)} already has everything it changes, so it’s left as it is; said so on it` };
 	}
+	if (pr.head.ref === fixBranch && onlyBookkeeping(changedFiles(git, `origin/${base}`, tree))) {
+		return closeMatching(job, 'rebased onto its base’s tip, it');
+	}
 	const touched = git([
 		'diff',
 		'--name-only',
@@ -276,6 +318,7 @@ async function rebase(job) {
 			'foreign',
 			'conflict',
 			'empty',
+			'matches',
 		],
 	});
 	return { kind: 'rebased', text: `rebased onto ${code(base)}’s tip${synced === null ? '' : resynced[synced.reason]}${hid}` };
@@ -398,6 +441,10 @@ async function restore(job, failed) {
 		},
 		writes,
 	);
+	// with what it removed put back, its base already has the rest of what it changes
+	if (onlyBookkeeping(changedFiles(git, `origin/${base}`, commit))) {
+		return closeMatching(job, 'its CI failed, and with what it removed restored, it');
+	}
 	pushBranch(git, {
 		base,
 		branch: pr.head.ref,
@@ -414,6 +461,7 @@ async function restore(job, failed) {
 			'foreign',
 			'conflict',
 			'empty',
+			'matches',
 		],
 	});
 	return { kind: 'restored', text: `its CI failed, so restored ${[...kept].map(([file, inputs]) => `${inputs.map(code).join(', ')} in ${code(file)}`).join('; ')}, and kept them in ${code(configFile)}${ignored === null ? '' : `, which it added to ${code(packageJson)}’s \`publishConfig.ignore\``}${hid}` };
@@ -516,7 +564,7 @@ async function remediate(target, ci, baseTip) {
 }
 
 /**
- * Keeps one of the App's open PRs the one commit on its base's tip that it must be (see `rebase`), and, for a `fleet/workflows` PR whose CI failed, puts back what it removed (see `restore`).
+ * Keeps one of the App's open PRs the one commit on its base's tip that it must be (see `rebase`), and, for a `fleet/workflows` PR whose CI failed, puts back what it removed (see `restore`); a `fleet/workflows` PR that would change nothing on its base's tip but the App's bookkeeping, as it is, or once rebased or restored, is closed instead (see `closeMatching`).
  * Everything is decided from the API, exactly as `/merge` decides it (see `commitsRefusal`, `isSingleOnBase`, and `ciStatus`; and, for a PR whose CI failed, its base's tip's CI, see `remediate`): the repository is only cloned for a PR that has to be rebased or restored, and not even then once it's said, for its head commit (and, for a rebase, its base's tip), that it can't be (see `alreadySaid`).
  * Never touches a PR with anyone else's commits on it.
  * @type {(context: Context, target: { repo: Repo, pr: PR, octokit: Octokit, token: string }) => Promise<Outcome>}
@@ -564,6 +612,19 @@ export async function maintainPR(
 	}
 	if (pr.head.ref !== fixBranch) {
 		return { kind: 'passed', text: 'up to date' };
+	}
+	/*
+	 * its one commit's parent is its base's tip, so what that commit changes is what it changes there: read for exactly the head commit checked above, so that a push since (eg, of anyone else's commits) is never what decides it; one that changes nothing at all is left as it is
+	 * GitHub lists at most 300 of a commit's files at once, so a longer list is cut short, but never to only the App's bookkeeping, which is at most two
+	 */
+	const { data: { files: diff = [] } } = await octokit.rest.repos.getCommit({
+		owner: repo.owner,
+		repo: repo.name,
+		ref: pr.head.sha,
+	});
+	const changed = diff.flatMap((f) => [f.filename].concat(f.previous_filename ?? []));
+	if (changed.length > 0 && onlyBookkeeping(changed)) {
+		return closeMatching(target, 'it');
 	}
 	/** @type {Commit} */
 	const headCommit = {

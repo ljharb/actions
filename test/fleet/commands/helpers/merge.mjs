@@ -18,6 +18,7 @@ import nock from 'nock';
  * - `refs`, keyed by `owner/name`: the tip of every branch (unspecified, `base0`), or an error reading it
  * - `ci`, keyed by commit: its CI (unspecified, nothing at all)
  * - `commits`, keyed by `owner/name#number`: the PR's commits, of which GitHub lists only the first 250 (unspecified, one: the head of the PR in `prs` or `openPulls`, by the App's bot; none, without such a PR)
+ * - `files`, keyed by `owner/name@commit`: the paths of the files that commit changes from its parent (unspecified, one workflow file)
  * - `refUpdates`, keyed by `owner/name`: an error that updating a ref replies with (unspecified, it's updated)
  * - `queue`: the merge queue variable's value (unspecified, there's no such variable); `queueError`, an error reading it replies with, and `queueWriteError`, one writing it does
  * - `eyes`, keyed by comment id: the 👀 reactions on it; `eyesError`, an error listing them replies with
@@ -27,6 +28,7 @@ import nock from 'nock';
  *   refs?: Record<string, string | ErrorReply>,
  *   ci?: Record<string, CI>,
  *   commits?: Record<string, Record<string, unknown>[]>,
+ *   files?: Record<string, string[]>,
  *   refUpdates?: Record<string, ErrorReply>,
  *   queue?: string,
  *   queueError?: ErrorReply,
@@ -73,9 +75,16 @@ export const botEmail = `${botId}+${botUser}@users.noreply.github.com`;
  * One of a PR's commits, as GitHub lists it: by default, authored and committed by the App's bot, which GitHub links to its user, on the base's tip as the mocked API has it unless specified otherwise (`base0`). `author` and `committer` are the GitHub users GitHub links them to (`null`, none), and `authorEmail` and `committerEmail`, their emails in the commit itself (`null`, none); `parents`, its parents' SHAs.
  * @type {(sha: string, options?: { author?: string | null, committer?: string | null, authorEmail?: string | null, committerEmail?: string | null, parents?: string[] }) => Record<string, unknown>}
  */
-export function prCommit(sha, {
-	author = botUser, committer = botUser, authorEmail = botEmail, committerEmail = botEmail, parents = ['base0'],
-} = {}) {
+export function prCommit(
+	sha,
+	{
+		author = botUser,
+		committer = botUser,
+		authorEmail = botEmail,
+		committerEmail = botEmail,
+		parents = ['base0'],
+	} = {},
+) {
 	return {
 		sha,
 		parents: parents.map((parent) => ({ sha: parent })),
@@ -108,7 +117,10 @@ export function mockMerge(scenario, record) {
 		const text = await req.text();
 		const body = text ? JSON.parse(text) : null;
 		record({
-			method: req.method, path, body, authorization: req.headers.get('authorization') ?? '',
+			method: req.method,
+			path,
+			body,
+			authorization: req.headers.get('authorization') ?? '',
 		});
 		return handler({ url, path, body });
 	};
@@ -118,87 +130,144 @@ export function mockMerge(scenario, record) {
 	/** @type {[nock.Interceptor, ReturnType<typeof handle>][]} */
 	const routes = [
 		// only `/merge` lists only open PRs; the `/fix` commands list them all
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\?(?=.*\bstate=open\b)/), handle(({ url, path }) => {
-			const head = String(url.searchParams.get('head'));
-			const [user, branch] = [head.slice(0, head.indexOf(':')), head.slice(head.indexOf(':') + 1)];
-			const prs = (scenario.openPulls?.[repoOf(path)] ?? []).filter((pr) => pr.head?.ref === branch && pr.head?.repo?.owner?.login === user);
-			return paged(url, prs);
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/commits(?:\?.*)?$/), handle(({ url, path }) => {
-			const repository = repoOf(path);
-			const number = Number(path.split('/')[5]);
-			const key = `${repository}#${number}`;
-			const known = scenario.prs?.[key];
-			const head = known && !isErrorReply(known) ? known.head : (scenario.openPulls?.[repository] ?? []).find((p) => p.number === number)?.head;
-			const sha = head && typeof head === 'object' && 'sha' in head ? head.sha : null;
-			const commits = scenario.commits?.[key] ?? (typeof sha === 'string' ? [prCommit(sha)] : []);
-			return paged(url, commits.slice(0, 250));
-		})],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\?(?=.*\bstate=open\b)/),
+			handle(({ url, path }) => {
+				const head = String(url.searchParams.get('head'));
+				const [user, branch] = [head.slice(0, head.indexOf(':')), head.slice(head.indexOf(':') + 1)];
+				const prs = (scenario.openPulls?.[repoOf(path)] ?? []).filter((pr) => pr.head?.ref === branch && pr.head?.repo?.owner?.login === user);
+				return paged(url, prs);
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+\/commits(?:\?.*)?$/),
+			handle(({ url, path }) => {
+				const repository = repoOf(path);
+				const number = Number(path.split('/')[5]);
+				const key = `${repository}#${number}`;
+				const known = scenario.prs?.[key];
+				const head = known && !isErrorReply(known) ? known.head : (scenario.openPulls?.[repository] ?? []).find((p) => p.number === number)?.head;
+				const sha = head && typeof head === 'object' && 'sha' in head ? head.sha : null;
+				const commits = scenario.commits?.[key] ?? (typeof sha === 'string' ? [prCommit(sha)] : []);
+				return paged(url, commits.slice(0, 250));
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/?]+$/),
+			handle(({ path }) => {
+				const files = scenario.files?.[`${repoOf(path)}@${decodeURIComponent(path.split('/')[5])}`] ?? ['.github/workflows/node-pretest.yml'];
+				return [200, { files: files.map((filename) => ({ filename, status: 'modified' })) }];
+			}),
+		],
 		[scope.get(/^\/users\/[^/]+$/), handle(({ path }) => [200, { id: botId, login: decodeURIComponent(path.split('/')[2]) }])],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/), handle(({ path }) => {
-			const reply = scenario.prs?.[`${repoOf(path)}#${path.split('/').pop()}`] ?? { status: 404, body: { message: 'Not Found' } };
-			return isErrorReply(reply) ? errorReply(reply) : [200, reply];
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/git\/ref\/.+$/), handle(({ path }) => {
-			const reply = scenario.refs?.[repoOf(path)] ?? 'base0';
-			return isErrorReply(reply) ? errorReply(reply) : [200, { object: { sha: reply } }];
-		})],
-		[scope.patch(/^\/repos\/[^/]+\/[^/]+\/git\/refs\/.+$/), handle(({ path, body }) => {
-			const error = scenario.refUpdates?.[repoOf(path)];
-			return error ? errorReply(error) : [200, { object: { sha: body.sha } }];
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/check-runs(?:\?.*)?$/), handle(({ url, path }) => {
-			const ci = ciOf(decodeURIComponent(path.split('/')[5]));
-			return ci.error ? errorReply(ci.error) : paged(url, (ci.checkRuns ?? []).map(({ annotations, ...run }) => ({ output: { annotations_count: annotations?.length ?? 0 }, ...run })), 'check_runs'); // eslint-disable-line camelcase
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/check-suites(?:\?.*)?$/), handle(({ url, path }) => {
-			const ci = ciOf(decodeURIComponent(path.split('/')[5]));
-			return ci.error ? errorReply(ci.error) : paged(url, ci.checkSuites ?? [], 'check_suites');
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/check-runs\/\d+\/annotations(?:\?.*)?$/), handle(({ url, path }) => {
-			const id = Number(path.split('/')[5]);
-			const run = Object.values(scenario.ci ?? {}).flatMap((ci) => ci.checkRuns ?? []).find((r) => r.id === id);
-			return paged(url, run?.annotations ?? []);
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/status(?:\?.*)?$/), handle(({ url, path }) => {
-			const ci = ciOf(decodeURIComponent(path.split('/')[5].split('?')[0]));
-			if (ci.error) {
-				return errorReply(ci.error);
-			}
-			const [status, body] = paged(url, ci.statuses ?? [], 'statuses');
-			return [status, { state: 'pending', ...(/** @type {object} */ (body)) }]; // eslint-disable-line no-extra-parens
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/actions\/runs\?/), handle(({ url }) => {
-			const ci = ciOf(String(url.searchParams.get('head_sha')));
-			return ci.error ? errorReply(ci.error) : paged(url, (ci.runs ?? []).map((run) => ({
-				name: `workflow ${run.id}`, status: 'completed', conclusion: 'success', ...run, jobs: void undefined,
-			})), 'workflow_runs');
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/actions\/runs\/\d+\/jobs(?:\?.*)?$/), handle(({ url, path }) => {
-			const id = Number(path.split('/')[6].split('?')[0]);
-			const run = Object.values(scenario.ci ?? {}).flatMap((ci) => ci.runs ?? []).find((r) => r.id === id);
-			return paged(url, run?.jobs ?? [], 'jobs');
-		})],
-		[scope.get(/^\/repos\/[^/]+\/[^/]+\/actions\/variables\/[^/]+$/), handle(({ path }) => {
-			if (scenario.queueError) {
-				return errorReply(scenario.queueError);
-			}
-			return typeof queue === 'string' ? [200, { name: path.split('/').pop(), value: queue }] : [404, { message: 'Not Found' }];
-		})],
-		[scope.patch(/^\/repos\/[^/]+\/[^/]+\/actions\/variables\/[^/]+$/), handle(({ body }) => {
-			if (scenario.queueWriteError) {
-				return errorReply(scenario.queueWriteError);
-			}
-			queue = body.value;
-			return [204, ''];
-		})],
-		[scope.post(/^\/repos\/[^/]+\/[^/]+\/actions\/variables$/), handle(({ body }) => {
-			if (scenario.queueWriteError) {
-				return errorReply(scenario.queueWriteError);
-			}
-			queue = body.value;
-			return [201, {}];
-		})],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/),
+			handle(({ path }) => {
+				const reply = scenario.prs?.[`${repoOf(path)}#${path.split('/').pop()}`] ?? { status: 404, body: { message: 'Not Found' } };
+				return isErrorReply(reply) ? errorReply(reply) : [200, reply];
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/git\/ref\/.+$/),
+			handle(({ path }) => {
+				const reply = scenario.refs?.[repoOf(path)] ?? 'base0';
+				return isErrorReply(reply) ? errorReply(reply) : [200, { object: { sha: reply } }];
+			}),
+		],
+		[
+			scope.patch(/^\/repos\/[^/]+\/[^/]+\/git\/refs\/.+$/),
+			handle(({ path, body }) => {
+				const error = scenario.refUpdates?.[repoOf(path)];
+				return error ? errorReply(error) : [200, { object: { sha: body.sha } }];
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/check-runs(?:\?.*)?$/),
+			handle(({ url, path }) => {
+				const ci = ciOf(decodeURIComponent(path.split('/')[5]));
+				return ci.error ? errorReply(ci.error) : paged(url, (ci.checkRuns ?? []).map(({ annotations, ...run }) => ({ output: { annotations_count: annotations?.length ?? 0 }, ...run })), 'check_runs'); // eslint-disable-line camelcase
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/check-suites(?:\?.*)?$/),
+			handle(({ url, path }) => {
+				const ci = ciOf(decodeURIComponent(path.split('/')[5]));
+				return ci.error ? errorReply(ci.error) : paged(url, ci.checkSuites ?? [], 'check_suites');
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/check-runs\/\d+\/annotations(?:\?.*)?$/),
+			handle(({ url, path }) => {
+				const id = Number(path.split('/')[5]);
+				const run = Object.values(scenario.ci ?? {}).flatMap((ci) => ci.checkRuns ?? []).find((r) => r.id === id);
+				return paged(url, run?.annotations ?? []);
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/]+\/status(?:\?.*)?$/),
+			handle(({ url, path }) => {
+				const ci = ciOf(decodeURIComponent(path.split('/')[5].split('?')[0]));
+				if (ci.error) {
+					return errorReply(ci.error);
+				}
+				const [status, body] = paged(url, ci.statuses ?? [], 'statuses');
+				return [status, { state: 'pending', ...(/** @type {object} */ (body)) }]; // eslint-disable-line no-extra-parens
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/actions\/runs\?/),
+			handle(({ url }) => {
+				const ci = ciOf(String(url.searchParams.get('head_sha')));
+				return ci.error ? errorReply(ci.error) : paged(
+					url,
+					(ci.runs ?? []).map((run) => ({
+						name: `workflow ${run.id}`,
+						status: 'completed',
+						conclusion: 'success',
+						...run,
+						jobs: void undefined,
+					})),
+					'workflow_runs',
+				);
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/actions\/runs\/\d+\/jobs(?:\?.*)?$/),
+			handle(({ url, path }) => {
+				const id = Number(path.split('/')[6].split('?')[0]);
+				const run = Object.values(scenario.ci ?? {}).flatMap((ci) => ci.runs ?? []).find((r) => r.id === id);
+				return paged(url, run?.jobs ?? [], 'jobs');
+			}),
+		],
+		[
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/actions\/variables\/[^/]+$/),
+			handle(({ path }) => {
+				if (scenario.queueError) {
+					return errorReply(scenario.queueError);
+				}
+				return typeof queue === 'string' ? [200, { name: path.split('/').pop(), value: queue }] : [404, { message: 'Not Found' }];
+			}),
+		],
+		[
+			scope.patch(/^\/repos\/[^/]+\/[^/]+\/actions\/variables\/[^/]+$/),
+			handle(({ body }) => {
+				if (scenario.queueWriteError) {
+					return errorReply(scenario.queueWriteError);
+				}
+				queue = body.value;
+				return [204, ''];
+			}),
+		],
+		[
+			scope.post(/^\/repos\/[^/]+\/[^/]+\/actions\/variables$/),
+			handle(({ body }) => {
+				if (scenario.queueWriteError) {
+					return errorReply(scenario.queueWriteError);
+				}
+				queue = body.value;
+				return [201, {}];
+			}),
+		],
 		[scope.get(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions(?:\?.*)?$/), handle(({ url, path }) => (scenario.eyesError ? errorReply(scenario.eyesError) : paged(url, scenario.eyes?.[path.split('/')[6]] ?? [])))],
 	];
 

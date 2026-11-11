@@ -23,21 +23,24 @@ import {
 import { code } from '../lib/markdown.mjs';
 import {
 	hasConfig,
+	onlyBookkeeping,
 	packageJson,
 	packageJsonAt,
 	syncConfigIgnore,
 } from '../lib/npmignore.mjs';
 import {
+	assertBotOwned,
 	botIdentity,
 	checkout,
+	closeBookkeeping,
 	commitChanges,
 	findPR,
 	publish,
 	remoteTip,
 } from '../lib/pr.mjs';
 
-/** @import { RepoState, appAuth } from '../lib/app.mjs' */
-/** @import { Identity } from '../lib/pr.mjs' */
+/** @import { Octokit, RepoState, appAuth } from '../lib/app.mjs' */
+/** @import { Identity, PRState } from '../lib/pr.mjs' */
 /** @import { Result } from '../drift/check.mjs' */
 /** @import { Plan, Category } from '../drift/fix.mjs' */
 /** @typedef {{ state: RepoState, result: Result | null, files: Set<string> | undefined }} Candidate */
@@ -100,6 +103,32 @@ async function planIgnored(
 	if (synced !== null) {
 		plan.writes.push({ path: packageJson, ...synced });
 	}
+}
+
+/**
+ * `plan`, without each write of exactly what the repository already has, which changes nothing: eg, a file the drift check finds drifted only because a kept input's value isn't a scalar (so that input isn't tolerated as the repository's own), which rewriting it keeps as it is.
+ * @type {(plan: Plan, state: RepoState) => Plan}
+ */
+function withoutUnchanged(plan, { workflows }) {
+	const current = new Map((workflows ?? []).map(({ name, text }) => [`.github/workflows/${name}`, text]));
+	return { ...plan, writes: plan.writes.filter(({ path: file, content }) => current.get(file) !== content) };
+}
+
+// why there's no PR to make, when what `/fix` would change on `base` is nothing, or only the App's bookkeeping (see `onlyBookkeeping`)
+/** @type {(base: string) => string} */
+function matched(base) {
+	return `${code(base)} already matches`;
+}
+
+/** @type {(state: RepoState, number: number) => string} */
+function prURL(state, number) {
+	return `${GITHUB_SERVER_URL}/${state.repository}/pull/${number}`;
+}
+
+// filters may leave out files that don't match, so what they plan matching says nothing about the rest
+/** @type {(job: Job) => boolean} */
+function isFiltered({ context, files }) {
+	return !!files?.size || context.categories.size > 0;
 }
 
 /** @type {(plan: Plan) => string[]} */
@@ -192,13 +221,50 @@ function cloneState(git, state) {
 	};
 }
 
-/** @type {(job: Job) => Promise<string>} */
-async function openPR({
-	context,
-	state,
-	base,
-	files,
+/**
+ * When the default branch already has everything `/fix` would change but the App's bookkeeping (see `onlyBookkeeping`), so that there's no PR to make: closes the App's open PR there (see `closeBookkeeping`), unless filters limited what was planned (see `isFiltered`); never one with anyone else's commits (see `assertBotOwned`), and never reopening a closed one. Returns what happened.
+ * @type {(options: { job: Job, octokit: Octokit, git: Git, prState: PRState, tip: string | null, identity: Identity }) => Promise<string>}
+ */
+async function closeMatched({
+	job,
+	octokit,
+	git,
+	prState,
+	tip,
+	identity,
 }) {
+	const { state, base } = job;
+	if (prState.mode !== 'update' || isFiltered(job)) {
+		return `nothing to fix: ${matched(base)}`;
+	}
+	if (tip) {
+		assertBotOwned(git, {
+			base,
+			branch,
+			tip,
+			identity,
+		});
+	}
+	await closeBookkeeping({
+		octokit,
+		owner: state.owner,
+		name: state.name,
+		number: prState.number,
+		head: prState.head,
+		base,
+		author: identity.name,
+	});
+	return `closed ${prURL(state, prState.number)}: ${matched(base)}`;
+}
+
+/** @type {(job: Job) => Promise<string>} */
+async function openPR(job) {
+	const {
+		context,
+		state,
+		base,
+		files,
+	} = job;
 	const {
 		owner,
 		name,
@@ -239,7 +305,8 @@ async function openPR({
 		const carried = prState.mode !== 'create' && tip ? keptOnBranch(git, { base, tip }) : new Map();
 		const config = carried.size > 0 ? keptConfig(git, 'HEAD', carried) : null;
 		const kept = config === null ? current : { ...current, config: { ...current.config, keep: withKept(current.config.keep, carried) } };
-		const plan = await planFixes(kept, await checkRepo(kept), { files, categories: context.categories });
+		// as `fixRepo` plans it, so that a dry run says what this would do
+		const plan = withoutUnchanged(await planFixes(kept, await checkRepo(kept), { files, categories: context.categories }), current);
 		if (config !== null && plan.writes.length + plan.deletes.length > 0) {
 			plan.writes.unshift({
 				path: configFile,
@@ -250,14 +317,22 @@ async function openPR({
 		await planIgnored(plan, current);
 		const planned = new Set([...plan.writes, ...plan.deletes].map((c) => c.path));
 		write(clone, plan);
-		// the default branch moved on since it was checked, and already has these changes
+		// the default branch already has these changes (eg, it moved on since it was checked), or every one but the App's bookkeeping
 		if (!commitChanges(git, {
 			base,
 			message,
 			paths: ['.github/workflows'].concat([configFile, packageJson].filter((file) => planned.has(file))),
 			allowed: (file) => planned.has(file),
+			worth: (changed) => !onlyBookkeeping(changed),
 		})) {
-			return `nothing to fix: ${code(base)} already matches`;
+			return await closeMatched({
+				job,
+				octokit,
+				git,
+				prState,
+				tip,
+				identity,
+			});
 		}
 		return await publish({
 			octokit,
@@ -279,12 +354,13 @@ async function openPR({
 }
 
 /** @type {(job: Job) => Promise<string>} */
-async function describePR({
-	context,
-	state,
-	plan,
-	base,
-}) {
+async function describePR(job) {
+	const {
+		context,
+		state,
+		plan,
+		base,
+	} = job;
 	const token = await installationToken(context.auth, state.installationId, {
 		repositoryNames: [state.name],
 		permissions: { pull_requests: 'read' }, // eslint-disable-line camelcase
@@ -296,7 +372,12 @@ async function describePR({
 		base,
 		branch,
 	});
-	const pr = 'number' in prState ? `${GITHUB_SERVER_URL}/${state.repository}/pull/${prState.number}` : '';
+	const pr = 'number' in prState ? prURL(state, prState.number) : '';
+	// as `closeMatched` would
+	const changed = plan.writes.map((w) => w.path).concat(plan.deletes.map((d) => d.path));
+	if (onlyBookkeeping(changed)) {
+		return `${prState.mode === 'update' && !isFiltered(job) ? `would close ${pr}` : 'nothing to fix'}: ${matched(base)}`;
+	}
 	const action = {
 		create: 'would create a PR',
 		update: `would update ${pr}`,
@@ -324,10 +405,11 @@ export async function fixRepo(
 	if (files?.size === 0) {
 		return 'nothing to fix';
 	}
-	const plan = await planFixes(state, result, { files, categories: context.categories });
-	if (plan.writes.length === 0 && plan.deletes.length === 0) {
-		return ['nothing to fix', ...skips(plan)].join('<br>');
+	const planned = await planFixes(state, result, { files, categories: context.categories });
+	if (planned.writes.length === 0 && planned.deletes.length === 0) {
+		return ['nothing to fix', ...skips(planned)].join('<br>');
 	}
+	const plan = withoutUnchanged(planned, state);
 	await planIgnored(plan, state);
 	const base = state.defaultBranch;
 	if (!base) {
