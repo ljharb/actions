@@ -36,6 +36,8 @@ const message = '[actions] update workflow files to match ljharb/actions’ temp
 const pretest = '.github/workflows/node-pretest.yml';
 const aught = '.github/workflows/node-aught.yml';
 const config = '.github/ljharb-actions.json';
+// so that a PR that's restored also changes something besides what restoring puts back
+const added = { '.github/workflows/rebase.yml': template('rebase.yml') };
 const botLine = `${bot.name} <${bot.email}>`;
 
 // tape-testing/tape#625: the App's PR dropped `skip-engines` (still needed) and `skip-ls-check` (not)
@@ -537,7 +539,7 @@ test('maintain: rebasing and restoring work in a shallow clone without file cont
 	});
 	fixtureGit(other.remote, ['config', 'uploadpack.allowFilter', 'true']);
 	const otherTip = other.commit('main', { 'old.txt': 'history\n' });
-	const restoring = other.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
+	const restoring = other.commit(fixBranch, { [pretest]: template('node-pretest.yml'), ...added }, { who: bot, from: 'main', message });
 	const second = await run(t, {
 		server: other,
 		github: installed([{ name: 'r' }]),
@@ -955,7 +957,7 @@ test('maintain: a `fleet/workflows` PR whose CI fails only as its base’s tip�
 test('maintain: restoring puts back an input’s comments on lines of their own, in each job it was removed from', async (t) => {
 	const commented = `${template('node-pretest.yml')}    with:\n    # bin/tape requires node 8+, but the rest of tape supports 0.4+\n      skip-engines: true\n  again:\n    uses: ljharb/actions/.github/workflows/pretest.yml@main\n    with:\n      # not this one\n      skip-pack: true\n`;
 	const server = setup(t, { [pretest]: commented });
-	const head = server.commit(fixBranch, { [pretest]: `${template('node-pretest.yml')}  again:\n    uses: ljharb/actions/.github/workflows/pretest.yml@main\n` }, { who: bot, from: 'main', message });
+	const head = server.commit(fixBranch, { [pretest]: `${template('node-pretest.yml')}  again:\n    uses: ljharb/actions/.github/workflows/pretest.yml@main\n`, ...added }, { who: bot, from: 'main', message });
 	const { stdout } = await run(t, {
 		server,
 		github: installed([{ name: 'r' }]),
@@ -984,7 +986,7 @@ test('maintain: restoring keeps a workflow file’s line endings', async (t) => 
 	/** @type {(text: string) => string} */
 	const crlf = (text) => text.replace(/\n/g, '\r\n');
 	const server = setup(t, { [pretest]: crlf(tapePretest) });
-	const head = server.commit(fixBranch, { [pretest]: crlf(template('node-pretest.yml')) }, { who: bot, from: 'main', message });
+	const head = server.commit(fixBranch, { [pretest]: crlf(template('node-pretest.yml')), ...added }, { who: bot, from: 'main', message });
 	const { stdout } = await run(t, {
 		server,
 		github: installed([{ name: 'r' }]),
@@ -1001,7 +1003,7 @@ test('maintain: restoring keeps what `keep` already has', async (t) => {
 		[aught]: tapeAught,
 		[config]: JSON.stringify({ keep: { 'node-pretest.yml': ['skip-pack'], 'node-aught.yml': 'nope' } }),
 	});
-	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), [aught]: fixedAught }, { who: bot, from: 'main', message });
+	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), [aught]: fixedAught, ...added }, { who: bot, from: 'main', message });
 	await run(t, {
 		server,
 		github: installed([{ name: 'r' }]),
@@ -1028,7 +1030,7 @@ test('maintain: restoring keeps `.github/ljharb-actions.json` out of the publish
 	/** @type {(files: Record<string, string>, label: string) => Promise<{ tip: string, blob: string, server: Server, line: string | undefined }>} */
 	const restore = async (files, label) => {
 		const server = setup(t, { [pretest]: tapePretest, ...files });
-		const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
+		const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), ...added }, { who: bot, from: 'main', message });
 		const { errors, stdout } = await run(t, {
 			server,
 			github: installed([{ name: 'r' }]),
@@ -1075,7 +1077,7 @@ test('maintain: restoring keeps `.github/ljharb-actions.json` out of the publish
 	);
 
 	const server = setup(t, { [pretest]: tapePretest });
-	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
+	const head = server.commit(fixBranch, { [pretest]: template('node-pretest.yml'), ...added }, { who: bot, from: 'main', message });
 	const { errors } = await run(t, {
 		server,
 		github: installed([{ name: 'r' }]),
