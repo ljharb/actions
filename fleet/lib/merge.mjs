@@ -11,6 +11,7 @@ import { botBranches } from './branches.mjs';
 import { ciStatus } from './ci.mjs';
 import { commitsRefusal, isSingleOnBase } from './merge-guards.mjs';
 import { code, fence, html } from './markdown.mjs';
+import { hideSaid } from './said.mjs';
 
 export { ciStatus };
 export { behindReason, maxPRCommits } from './merge-guards.mjs';
@@ -251,6 +252,48 @@ export async function fastForward(
 		});
 	} catch (error) {
 		throw new Error(`GitHub refused to fast-forward ${code(base)} to it${httpStatus(error)}, eg because of a branch protection rule`);
+	}
+}
+
+/**
+ * Once the App has merged its PR `number` in `owner/name` (which `read` can read), hides what its bot (`bot`) said on it (see `hideSaid`) as `RESOLVED`, since a merged PR has nothing left to say about: with a token for only that repository that can (Pull requests write), only asked for when there's something to hide. Returns how many it hid; a failure only warns, never saying where (for a private repository, not at all).
+ * @type {(auth: Auth, repo: { installationId: number, owner: string, name: string, private: boolean }, pr: { read: Octokit, number: number, bot: string }) => Promise<number>}
+ */
+export async function hideSaidOnMerged(
+	auth,
+	repo,
+	{
+		read,
+		number,
+		bot,
+	},
+) {
+	return hideSaid({
+		octokit: read,
+		writer: async () => repoOctokit(auth, repo, { pull_requests: 'write' }), // eslint-disable-line camelcase
+		owner: repo.owner,
+		name: repo.name,
+		number,
+		author: bot,
+		isPrivate: repo.private,
+		classifierOf: () => 'RESOLVED',
+		unread: 'could not read the App’s comments on a PR it merged, to hide them as resolved',
+		unhidden: (count) => `could not hide ${count} of the App’s comments on a PR it merged as resolved`,
+	});
+}
+
+/**
+ * Whether the App's bot (`bot`) has no open PRs left in `owner/name` (see `candidatePRs`) but those it just merged (`merged`, which GitHub can still list as open for a moment). Since that only decides what's hidden, a failure only warns (for a private repository, not even that), never saying where, and is `false`.
+ * @type {(read: Octokit, repo: { owner: string, name: string, repository: string, private: boolean }, app: { bot: string, merged: Set<number> }) => Promise<boolean>}
+ */
+export async function noneLeft(read, repo, { bot, merged }) {
+	try {
+		return (await candidatePRs(read, repo, bot)).every((pr) => merged.has(pr.number));
+	} catch (error) {
+		if (!repo.private) {
+			core.warning(`could not list the App’s open PRs in a repository it merged one in, to tell whether that was its last${httpStatus(error)}`);
+		}
+		return false;
 	}
 }
 

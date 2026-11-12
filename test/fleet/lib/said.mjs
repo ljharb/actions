@@ -4,6 +4,7 @@ import test from 'tape';
 
 import {
 	classify,
+	hideSaid,
 	hideStale,
 	marker,
 	parseMarker,
@@ -345,6 +346,75 @@ test('hideStale', (t) => {
 		const untyped = await hide();
 		st.equal(untyped.stdout, '::warning::could not hide 1 of the App’s earlier comments on one of its PRs that no longer apply\n', 'with no details, when there are none to give');
 		st.end();
+	});
+
+	t.end();
+});
+
+test('hideSaid', (t) => {
+	/** @type {(writer: () => Promise<ReturnType<typeof getOctokit>>) => Promise<{ count: number, stdout: string }>} */
+	const resolve = async (writer) => {
+		let stdout = '';
+		const { write } = process.stdout;
+		process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+			stdout += String(chunk);
+			return true;
+		});
+		try {
+			const count = await hideSaid({
+				octokit: getOctokit('ghs_read'),
+				writer,
+				owner: 'o',
+				name: 'r',
+				number: 3,
+				author: bot.name,
+				isPrivate: false,
+				classifierOf: () => 'RESOLVED',
+				unread: 'unread',
+				unhidden: (n) => `unhidden ${n}`,
+			});
+			return { count, stdout };
+		} finally {
+			process.stdout.write = write;
+		}
+	};
+
+	t.test('hides with what `writer` makes, only when there’s something to hide', async (st) => {
+		const requests = mockAPI(st, {
+			comments: [
+				said('C_stuck', `${marker('stuck', head)}\nstuck`),
+				said('C_minimized', `${marker('stuck', oldHead)}\nalready hidden`),
+			],
+			minimized: ['C_minimized'],
+		});
+		let made = 0;
+		const { count } = await resolve(async () => {
+			made += 1;
+			return getOctokit('ghs_write');
+		});
+		st.equal(count, 1, 'hiding what’s left');
+		st.deepEqual(hidden(requests), [['C_stuck', 'RESOLVED']], 'as `classifierOf` says');
+		st.equal(made, 1, 'with a writer made once');
+	});
+
+	t.test('with nothing left to hide, never makes the writer', async (st) => {
+		mockAPI(st, {
+			comments: [said('C_minimized', `${marker('stuck', oldHead)}\nalready hidden`)],
+			minimized: ['C_minimized'],
+		});
+		const { count } = await resolve(async () => {
+			throw new Error('never made');
+		});
+		st.equal(count, 0, 'hiding nothing');
+	});
+
+	t.test('failing to make the writer only warns', async (st) => {
+		mockAPI(st, { comments: [said('C_stuck', `${marker('stuck', head)}\nstuck`)] });
+		const { count, stdout } = await resolve(async () => {
+			throw Object.assign(new Error('no token for o/r'), { status: 422 });
+		});
+		st.equal(count, 0, 'hiding nothing');
+		st.equal(stdout, '::warning::unread (HTTP 422)\n', 'warning, without saying where');
 	});
 
 	t.end();

@@ -3,9 +3,13 @@ import nock from 'nock';
 import test from 'tape';
 
 import {
+	aboutOnly,
 	earlierReplies,
 	hideEarlierReplies,
+	hideResolved,
 	identify,
+	onlyAbout,
+	queueReplyAbout,
 	repliedTo,
 	replyMarker,
 	supersedes,
@@ -220,6 +224,98 @@ test('earlierReplies', (t) => {
 	t.end();
 });
 
+test('onlyAbout', (t) => {
+	t.ok(onlyAbout(command('/merge Tape-Testing/Tape'), 'tape-testing/tape'), 'a command naming only that repository');
+	t.ok(onlyAbout(command('/dry-run fix tape-testing/tape tape-testing rebase.yml drifted'), 'tape-testing/tape'), 'however else its filters narrow it, including by its own account');
+	t.notOk(onlyAbout(command('/merge tape-testing/tape ljharb/qs'), 'tape-testing/tape'), 'not one naming another repository too');
+	t.notOk(onlyAbout(command('/merge tape-testing/tape ljharb'), 'tape-testing/tape'), 'nor another account');
+	t.notOk(onlyAbout(command('/merge tape-testing/tape tape-testing ljharb'), 'tape-testing/tape'), 'even alongside its own');
+	t.notOk(onlyAbout(command('/merge tape-testing'), 'tape-testing/tape'), 'nor one naming only its account');
+	t.notOk(onlyAbout(command('/merge ljharb/qs'), 'tape-testing/tape'), 'nor one about another repository');
+	t.end();
+});
+
+test('aboutOnly', (t) => {
+	const tape = new Set(['tape-testing/tape']);
+	t.deepEqual(
+		aboutOnly(
+			/** @type {IssueComment[]} */ ([]).concat(
+				comments(1, ['/dry-run merge tape-testing/tape'], 'maintainer'),
+				comments(2, oldReply('/dry-run merge tape-testing/tape', 2)),
+				comments(4, ['/fix Tape-Testing/tape rebase.yml'], 'someone'),
+				comments(5, newReply('/fix tape-testing/tape rebase.yml')),
+				comments(6, newReply('/dry-run fix tape-testing/tape rebase.yml')),
+				comments(7, newReply('/fix tape-testing/tape')),
+				comments(8, ['/merge tape-testing/tape ljharb/qs'], 'maintainer'),
+				comments(9, newReply('/merge tape-testing/tape ljharb/qs')),
+				comments(10, ['/merge ljharb/qs', 'thanks!', 'not a command: /merge tape-testing/tape'], 'maintainer'),
+				comments(13, ['/merge tape-testing/tape']),
+				[{ id: 14, body: '/merge tape-testing/tape', user: { login: 'maintainer' } }, { id: 15, user: null }],
+			),
+			bot,
+			tape,
+		),
+		[
+			'IC_1',
+			'IC_2',
+			'IC_3',
+			'IC_4',
+			'IC_5',
+			'IC_13',
+		],
+		'every command only about it, by anyone (but one without a node id), and every part of the bot’s replies to one of those, in order; never a reply to a command that isn’t on the issue (a dry run, when only the real one is), nor anything about another repository too',
+	);
+	t.deepEqual(aboutOnly(comments(1, ['/merge tape-testing/tape']), bot, new Set()), [], 'about no repository, nothing');
+	t.end();
+});
+
+/**
+ * The parts of a reply of the merge queue's, with a row for each of `repositories` (split evenly between the parts, in order), each as it was posted.
+ * @type {(repositories: string[], parts?: number) => string[]}
+ */
+function queueReply(repositories, parts = 1) {
+	return Array.from({ length: parts }, (_, i) => [
+		i === 0 ? 'The merge queue, as of [this run](https://github.com/o/r/actions/runs/1):\n' : `_continued (${i + 1}/${parts})_\n`,
+		'| Repository | Outcome |\n| --- | --- |',
+		repositories.slice(i * Math.ceil(repositories.length / parts), (i + 1) * Math.ceil(repositories.length / parts)).map((r) => `| \`${r}\` | merged https://github.com/${r}/pull/1 (queued by [this comment](https://github.com/o/r/issues/9#issuecomment-1)) |`).join('\n'),
+		i < parts - 1 ? `\n_continued below (${i + 2}/${parts})_` : '\nPrivate repositories in the queue, if any, were also processed; nothing about them is shown here.',
+	].join('\n'));
+}
+
+test('queueReplyAbout', (t) => {
+	t.equal(queueReplyAbout(comments(1, queueReply(['Tape-Testing/tape']))), 'tape-testing/tape', 'a reply of the merge queue’s with only one repository’s rows is about it');
+	t.equal(queueReplyAbout(comments(1, queueReply(['tape-testing/tape', 'tape-testing/tape'], 2))), 'tape-testing/tape', 'across all its parts');
+	t.equal(queueReplyAbout(comments(1, queueReply(['tape-testing/tape', 'ljharb/qs'], 2))), null, 'but not one with another repository’s rows too, in any part');
+	t.equal(queueReplyAbout(comments(1, queueReply([]))), null, 'nor one with no rows');
+	t.equal(queueReplyAbout(comments(1, oldReply('/merge tape-testing/tape'))), null, 'nor a reply to a command');
+	t.equal(queueReplyAbout([{ id: 1, user: null }]), null, 'nor a comment with no body');
+	t.end();
+});
+
+test('aboutOnly: the merge queue’s replies', (t) => {
+	t.deepEqual(
+		aboutOnly(
+			/** @type {IssueComment[]} */ ([]).concat(
+				comments(1, queueReply(['tape-testing/tape', 'tape-testing/tape'], 2)),
+				comments(3, queueReply(['tape-testing/tape', 'ljharb/qs'])),
+				comments(4, queueReply(['tape-testing/tape']), 'mallory'),
+				comments(5, queueReply(['ljharb/qs'])),
+				comments(6, queueReply(['Tape-Testing/Tape'])),
+				[{ id: 7, body: queueReply(['tape-testing/tape'])[0], user: { login: bot } }],
+			),
+			bot,
+			new Set(['tape-testing/tape']),
+		),
+		[
+			'IC_1',
+			'IC_2',
+			'IC_6',
+		],
+		'every part of each of the bot’s merge queue replies only about it (but one without a node id); never one about another repository too, or only another one, nor anyone else’s',
+	);
+	t.end();
+});
+
 /**
  * How the mocked API answers: the issue's `comments` (or `listStatus`, failing that), which of them are already `minimized`, and whether looking them up (`nodesStatus`) or hiding each (`fails`, by node id, with those GraphQL errors) fails.
  * @type {(t: Test, scenario: { comments?: IssueComment[], listStatus?: number, minimized?: string[], nodesStatus?: number, fails?: Record<string, unknown[]> }) => Recorded[]}
@@ -379,6 +475,82 @@ test('hideEarlierReplies', (t) => {
 		const { count, stdout } = await hide(line, [{ id: 6, author: bot }]);
 		st.equal(count, 0, 'hiding nothing');
 		st.equal(stdout, '::warning::could not hide 1 of the App’s earlier replies to this command as outdated\n', 'warning, without anything GitHub said');
+	});
+
+	t.end();
+});
+
+/**
+ * Runs `hideResolved` on issue 9 of `o/r`, for `repositories`, once the comments `ours` (by the bot) are posted, returning how many it hid and what it logged.
+ * @type {(repositories: string[], ours: { id: number, author?: string }[]) => Promise<{ count: number, stdout: string }>}
+ */
+async function hideAbout(repositories, ours) {
+	let stdout = '';
+	const { write } = process.stdout;
+	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+		stdout += String(chunk);
+		return true;
+	});
+	try {
+		const count = await hideResolved({
+			octokit: getOctokit('ghs_test'),
+			owner: 'o',
+			repo: 'r',
+			number: 9,
+			repositories,
+			ours,
+		});
+		return { count, stdout };
+	} finally {
+		process.stdout.write = write;
+	}
+}
+
+test('hideResolved', (t) => {
+	const listed = /** @type {IssueComment[]} */ ([]).concat(
+		comments(1, ['/merge O/Secret'], 'maintainer'),
+		comments(2, newReply('/merge o/secret')),
+		comments(3, ['/merge o/other'], 'maintainer'),
+		comments(4, newReply('/merge o/other')),
+		comments(5, newReply('/merge o/secret')),
+	);
+
+	t.test('hides every comment only about those repositories before the App’s, as resolved', async (st) => {
+		const requests = mockAPI(st, { comments: listed, minimized: ['IC_2'] });
+		const { count, stdout } = await hideAbout(['o/secret'], [{ id: 5, author: bot }]);
+		st.equal(count, 1, 'saying how many it hid');
+		st.deepEqual(hidden(requests), [['IC_1', 'RESOLVED']], 'skipping one already hidden, those about another repository, and the App’s own new comment');
+		st.equal(stdout, 'hid 1 comment about a repository whose PRs the App has all merged as resolved\n', 'logging only how many');
+	});
+
+	t.test('hides what’s about each of them', async (st) => {
+		const requests = mockAPI(st, { comments: listed });
+		const { count, stdout } = await hideAbout(['o/secret', 'O/Other'], [{ id: 5, author: bot }]);
+		st.equal(count, 4, 'hiding those about each');
+		st.deepEqual(hidden(requests).map(([id]) => id), ['IC_1', 'IC_2', 'IC_3', 'IC_4'], 'whatever case they’re in');
+		st.equal(stdout, 'hid 4 comments about a repository whose PRs the App has all merged as resolved\n', 'logging how many');
+	});
+
+	t.test('about no repository, reads nothing', async (st) => {
+		const requests = mockAPI(st, { comments: listed });
+		st.equal((await hideAbout([], [{ id: 5, author: bot }])).count, 0, 'hides nothing');
+		st.deepEqual(requests, [], 'reading nothing');
+	});
+
+	t.test('failing only warns, never naming a repository', async (st) => {
+		mockAPI(st, { listStatus: 404 });
+		const unread = await hideAbout(['o/secret'], [{ id: 5, author: bot }]);
+		st.equal(unread.stdout, '::warning::could not read the comments on the report, to hide those about a repository whose PRs the App has all merged as resolved (HTTP 404)\n', 'when they can’t be read');
+
+		nock.cleanAll();
+		mockAPI(st, {
+			comments: listed,
+			fails: { IC_1: [{ type: 'FORBIDDEN', message: 'o/secret' }] },
+		});
+		const { count, stdout } = await hideAbout(['o/secret'], [{ id: 5, author: bot }]);
+		st.equal(count, 1, 'hiding the rest');
+		st.equal(stdout, '::warning::could not hide 1 of the comments about a repository whose PRs the App has all merged as resolved (FORBIDDEN)\nhid 1 comment about a repository whose PRs the App has all merged as resolved\n', 'or when one can’t be hidden');
+		st.notOk(stdout.includes('secret'), 'never naming it');
 	});
 
 	t.end();

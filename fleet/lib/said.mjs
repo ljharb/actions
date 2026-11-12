@@ -132,18 +132,33 @@ export async function minimizeEach(octokit, comments) {
 }
 
 /**
- * Hides each of `author`'s own comments on PR `number` (recognized by its marker: see `parseMarker`) that no longer applies to it, as it is just after the App updated it (see `classify`), as `RESOLVED` or `OUTDATED`; anyone else's comments, and any already hidden (or since deleted), are left alone.
- * Returns how many it hid. Hiding is never worth failing the update over, so a failure only warns, without saying where; and, for a private repository, not even that, since even a warning would confirm that one has a PR of the App's.
- * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, current: Current, isPrivate: boolean }) => Promise<number>}
+ * Hides each of `author`'s own comments on PR `number` (recognized by its marker: see `parseMarker`) that `classifierOf` says to, as what it says; anyone else's comments, and any already hidden (or since deleted), are left alone.
+ * They're read with `octokit`, and hidden with what `writer` makes (unspecified, `octokit`), which is only made when there's something to hide.
+ * Returns how many it hid. Hiding is never worth failing anything over, so a failure only warns (`unread`, when they couldn't be read, and `unhidden`, with how many couldn't be hidden), without saying where; and, for a private repository, not even that, since even a warning would confirm that one has a PR of the App's.
+ * @type {(options: {
+ *   octokit: Octokit,
+ *   writer?: () => Promise<Octokit>,
+ *   owner: string,
+ *   name: string,
+ *   number: number,
+ *   author: string,
+ *   isPrivate: boolean,
+ *   classifierOf: (said: Marked) => Classifier | null,
+ *   unread: string,
+ *   unhidden: (count: number) => string,
+ * }) => Promise<number>}
  */
-export async function hideStale({
+export async function hideSaid({
 	octokit,
+	writer = async () => octokit,
 	owner,
 	name,
 	number,
 	author,
-	current,
 	isPrivate,
+	classifierOf,
+	unread,
+	unhidden,
 }) {
 	/** @type {(what: string, error: unknown) => void} */
 	const warn = (what, error) => {
@@ -155,6 +170,8 @@ export async function hideStale({
 	};
 	/** @type {{ id: string, classifier: Classifier }[]} */
 	let stale;
+	/** @type {Octokit} */
+	let write;
 	try {
 		const comments = await octokit.paginate(octokit.rest.issues.listComments, {
 			owner,
@@ -164,20 +181,51 @@ export async function hideStale({
 		});
 		stale = comments.filter((c) => c.user?.login === author && c.node_id).flatMap((c) => {
 			const said = parseMarker(c.body);
-			const classifier = said && classify(said, current);
+			const classifier = said && classifierOf(said);
 			return classifier ? [{ id: c.node_id, classifier }] : [];
 		});
-		if (stale.length > 0) {
-			const left = await hideable(octokit, stale.map((s) => s.id));
-			stale = stale.filter((s) => left.has(s.id));
+		if (stale.length === 0) {
+			return 0;
 		}
+		const left = await hideable(octokit, stale.map((s) => s.id));
+		stale = stale.filter((s) => left.has(s.id));
+		if (stale.length === 0) {
+			return 0;
+		}
+		write = await writer();
 	} catch (error) {
-		warn('could not read the App’s earlier comments on one of its PRs, to hide those that no longer apply', error);
+		warn(unread, error);
 		return 0;
 	}
-	const failures = await minimizeEach(octokit, stale);
+	const failures = await minimizeEach(write, stale);
 	if (failures.length > 0) {
-		warn(`could not hide ${failures.length} of the App’s earlier comments on one of its PRs that no longer apply`, failures[0]);
+		warn(unhidden(failures.length), failures[0]);
 	}
 	return stale.length - failures.length;
+}
+
+/**
+ * Hides each of `author`'s own comments on PR `number` that no longer applies to it, as it is just after the App updated it (see `classify`), as `RESOLVED` or `OUTDATED` (see `hideSaid`).
+ * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, current: Current, isPrivate: boolean }) => Promise<number>}
+ */
+export async function hideStale({
+	octokit,
+	owner,
+	name,
+	number,
+	author,
+	current,
+	isPrivate,
+}) {
+	return hideSaid({
+		octokit,
+		owner,
+		name,
+		number,
+		author,
+		isPrivate,
+		classifierOf: (said) => classify(said, current),
+		unread: 'could not read the App’s earlier comments on one of its PRs, to hide those that no longer apply',
+		unhidden: (count) => `could not hide ${count} of the App’s earlier comments on one of its PRs that no longer apply`,
+	});
 }

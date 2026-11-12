@@ -26,6 +26,9 @@ import {
 	runScript,
 	writtenQueue,
 } from './helpers/merge-run.mjs';
+import { marker as saidMarker } from '../../../fleet/lib/said.mjs';
+import { replyMarker } from '../../../fleet/commands/replies.mjs';
+import { parseCommand } from '../../../fleet/commands/syntax.mjs';
 import { botEmail, prCommit } from './helpers/merge.mjs';
 
 /** @import { Scenario as GitHubScenario, Recorded } from '../lib/helpers/github.mjs' */
@@ -617,5 +620,118 @@ test('fleet/commands: `/merge` takes only PRs of the App’s bot’s own commits
 
 	const dry = command(t, '/dry-run merge ljharb/author', { github: github(names), merge });
 	t.deepEqual(replies(dry.requests), [expectedReply('/dry-run merge ljharb/author', [`| \`ljharb/author\` | would not merge https://github.com/ljharb/author/pull/1: ${someoneElse} |`], true)], 'a dry run says it wouldn’t merge it');
+	t.end();
+});
+
+test('fleet/commands: `/merge` hides, as resolved, what’s only about a repository once it merges the App’s last open PR there', (t) => {
+	/** @type {(id: number, body: string, login?: string) => Record<string, unknown>} */
+	const listed = (id, body, login = bot) => ({
+		id,
+		node_id: `IC_${id}`, // eslint-disable-line camelcase
+		body,
+		user: { login },
+	});
+	/** @type {(line: string) => string} */
+	const answer = (line) => {
+		const parsed = parseCommand(line);
+		if (parsed.type !== 'fix' && parsed.type !== 'merge') {
+			throw new TypeError(line);
+		}
+		return `${replyMarker(parsed)}\n\`${line}\` (…):`;
+	};
+	const issue = [
+		listed(60, '/dry-run merge ljharb/a', 'maintainer'),
+		listed(61, answer('/dry-run merge ljharb/a')),
+		listed(62, '/fix LJHarb/A rebase.yml', 'someone'),
+		listed(63, answer('/fix ljharb/a rebase.yml')),
+		listed(64, '/merge ljharb/b', 'maintainer'),
+		listed(65, answer('/merge ljharb/b')),
+		listed(66, '/merge ljharb/a ljharb/b', 'maintainer'),
+		listed(67, answer('/merge ljharb/a ljharb/b')),
+		listed(68, '/merge ljharb/secret', 'maintainer'),
+		listed(69, 'thanks for merging ljharb/a!', 'maintainer'),
+	];
+	const merge = {
+		openPulls: {
+			'ljharb/a': [pr('ljharb/a', 1, fixBranch)],
+			'ljharb/b': [pr('ljharb/b', 1, fixBranch), pr('ljharb/b', 2, relockBranch)],
+			'ljharb/secret': [pr('ljharb/secret', 1, fixBranch)],
+		},
+		ci: {
+			'a-1': passing,
+			'b-1': passing,
+			'b-2': pending,
+			'secret-1': passing,
+		},
+	};
+	/** @type {(line: string, options?: { github?: GitHubScenario }) => ReturnType<typeof runScript>} */
+	const merging = (line, options = {}) => runScript(t, script, {
+		event: { issue: report, comment: comment(line) },
+		github: { ...github(['a', 'b'], ['secret']), ...options.github },
+		commands: {
+			permissions: { maintainer: 'write' },
+			comments: {
+				'ljharb/actions#9': issue.concat(listed(77, line, 'maintainer')),
+				'ljharb/a#1': [
+					listed(1, `${saidMarker('stuck', 'abc0')}\nneeds a person`),
+					listed(2, `${saidMarker('stuck', 'abc0')}\nquoting the bot`, 'mallory'),
+					listed(3, 'no marker'),
+				],
+				'ljharb/b#1': [listed(4, `${saidMarker('conflict', 'abc0', 'ba5e')}\nconflicted`)],
+				'ljharb/secret#1': [listed(5, `${saidMarker('stuck', 'abc0')}\nneeds a person`)],
+			},
+		},
+		merge,
+	});
+	/** @type {(requests: Recorded[]) => [string, string][]} */
+	const hidden = (requests) => matching(requests, 'POST', /^\/graphql$/).filter((r) => r.body.variables.classifier).map((r) => [r.body.variables.id, r.body.variables.classifier]);
+
+	const all = merging('/merge ljharb');
+	t.equal(all.status, 0, 'exits successfully');
+	t.deepEqual(refUpdates(all.requests).map((u) => u.split(' ')[0]), ['/repos/ljharb/a/git/refs/heads%2Fmain', '/repos/ljharb/b/git/refs/heads%2Fmain', '/repos/ljharb/secret/git/refs/heads%2Fmain'], 'merging what’s ready');
+	t.deepEqual(
+		hidden(all.requests),
+		[
+			['IC_1', 'RESOLVED'],
+			['IC_4', 'RESOLVED'],
+			['IC_5', 'RESOLVED'],
+			['IC_60', 'RESOLVED'],
+			['IC_61', 'RESOLVED'],
+			['IC_62', 'RESOLVED'],
+			['IC_63', 'RESOLVED'],
+		],
+		'hiding what the App said on each PR it merged, a private one’s too; then, once it’s replied, on the report, every command only about a public repository it merged its last open PR in, and the App’s replies to those, but never its own new reply, nor anything about a repository with an open PR left, about another repository too, or about a private one',
+	);
+	t.deepEqual(
+		matching(all.requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).map((r) => r.body).filter((b) => b.permissions.pull_requests === 'write'),
+		['a', 'b', 'secret'].map((n) => ({ repositories: [n], permissions: { pull_requests: 'write' } })), // eslint-disable-line camelcase
+		'hiding what’s on a PR with a token for only its repository, that can only do that',
+	);
+	t.match(all.stdout, /^hid 4 comments about a repository whose PRs the App has all merged as resolved$/m, 'logging only how many');
+	t.notOk(all.stdout.includes('secret'), 'never naming a private repository');
+
+	const one = merging('/merge ljharb/a');
+	t.deepEqual(
+		hidden(one.requests).map(([id]) => id),
+		[
+			'IC_1',
+			'IC_61',
+			'IC_60',
+			'IC_61',
+			'IC_62',
+			'IC_63',
+			'IC_77',
+		],
+		'the command itself too, when it’s only about that repository (after hiding, as outdated, the App’s reply to a dry run of it)',
+	);
+
+	const dry = merging('/dry-run merge ljharb/a');
+	t.deepEqual(hidden(dry.requests), [['IC_61', 'OUTDATED']], 'a dry run merges nothing, so hides nothing as resolved');
+
+	const refused = merging('/merge ljharb/a', { github: { minimized: ['IC_60'], minimizeFails: ['IC_1', 'IC_61'] } });
+	t.equal(refused.status, 0, 'failing to hide one fails nothing');
+	t.deepEqual(hidden(refused.requests).map(([id]) => id), ['IC_1', 'IC_61', 'IC_61', 'IC_62', 'IC_63', 'IC_77'], 'trying the rest, but none already hidden');
+	t.match(refused.stdout, /^::warning::could not hide 1 of the App’s comments on a PR it merged as resolved \(FORBIDDEN\)$/m, 'on the PR too');
+	t.match(refused.stdout, /^::warning::could not hide 1 of the comments about a repository whose PRs the App has all merged as resolved \(FORBIDDEN\)$/m, 'only warning, never naming it');
 	t.end();
 });

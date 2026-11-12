@@ -18,7 +18,12 @@ import { code, split } from '../lib/markdown.mjs';
 import { finishQueued, messageOf } from '../lib/merge.mjs';
 import { fixRepo } from './apply.mjs';
 import { runMerge } from './merge.mjs';
-import { hideEarlierReplies, replyMarker, unmarked } from './replies.mjs';
+import {
+	hideEarlierReplies,
+	hideResolved as hideResolvedComments,
+	replyMarker,
+	unmarked,
+} from './replies.mjs';
 import { legend, parseCommand, quote } from './syntax.mjs';
 
 /** @import { Octokit, RepoState } from '../lib/app.mjs' */
@@ -361,11 +366,11 @@ async function finish({
 	}
 }
 
-/** @typedef {{ auth: ReturnType<typeof appAuth>, comment: Record<string, any>, issueNumber: number, reply: (bodies: string[], posted?: string[]) => Promise<void>, hideEarlier: (command: Run) => Promise<void>, finishOther: (commentId: number, ok: boolean) => Promise<void>, progress: { queued: boolean } }} PerformOptions */
+/** @typedef {{ auth: ReturnType<typeof appAuth>, comment: Record<string, any>, issueNumber: number, reply: (bodies: string[], posted?: string[]) => Promise<void>, hideEarlier: (command: Run) => Promise<void>, hideResolved: (repositories: string[]) => Promise<void>, finishOther: (commentId: number, ok: boolean) => Promise<void>, progress: { queued: boolean } }} PerformOptions */
 
 /**
- * Runs `/merge` (or `/dry-run merge`), and the parts of its reply.
- * @type {(options: PerformOptions, command: Extract<ReturnType<typeof parseCommand>, { type: 'merge' }>) => Promise<{ bodies: string[], ok: boolean }>}
+ * Runs `/merge` (or `/dry-run merge`): the parts of its reply, whether it went as asked, and the public repositories it merged the App's last open PR in (`resolved`).
+ * @type {(options: PerformOptions, command: Extract<ReturnType<typeof parseCommand>, { type: 'merge' }>) => Promise<{ bodies: string[], ok: boolean, resolved: string[] }>}
  */
 async function merge(
 	{
@@ -383,6 +388,8 @@ async function merge(
 		unread,
 		waiting,
 	} = await installed(auth);
+	/** @type {string[]} */
+	const resolved = [];
 	const {
 		rows,
 		details,
@@ -395,6 +402,7 @@ async function merge(
 			issueNumber,
 			finishOther,
 			progress,
+			resolved,
 		},
 		states,
 		filters,
@@ -411,6 +419,7 @@ async function merge(
 			waiting,
 		}),
 		ok,
+		resolved,
 	};
 }
 
@@ -424,6 +433,7 @@ async function perform(options) {
 		comment,
 		reply,
 		hideEarlier,
+		hideResolved,
 	} = options;
 	if (command.type === 'error') {
 		await reply(split(
@@ -438,7 +448,7 @@ async function perform(options) {
 		return false;
 	}
 
-	/** @type {{ bodies: string[], ok: boolean }} */
+	/** @type {{ bodies: string[], ok: boolean, resolved?: string[] }} */
 	let result;
 	if (command.type === 'merge') {
 		result = await merge(options, command);
@@ -468,6 +478,8 @@ async function perform(options) {
 	}
 	// only once the whole reply is posted, so that what it replaces is never hidden while any of it is missing
 	await hideEarlier(command);
+	// what's only about a repository whose last open PR of the App's it merged is resolved, but its own reply, which says so
+	await hideResolved(result.resolved ?? []);
 	return result.ok;
 }
 
@@ -496,7 +508,7 @@ async function main() {
 	const ours = [];
 	// a reply too long for one comment goes on in the next ones, in order; `posted` gets each one's link as it's posted, and `ours` its ID and author (the App's bot)
 	/** @type {(bodies: string[], posted?: string[]) => Promise<void>} */
-	const reply = async (bodies, posted = []) => {
+	async function reply(bodies, posted = []) {
 		await bodies.reduce(
 			async (previous, body) => {
 				await previous;
@@ -511,9 +523,9 @@ async function main() {
 			},
 			Promise.resolve(),
 		);
-	};
+	}
 	/** @type {(command: Run) => Promise<void>} */
-	const hideEarlier = async (replied) => {
+	async function hideEarlier(replied) {
 		await hideEarlierReplies({
 			octokit,
 			owner,
@@ -522,7 +534,18 @@ async function main() {
 			command: replied,
 			ours,
 		});
-	};
+	}
+	/** @type {(repositories: string[]) => Promise<void>} */
+	async function hideResolved(repositories) {
+		await hideResolvedComments({
+			octokit,
+			owner,
+			repo,
+			number: issue.number,
+			repositories,
+			ours,
+		});
+	}
 
 	const eyes = await authorize({
 		octokit,
@@ -535,14 +558,16 @@ async function main() {
 		return;
 	}
 	/** @type {(commentId: number, ok: boolean) => Promise<void>} */
-	const finishOther = async (commentId, ok) => finishQueued({
-		octokit,
-		owner,
-		repo,
-		commentId,
-		bot: await botLogin(auth),
-		ok,
-	});
+	async function finishOther(commentId, ok) {
+		return finishQueued({
+			octokit,
+			owner,
+			repo,
+			commentId,
+			bot: await botLogin(auth),
+			ok,
+		});
+	}
 	const progress = { queued: false };
 	let ok = false;
 	try {
@@ -553,6 +578,7 @@ async function main() {
 			issueNumber: issue.number,
 			reply,
 			hideEarlier,
+			hideResolved,
 			finishOther,
 			progress,
 		});

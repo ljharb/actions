@@ -7,6 +7,7 @@ import { hideable, minimizeEach } from '../lib/said.mjs';
 import { parseCommand } from './syntax.mjs';
 
 /** @import { Octokit } from '../lib/app.mjs' */
+/** @import { Classifier } from '../lib/said.mjs' */
 /** @import { Invocation, Verb } from './syntax.mjs' */
 /** @typedef {Invocation & { type: Verb }} Run */
 /**
@@ -92,54 +93,139 @@ export function supersedes(later, earlier) {
 }
 
 /**
+ * `author`'s comments, among `comments` (in the order they were posted), each with the parts that carry it on: those of `author`'s comments right after one that ends saying it's continued below (with none of `author`'s in between) that say which part they are, in order.
+ * A marked reply's later parts start with its marker (see `replyMarker`), so each is found on its own.
+ * @type {(comments: IssueComment[], author: string) => IssueComment[][]}
+ */
+function replyParts(comments, author) {
+	/** @type {IssueComment[][]} */
+	const replies = [];
+	/** @type {{ next: number, total: number } | null} */
+	let pending = null;
+	comments.filter((c) => c.user?.login?.toLowerCase() === author.toLowerCase()).forEach((c) => {
+		const body = c.body ?? '';
+		const continued = (/^_continued \((?<part>\d+)\/(?<total>\d+)\)_\n/).exec(body)?.groups;
+		if (pending && continued && Number(continued.part) === pending.next && Number(continued.total) === pending.total) {
+			replies[replies.length - 1].push(c);
+			pending = pending.next < pending.total ? { ...pending, next: pending.next + 1 } : null;
+		} else {
+			replies.push([c]);
+			const more = (/\n_continued below \(2\/(?<total>\d+)\)_$/).exec(body)?.groups;
+			pending = more ? { next: 2, total: Number(more.total) } : null;
+		}
+	});
+	return replies;
+}
+
+/** @type {(parts: IssueComment[]) => string[]} */
+function nodeIds(parts) {
+	return parts.flatMap((c) => (c.node_id ? [c.node_id] : []));
+}
+
+/**
+ * The node IDs of the parts of `author`'s replies, among `comments` (in the order they were posted), to a command that `matches` (see `replyParts`).
+ * @type {(comments: IssueComment[], author: string, matches: (earlier: Identity) => boolean) => string[]}
+ */
+function repliesMatching(comments, author, matches) {
+	return replyParts(comments, author).flatMap((parts) => {
+		const earlier = repliedTo(parts[0].body ?? '');
+		// a marked reply's every part is marked, so it's never carried on by an unmarked one
+		const reply = earlier?.marked ? parts.slice(0, 1) : parts;
+		return earlier && matches(earlier) ? nodeIds(reply) : [];
+	});
+}
+
+/**
+ * Which repository (`owner/name`, lowercased) a reply of the merge queue's is only about, as every row of its table, across all its `parts`, names it; or `null`, for any other comment, or one about more than one repository.
+ * @type {(parts: IssueComment[]) => string | null}
+ */
+export function queueReplyAbout(parts) {
+	if (!(parts[0].body ?? '').startsWith('The merge queue, as of [this run](')) {
+		return null;
+	}
+	const repositories = new Set(parts.flatMap((c) => Array.from(String(c.body).matchAll(/^\| `(?<repository>[^`|]+)` \|/gm), (m) => /** @type {{ repository: string }} */ (m.groups).repository.toLowerCase())));
+	return repositories.size === 1 ? Array.from(repositories)[0] : null;
+}
+
+/**
  * The node IDs of the parts of `author`'s replies, among `comments` (in the order they were posted), that a reply to `command` makes outdated (see `supersedes`).
- * An unmarked reply's later parts are those of `author`'s comments right after its first part (with none of `author`'s in between) that say which part they are, in order.
  * @type {(comments: IssueComment[], author: string, command: Run) => string[]}
  */
 export function earlierReplies(comments, author, command) {
 	const later = identify(command);
-	/** @type {{ outdated: boolean, next: number, total: number } | null} */
-	let pending = null;
-	/** @type {string[]} */
-	const ids = [];
-	comments.filter((c) => c.user?.login?.toLowerCase() === author.toLowerCase()).forEach((c) => {
-		const body = c.body ?? '';
-		const continued = (/^_continued \((?<part>\d+)\/(?<total>\d+)\)_\n/).exec(body)?.groups;
-		/** @type {boolean} */
-		let outdated;
-		if (pending && continued && Number(continued.part) === pending.next && Number(continued.total) === pending.total) {
-			({ outdated } = pending);
-			pending = pending.next < pending.total ? { ...pending, next: pending.next + 1 } : null;
-		} else {
-			const earlier = repliedTo(body);
-			outdated = !!earlier && supersedes(later, earlier);
-			const more = earlier && !earlier.marked && (/\n_continued below \(2\/(?<total>\d+)\)_$/).exec(body)?.groups;
-			pending = more ? {
-				outdated,
-				next: 2,
-				total: Number(more.total),
-			} : null;
-		}
-		if (outdated && c.node_id) {
-			ids.push(c.node_id);
-		}
-	});
-	return ids;
+	return repliesMatching(comments, author, (earlier) => supersedes(later, earlier));
 }
 
 /**
- * Once the App's bot has replied to `command` on issue `number`, in the comments `ours` (as GitHub created them, which says who the bot is), hides its earlier replies to the same command that this reply makes outdated (see `supersedes`), as `OUTDATED`; every part of each.
- * Only comments posted before this reply are looked at, so that a later one's reply (eg, a run that finished sooner) is never hidden; and nobody else's comments, nor those already hidden (or since deleted), are touched.
- * Returns how many it hid. Hiding is never worth failing the command over, so a failure only warns, without saying which command (that could name a private repository).
- * @type {(options: { octokit: Octokit, owner: string, repo: string, number: number, command: Run, ours: { id: number, author?: string }[] }) => Promise<number>}
+ * Whether `command` is only about `repository` (`owner/name`, lowercased): its filters name only that repository (and, if any, its account), so that whatever else they narrow it by, it selects nothing else.
+ * @type {(command: Run, repository: string) => boolean}
  */
-export async function hideEarlierReplies({
+export function onlyAbout({ filters: { repositories, accounts } }, repository) {
+	return repositories.size === 1
+		&& repositories.has(repository)
+		&& (accounts.size === 0 || (accounts.size === 1 && accounts.has(repository.split('/')[0])));
+}
+
+/**
+ * The node IDs of the comments, among `comments` (in the order they were posted), that are only about one of `repositories` (each `owner/name`, lowercased): the commands only about one of them (see `onlyAbout`), by anyone; every part of `author`'s replies to those; and every part of the merge queue's replies (by `author`) only about one of them (see `queueReplyAbout`).
+ * @type {(comments: IssueComment[], author: string, repositories: Set<string>) => string[]}
+ */
+export function aboutOnly(comments, author, repositories) {
+	/** @type {Identity[]} */
+	const commands = [];
+	/** @type {string[]} */
+	const ids = [];
+	comments.forEach((c) => {
+		const command = parseCommand(c.body ?? '');
+		if ((command.type === 'fix' || command.type === 'merge') && Array.from(repositories).some((r) => onlyAbout(command, r))) {
+			commands.push(identify(command));
+			if (c.node_id) {
+				ids.push(c.node_id);
+			}
+		}
+	});
+	const queued = replyParts(comments, author).flatMap((parts) => {
+		const about = queueReplyAbout(parts);
+		return about && repositories.has(about) ? nodeIds(parts) : [];
+	});
+	const hide = new Set(/** @type {string[]} */ ([]).concat(
+		ids,
+		repliesMatching(comments, author, (earlier) => commands.some((c) => c.verb === earlier.verb
+			&& c.dryRun === earlier.dryRun
+			&& c.digest === earlier.digest)),
+		queued,
+	));
+	return comments.flatMap((c) => (c.node_id && hide.has(c.node_id) ? [c.node_id] : []));
+}
+
+/**
+ * Once the App's bot has posted the comments `ours` on issue `number` (as GitHub created them, which says who the bot is), hides those of the comments before them that `pick` picks (by node ID), as `classifier`.
+ * Only comments posted before `ours` are looked at, so that a later one's (eg, a reply to a run that finished sooner) is never hidden; nor are those already hidden (or since deleted).
+ * Returns how many it hid. Hiding is never worth failing anything over, so a failure only warns (`unread`, when they couldn't be read, and `unhidden`, with how many couldn't be hidden), without saying which comments; `hid` is what's logged, with how many were hidden, when any were.
+ * @type {(options: {
+ *   octokit: Octokit,
+ *   owner: string,
+ *   repo: string,
+ *   number: number,
+ *   ours: { id: number, author?: string }[],
+ *   pick: (earlier: IssueComment[], author: string) => string[],
+ *   classifier: Classifier,
+ *   unread: string,
+ *   unhidden: (count: number) => string,
+ *   hid: (count: number) => string,
+ * }) => Promise<number>}
+ */
+async function hideBefore({
 	octokit,
 	owner,
 	repo,
 	number,
-	command,
 	ours,
+	pick,
+	classifier,
+	unread,
+	unhidden,
+	hid,
 }) {
 	const author = ours[0]?.author;
 	if (!author) {
@@ -162,25 +248,80 @@ export async function hideEarlierReplies({
 		});
 		const first = comments.findIndex((c) => own.has(c.id));
 		const earlier = (first === -1 ? comments : comments.slice(0, first)).filter((c) => !own.has(c.id));
-		ids = earlierReplies(earlier, author, command);
+		ids = pick(earlier, author);
 		if (ids.length > 0) {
 			const left = await hideable(octokit, ids);
 			ids = ids.filter((id) => left.has(id));
 		}
 	} catch (error) {
-		warn('could not read the App’s earlier replies to this command, to hide them as outdated', error);
+		warn(unread, error);
 		return 0;
 	}
-	const failures = await minimizeEach(octokit, ids.map((id) => ({
-		id,
-		classifier: /** @type {const} */ ('OUTDATED'),
-	})));
+	const failures = await minimizeEach(octokit, ids.map((id) => ({ id, classifier })));
 	if (failures.length > 0) {
-		warn(`could not hide ${failures.length} of the App’s earlier replies to this command as outdated`, failures[0]);
+		warn(unhidden(failures.length), failures[0]);
 	}
 	const hidden = ids.length - failures.length;
 	if (hidden > 0) {
-		core.info(`hid ${hidden} of the App’s earlier replies to this command as outdated`);
+		core.info(hid(hidden));
 	}
 	return hidden;
+}
+
+/**
+ * Once the App's bot has replied to `command` on issue `number`, in the comments `ours`, hides its earlier replies to the same command that this reply makes outdated (see `supersedes`), as `OUTDATED`; every part of each (see `hideBefore`).
+ * Nobody else's comments are touched; a failure only warns, without saying which command (that could name a private repository).
+ * @type {(options: { octokit: Octokit, owner: string, repo: string, number: number, command: Run, ours: { id: number, author?: string }[] }) => Promise<number>}
+ */
+export async function hideEarlierReplies({
+	octokit,
+	owner,
+	repo,
+	number,
+	command,
+	ours,
+}) {
+	return hideBefore({
+		octokit,
+		owner,
+		repo,
+		number,
+		ours,
+		pick: (earlier, author) => earlierReplies(earlier, author, command),
+		classifier: 'OUTDATED',
+		unread: 'could not read the App’s earlier replies to this command, to hide them as outdated',
+		unhidden: (count) => `could not hide ${count} of the App’s earlier replies to this command as outdated`,
+		hid: (count) => `hid ${count} of the App’s earlier replies to this command as outdated`,
+	});
+}
+
+/**
+ * Once the App's bot has posted the comments `ours` on issue `number`, saying that it merged the last of its open PRs in each of `repositories` (each `owner/name`, public), hides every comment before them that's only about one of those (see `aboutOnly`), as `RESOLVED`: there's nothing left there to fix or merge.
+ * A failure only warns, never naming a repository.
+ * @type {(options: { octokit: Octokit, owner: string, repo: string, number: number, repositories: string[], ours: { id: number, author?: string }[] }) => Promise<number>}
+ */
+export async function hideResolved({
+	octokit,
+	owner,
+	repo,
+	number,
+	repositories,
+	ours,
+}) {
+	if (repositories.length === 0) {
+		return 0;
+	}
+	const resolved = new Set(repositories.map((r) => r.toLowerCase()));
+	return hideBefore({
+		octokit,
+		owner,
+		repo,
+		number,
+		ours,
+		pick: (earlier, author) => aboutOnly(earlier, author, resolved),
+		classifier: 'RESOLVED',
+		unread: 'could not read the comments on the report, to hide those about a repository whose PRs the App has all merged as resolved',
+		unhidden: (count) => `could not hide ${count} of the comments about a repository whose PRs the App has all merged as resolved`,
+		hid: (count) => `hid ${count} ${count === 1 ? 'comment' : 'comments'} about a repository whose PRs the App has all merged as resolved`,
+	});
 }

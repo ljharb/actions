@@ -21,6 +21,7 @@ import {
 	fits,
 	maxQueueBytes,
 	messageOf,
+	noneLeft,
 	optionalNote,
 	queueOctokit,
 	readPermissions,
@@ -981,6 +982,53 @@ test('candidatePRs', async (t) => {
 
 	setup(t, { openPulls: { 'o/r': [{ ...pr(9, fixBranch), head: { ref: fixBranch, sha: 's9', repo: null } }] } });
 	t.deepEqual(await candidatePRs(octokit, { owner: 'o', name: 'r', repository: 'o/r' }, bot), [], 'not one whose head repository is gone');
+});
+
+test('noneLeft', async (t) => {
+	const bot = 'fleet-bot[bot]';
+	/** @type {(number: number, branch: string) => Record<string, unknown>} */
+	const pr = (number, branch) => ({
+		number,
+		head: { ref: branch, sha: `s${number}`, repo: { full_name: 'o/r', owner: { login: 'o' } } }, // eslint-disable-line camelcase
+		base: { ref: 'main' },
+		user: { login: bot },
+	});
+	const repo = {
+		owner: 'o',
+		name: 'r',
+		repository: 'o/r',
+		private: false,
+	};
+	setup(t, { openPulls: { 'o/r': [pr(3, fixBranch), pr(5, relockBranch)] } });
+	t.equal(await noneLeft(octokit, repo, { bot, merged: new Set([3, 5]) }), true, 'none left but those just merged, which GitHub can still list as open');
+	t.equal(await noneLeft(octokit, repo, { bot, merged: new Set([3]) }), false, 'one left that wasn’t');
+
+	/** @type {(isPrivate: boolean) => Promise<{ left: boolean, stdout: string }>} */
+	const failing = async (isPrivate) => {
+		const broken = /** @type {Octokit} */ (/** @type {unknown} */ ({
+			rest: { pulls: { list: () => [] } },
+			async paginate() {
+				throw Object.assign(new Error('Server Error: o/r'), { status: 502 });
+			},
+		}));
+		let stdout = '';
+		const { write } = process.stdout;
+		process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+			stdout += String(chunk);
+			return true;
+		});
+		try {
+			const left = await noneLeft(broken, { ...repo, private: isPrivate }, { bot, merged: new Set() });
+			return { left, stdout };
+		} finally {
+			process.stdout.write = write;
+		}
+	};
+	const pub = await failing(false);
+	t.equal(pub.left, false, 'a failure to list them is never none left');
+	t.equal(pub.stdout, '::warning::could not list the App’s open PRs in a repository it merged one in, to tell whether that was its last (HTTP 502)\n', 'and only warns, never saying where');
+	const priv = await failing(true);
+	t.deepEqual(priv, { left: false, stdout: '' }, 'for a private repository, not even that');
 });
 
 test('repoOctokit and queueOctokit', async (t) => {

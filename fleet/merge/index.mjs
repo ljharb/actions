@@ -1,5 +1,6 @@
 import * as core from '@actions/core';
 
+import { hideResolved } from '../commands/replies.mjs';
 import { appAuth, botLogin, parseAccounts } from '../lib/app.mjs';
 import { issueOctokit } from '../lib/issues.mjs';
 import { code, split } from '../lib/markdown.mjs';
@@ -9,9 +10,11 @@ import {
 	behindReason,
 	fastForward,
 	finishQueued,
+	hideSaidOnMerged,
 	installationFor,
 	maxQueueHours,
 	messageOf,
+	noneLeft,
 	optionalNote,
 	queueOctokit,
 	readPermissions,
@@ -23,13 +26,18 @@ import {
 } from '../lib/merge.mjs';
 import { maintain } from './maintain.mjs';
 
+/** @import { Octokit } from '../lib/app.mjs' */
 /** @import { Entry } from '../lib/merge.mjs' */
 /** @import { Unit } from '../lib/markdown.mjs' */
 /** @typedef {{ auth: ReturnType<typeof appAuth>, bot: () => Promise<string> }} App */
 /**
+ * The App, as one run of the queue has it: with what it's merged so far in each repository (by `owner/name`, lowercased).
+ * @typedef {App & { merged: Map<string, Set<number>> }} QueueRun
+ */
+/**
  * What checking one queued PR came to: kept, to check again next time, or dropped, with whether it was merged (`ok`), and what to say about it (`null`: nothing, since it's private, or can't be shown to be public), and what to list about it below the reply's table (`details`: see `assessmentDetails`), only when there's something to say about it.
- * `error` is whether it's a public failure that fails the run.
- * @typedef {{ entry: Entry, keep: boolean, ok: boolean, text: string | null, details: string[], error: boolean }} Result
+ * `error` is whether it's a public failure that fails the run; `resolved`, whether it was the last open PR of the App's in its public repository, and was merged.
+ * @typedef {{ entry: Entry, keep: boolean, ok: boolean, text: string | null, details: string[], error: boolean, resolved: boolean }} Result
  */
 
 const maxBodyLength = 60000; // GitHub's limit for a comment is 65536 characters
@@ -43,7 +51,7 @@ const runURL = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_
 
 const privateNote = 'Queued PRs in private repositories, if any, were also checked; nothing about them is shown here.';
 
-/** @type {(entry: Entry, outcome: { ok: boolean, text: string | null, details?: string[], error?: boolean }) => Result} */
+/** @type {(entry: Entry, outcome: { ok: boolean, text: string | null, details?: string[], error?: boolean, resolved?: boolean }) => Result} */
 function drop(
 	entry,
 	{
@@ -51,6 +59,7 @@ function drop(
 		text,
 		details = [],
 		error = false,
+		resolved = false,
 	},
 ) {
 	return {
@@ -60,6 +69,7 @@ function drop(
 		text,
 		details: text ? details : [],
 		error,
+		resolved,
 	};
 }
 
@@ -72,14 +82,56 @@ function keep(entry, error = false) {
 		text: null,
 		details: [],
 		error,
+		resolved: false,
 	};
 }
 
 /**
- * Checks one queued PR again, and merges it if it's ready; `visibility.shown` becomes whether it's public, once that's known.
- * @type {(app: App, entry: Entry, visibility: { shown: boolean }) => Promise<Result>}
+ * Once the App has merged the queued PR `entry` (whose repository `read` can read, with installation `installationId`), hides what it said on that PR as resolved (see `hideSaidOnMerged`); returns whether it was the App's last open PR in its repository (see `noneLeft`), which is only looked at for a public one (`shown`), since hiding what's on the report about a private one would confirm what happened in it.
+ * @type {(app: QueueRun, entry: Entry, merge: { read: Octokit, installationId: number, shown: boolean }) => Promise<boolean>}
  */
-async function recheck({ auth, bot }, entry, visibility) {
+async function afterMerge(
+	{
+		auth,
+		bot,
+		merged,
+	},
+	entry,
+	{
+		read,
+		installationId,
+		shown,
+	},
+) {
+	const [owner, name] = entry.repository.split('/');
+	const repository = entry.repository.toLowerCase();
+	const inRepository = merged.get(repository) ?? new Set();
+	merged.set(repository, inRepository.add(entry.number));
+	const where = {
+		installationId,
+		owner,
+		name,
+		repository: entry.repository,
+		private: !shown,
+	};
+	await hideSaidOnMerged(
+		auth,
+		where,
+		{
+			read,
+			number: entry.number,
+			bot: await bot(),
+		},
+	);
+	return shown && noneLeft(read, where, { bot: await bot(), merged: inRepository });
+}
+
+/**
+ * Checks one queued PR again, and merges it if it's ready; `visibility.shown` becomes whether it's public, once that's known.
+ * @type {(app: QueueRun, entry: Entry, visibility: { shown: boolean }) => Promise<Result>}
+ */
+async function recheck(app, entry, visibility) {
+	const { auth, bot } = app;
 	const [owner, name] = entry.repository.split('/');
 	const url = `${GITHUB_SERVER_URL}/${entry.repository}/pull/${entry.number}`;
 	const installationId = await installationFor(auth, owner, name);
@@ -96,12 +148,21 @@ async function recheck({ auth, bot }, entry, visibility) {
 	});
 	// a repository made private since is private now
 	visibility.shown &&= !pr.base.repo.private; // eslint-disable-line no-param-reassign
-	/** @type {(ok: boolean, text: string, options?: { error?: boolean, details?: string[] }) => Result} */
-	const done = (ok, text, { error, details } = {}) => drop(entry, {
+	/** @type {(ok: boolean, text: string, options?: { error?: boolean, details?: string[], resolved?: boolean }) => Result} */
+	const done = (
+		ok,
+		text,
+		{
+			error,
+			details,
+			resolved,
+		} = {},
+	) => drop(entry, {
 		ok,
 		text: visibility.shown ? text : null,
 		details,
 		error: error && visibility.shown,
+		resolved,
 	});
 	if (pr.state !== 'open') {
 		return pr.merged_at ? done(true, `already merged ${url}`) : done(false, `not merged ${url}: it was closed`);
@@ -139,12 +200,23 @@ async function recheck({ auth, bot }, entry, visibility) {
 	} catch (error) {
 		return done(false, `not merged ${url}: ${messageOf(error)}`, { error: true });
 	}
-	return done(true, `merged ${url}${optionalNote(assessment)}`, { details: assessmentDetails({ ...entry, url }, assessment) });
+	return done(
+		true,
+		`merged ${url}${optionalNote(assessment)}`,
+		{
+			details: assessmentDetails({ ...entry, url }, assessment),
+			resolved: await afterMerge(app, entry, {
+				read,
+				installationId,
+				shown: visibility.shown,
+			}),
+		},
+	);
 }
 
 /**
  * Checks one queued PR again: one that's gone (or that the App can no longer see) is dropped, and one that couldn't be checked for any other reason is kept, to check again next time.
- * @type {(app: App, accounts: Set<string>, entry: Entry) => Promise<Result>}
+ * @type {(app: QueueRun, accounts: Set<string>, entry: Entry) => Promise<Result>}
  */
 async function check(app, accounts, entry) {
 	// an account that's no longer allowed is never acted on, nor said anything about
@@ -243,18 +315,30 @@ async function report({ auth, bot }, dropped, { finished, failedCommands }) {
 	await Array.from(bodies).reduce(
 		async (previous, [issueNumber, parts]) => {
 			await previous;
+			/** @type {{ id: number, author?: string }[]} */
+			const ours = [];
 			await parts.reduce(
 				async (previousPart, body) => {
 					await previousPart;
-					await octokit.rest.issues.createComment({
+					const { data } = await octokit.rest.issues.createComment({
 						owner,
 						repo,
 						issue_number: issueNumber, // eslint-disable-line camelcase
 						body,
 					});
+					ours.push({ id: data.id, author: data.user?.login });
 				},
 				Promise.resolve(),
 			);
+			// only once the whole reply is posted, and never the reply itself, which says what was merged
+			await hideResolved({
+				octokit,
+				owner,
+				repo,
+				number: issueNumber,
+				repositories: dropped.filter((r) => r.resolved && r.entry.issueNumber === issueNumber).map((r) => r.entry.repository),
+				ours,
+			});
 		},
 		Promise.resolve(),
 	);
@@ -290,11 +374,13 @@ async function runQueue(app, accounts) {
 
 	/** @type {Map<Entry, Result>} */
 	const results = new Map();
+	/** @type {QueueRun} */
+	const run = { ...app, merged: new Map() };
 	// one at a time, private repositories last, as the commands do
 	await entries.filter((e) => !e.private).concat(entries.filter((e) => e.private)).reduce(
 		async (previous, entry) => {
 			await previous;
-			results.set(entry, await check(app, accounts, entry));
+			results.set(entry, await check(run, accounts, entry));
 		},
 		Promise.resolve(),
 	);

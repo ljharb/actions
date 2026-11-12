@@ -3,6 +3,9 @@ import path from 'path';
 import test from 'tape';
 
 import { fixBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
+import { replyMarker } from '../../../fleet/commands/replies.mjs';
+import { parseCommand } from '../../../fleet/commands/syntax.mjs';
+import { marker as saidMarker } from '../../../fleet/lib/said.mjs';
 import { botEmail, prCommit } from '../commands/helpers/merge.mjs';
 import {
 	bot,
@@ -478,5 +481,86 @@ test('fleet/merge: only the App’s bot’s own commits are merged, once every c
 	t.notOk(stdout.includes('secret'), 'never mentioning the private one');
 	t.deepEqual(reactions(requests, 66), [], 'its command keeps its 👀, with a PR still queued');
 	t.equal(matching(requests, 'GET', /^\/app$/).length, 1, 'looking up the bot once');
+	t.end();
+});
+
+test('fleet/merge: merging the App’s last open PR in a repository hides, as resolved, what’s only about it', (t) => {
+	/** @type {(id: number, body: string, login?: string) => Record<string, unknown>} */
+	const listed = (id, body, login = bot) => ({
+		id,
+		node_id: `IC_${id}`, // eslint-disable-line camelcase
+		body,
+		user: { login },
+	});
+	const mergeD = parseCommand('/merge ljharb/d');
+	if (mergeD.type !== 'merge') {
+		throw new TypeError('not a command');
+	}
+	const issue = /** @type {Record<string, unknown>[]} */ ([]).concat(
+		listed(50, mergeD.line, 'maintainer'),
+		listed(51, `${replyMarker(mergeD)}\n\`${mergeD.line}\` (…):`),
+		listed(52, '/merge ljharb/e', 'maintainer'),
+		listed(53, '/merge ljharb/f', 'maintainer'),
+		listed(54, '/merge ljharb/secret', 'maintainer'),
+		listed(55, '/merge ljharb/d ljharb/e', 'maintainer'),
+	);
+	const {
+		status,
+		stdout,
+		requests,
+	} = runScript(t, script, {
+		merge: {
+			queue: queue(
+				entry('ljharb/d', 1),
+				entry('ljharb/e', 1),
+				entry('ljharb/f', 1),
+				entry('ljharb/f', 2),
+				entry('ljharb/secret', 1, { isPrivate: true }),
+			),
+			prs: {
+				'ljharb/d#1': pr('ljharb/d', 1, fixBranch),
+				'ljharb/e#1': pr('ljharb/e', 1, fixBranch),
+				'ljharb/f#1': pr('ljharb/f', 1, fixBranch),
+				'ljharb/f#2': pr('ljharb/f', 2, relockBranch),
+				'ljharb/secret#1': { ...pr('ljharb/secret', 1, fixBranch), base: { ref: 'main', repo: { private: true } } },
+			},
+			// as GitHub can still list a PR just merged as open
+			openPulls: {
+				'ljharb/d': [pr('ljharb/d', 1, fixBranch)],
+				'ljharb/e': [pr('ljharb/e', 1, fixBranch), pr('ljharb/e', 2, relockBranch)],
+				'ljharb/f': [pr('ljharb/f', 1, fixBranch), pr('ljharb/f', 2, relockBranch)],
+				'ljharb/secret': [],
+			},
+			ci: {
+				'd-1': passing,
+				'e-1': passing,
+				'f-1': passing,
+				'f-2': passing,
+				'secret-1': passing,
+			},
+		},
+		commands: {
+			comments: {
+				'ljharb/actions#9': issue,
+				'ljharb/d#1': [listed(1, `${saidMarker('stuck', 'abc0')}\nneeds a person`)],
+				'ljharb/secret#1': [listed(2, `${saidMarker('stuck', 'abc0')}\nneeds a person`)],
+			},
+		},
+	});
+	t.equal(status, 0, 'exits successfully');
+	t.equal(matching(requests, 'PATCH', /\/git\/refs\//).length, 5, 'merging each');
+	t.deepEqual(
+		matching(requests, 'POST', /^\/graphql$/).filter((r) => r.body.variables.classifier).map((r) => [r.body.variables.id, r.body.variables.classifier]),
+		[
+			['IC_1', 'RESOLVED'],
+			['IC_2', 'RESOLVED'],
+			['IC_50', 'RESOLVED'],
+			['IC_51', 'RESOLVED'],
+			['IC_53', 'RESOLVED'],
+		],
+		'hiding what the App said on each PR it merged, then, once it’s replied, on the report, what’s only about a public repository it merged its last open PR in; never about one with an open PR left, a private one, or more than one',
+	);
+	t.match(stdout, /^hid 3 comments about a repository whose PRs the App has all merged as resolved$/m, 'logging only how many');
+	t.notOk(stdout.includes('secret'), 'never naming the private one');
 	t.end();
 });

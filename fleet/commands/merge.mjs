@@ -10,6 +10,7 @@ import {
 	entryKey,
 	fastForward,
 	fits,
+	hideSaidOnMerged,
 	messageOf,
 	optionalNote,
 	queueOctokit,
@@ -25,6 +26,7 @@ import {
 /** @import { Filters } from './syntax.mjs' */
 /**
  * `progress.queued` becomes whether the queue holds a public PR this command queued as soon as the queue is written, so that even if what follows (eg, replying) fails, the command's 👀 stays until the queue resolves that PR.
+ * `resolved`, if given, gets each public repository that every open PR of the App's in was merged.
  * @typedef {{
  *   auth: ReturnType<typeof appAuth>,
  *   dryRun: boolean,
@@ -32,11 +34,12 @@ import {
  *   issueNumber: number,
  *   finishOther: (commentId: number, ok: boolean) => Promise<void>,
  *   progress: { queued: boolean },
+ *   resolved?: string[],
  * }} MergeContext
  */
 /**
- * What happened to one PR: `ok` is whether it went as asked (merged, or queued, or, in a dry run, anything that isn't an error); `entry`, a PR to queue; `details`, what the reply lists about it below its table (see `assessmentDetails`).
- * @typedef {{ text: string, ok: boolean, error?: boolean, key?: string, url?: string, entry?: Entry, details?: string[] }} Outcome
+ * What happened to one PR: `ok` is whether it went as asked (merged, or queued, or, in a dry run, anything that isn't an error); `merged`, whether it was merged; `entry`, a PR to queue; `details`, what the reply lists about it below its table (see `assessmentDetails`).
+ * @typedef {{ text: string, ok: boolean, merged?: boolean, error?: boolean, key?: string, url?: string, entry?: Entry, details?: string[] }} Outcome
  */
 /** @typedef {{ state: RepoState, named: boolean, outcomes: Outcome[] }} Row */
 
@@ -137,9 +140,19 @@ async function mergePR(
 			error: true,
 		};
 	}
+	await hideSaidOnMerged(
+		context.auth,
+		state,
+		{
+			read,
+			number: pr.number,
+			bot,
+		},
+	);
 	return {
 		text: `merged ${url}${optionalNote(assessment)}`,
 		ok: true,
+		merged: true,
 		details,
 	};
 }
@@ -251,7 +264,7 @@ async function enqueue(context, resolved, wanted) {
 }
 
 /**
- * Runs `/merge` (or `/dry-run merge`), failing the run if any public repository failed, or the queue can't be used: the rows of its reply, what it lists below them (`details`: see `assessmentDetails`), and whether it went as asked; whether it queued a public PR is in `context.progress`.
+ * Runs `/merge` (or `/dry-run merge`), failing the run if any public repository failed, or the queue can't be used: the rows of its reply, what it lists below them (`details`: see `assessmentDetails`), and whether it went as asked; whether it queued a public PR is in `context.progress`, and the public repositories it merged every open PR of the App's in are added to `context.resolved`.
  * Whether any private repository matched, or was queued, never shows in any of them.
  * @type {(context: MergeContext, states: RepoState[], filters: Pick<Filters, 'repositories' | 'accounts'>) => Promise<{ rows: string[], details: string[], ok: boolean }>}
  */
@@ -317,6 +330,10 @@ export async function runMerge(context, states, { repositories, accounts }) {
 	const publicSettled = settledRows.filter((r) => !r.state.private).flatMap((r) => r.outcomes);
 
 	const shown = settledRows.filter((r) => !r.state.private && (r.outcomes.length > 0 || r.named));
+	const { resolved = [] } = context;
+	rows.filter((r) => !r.state.private && r.outcomes.length > 0 && r.outcomes.every((o) => o.merged)).forEach((r) => {
+		resolved.push(r.state.repository);
+	});
 	return {
 		rows: shown.map((r) => `| ${code(r.state.repository)} | ${r.outcomes.length > 0 ? r.outcomes.map((o) => o.text).join('<br>') : 'nothing to merge'} |`),
 		details: shown.flatMap((r) => r.outcomes.flatMap((o) => o.details ?? [])),
