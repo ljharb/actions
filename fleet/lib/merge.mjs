@@ -5,6 +5,7 @@ import {
 	failureMessage,
 	installationToken,
 	octokitFor,
+	tokenHelp,
 } from './app.mjs';
 import { botBranches } from './branches.mjs';
 import { ciStatus } from './ci.mjs';
@@ -104,7 +105,7 @@ export async function repoOctokit(
 	try {
 		token = await installationToken(auth, installationId, { repositoryNames: [name], permissions });
 	} catch (error) {
-		throw new Error(`the fleet GitHub App could not get a token for it${httpStatus(error)}: the App needs the ${describePermissions(permissions)} repository permissions, approved by its installation`);
+		throw new Error(`the fleet GitHub App could not get a token for it${httpStatus(error)}: ${tokenHelp(error, `the App needs the ${describePermissions(permissions)} repository permissions, approved by its installation`)}`);
 	}
 	core.setSecret(token);
 	return octokitFor(token, isPrivate);
@@ -356,7 +357,7 @@ export async function queueOctokit(auth, owner, repo) {
 			permissions: { actions_variables: 'write' }, // eslint-disable-line camelcase
 		});
 	} catch (error) {
-		throw new Error(`the fleet GitHub App could not get a token to read and write Actions variables in \`${owner}/${repo}\`${httpStatus(error)}: the App needs the “Variables: Read and write” repository permission, for the merge queue (the \`${queueVariable}\` variable), and must be installed on \`${owner}/${repo}\`. After that permission is added to the App, its installation on \`${owner}\` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.`);
+		throw new Error(`the fleet GitHub App could not get a token to read and write Actions variables in \`${owner}/${repo}\`${httpStatus(error)}: ${tokenHelp(error, `the App needs the “Variables: Read and write” repository permission, for the merge queue (the \`${queueVariable}\` variable), and must be installed on \`${owner}/${repo}\`. After that permission is added to the App, its installation on \`${owner}\` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.`)}`);
 	}
 	core.setSecret(token);
 	return octokitFor(token, false);

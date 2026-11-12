@@ -4,6 +4,7 @@ import {
 	appOctokit,
 	installationToken,
 	octokitFor,
+	tokenHelp,
 } from './app.mjs';
 
 /** @import { Octokit, appAuth } from './app.mjs' */
@@ -31,7 +32,7 @@ export async function issueOctokit(auth, owner, repo) {
 			permissions: { issues: 'write', metadata: 'read' },
 		});
 	} catch (error) {
-		throw new Error(`the fleet GitHub App could not get a token to write issues in \`${owner}/${repo}\`${status(error)}: the App needs the “Issues: Read and write” repository permission, and must be installed on \`${owner}/${repo}\`. After that permission is added to the App, its installation on \`${owner}\` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.`);
+		throw new Error(`the fleet GitHub App could not get a token to write issues in \`${owner}/${repo}\`${status(error)}: ${tokenHelp(error, `the App needs the “Issues: Read and write” repository permission, and must be installed on \`${owner}/${repo}\`. After that permission is added to the App, its installation on \`${owner}\` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.`)}`);
 	}
 	core.setSecret(token);
 	return octokitFor(token, false);

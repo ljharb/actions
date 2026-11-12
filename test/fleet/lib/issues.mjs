@@ -30,7 +30,7 @@ async function captureMasks(fn) {
 	/** @type {string[]} */
 	const masks = [];
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk, /** @type {any[]} */ ...rest) { // eslint-disable-line no-extra-parens
+	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk, /** @type {any[]} */ ...rest) {
 		const match = String(chunk).match(/^::add-mask::(?<value>.*)$/m);
 		if (match?.groups) {
 			masks.push(match.groups.value);
@@ -66,7 +66,7 @@ test('issueOctokit', async (t) => {
 	const failures = [
 		['without the Issues permission', { deniedPermissions: ['issues'] }, ' (HTTP 422)'],
 		['not installed on the repository', { repoInstallations: { 'o/r': { status: 404 } } }, ' (HTTP 404)'],
-		['an error without an HTTP status', { repoInstallations: { 'o/r': /** @type {any} */ ('not an id') } }, ''], // eslint-disable-line no-extra-parens
+		['an error without an HTTP status', { repoInstallations: { 'o/r': /** @type {any} */ ('not an id') } }, ''],
 	];
 	failures.forEach(([label, scenario, status]) => {
 		t.test(label, async (st) => {
@@ -80,6 +80,23 @@ test('issueOctokit', async (t) => {
 	});
 
 	t.end();
+});
+
+test('issueOctokit: GitHub failing to make a token isn’t blamed on the App’s permissions', async (t) => {
+	/** @type {(status: number) => ReturnType<typeof appAuth>} */
+	function failing(status) {
+		return /** @type {ReturnType<typeof appAuth>} */ (/** @type {unknown} */ (async () => {
+			throw Object.assign(new Error('Server Error'), { status });
+		}));
+	}
+	await issueOctokit(failing(500), 'o', 'r').then(
+		() => t.fail('should reject'),
+		(e) => t.equal(e.message, 'the fleet GitHub App could not get a token to write issues in `o/r` (HTTP 500): GitHub failed to make one, even when asked again, which isn’t about the App’s permissions: try again later', 'a server error says GitHub failed'),
+	);
+	await issueOctokit(failing(403), 'o', 'r').then(
+		() => t.fail('should reject'),
+		(e) => t.equal(e.message, `the fleet GitHub App could not get a token to write issues in \`o/r\` (HTTP 403): ${help}`, 'a client error still says what the App needs'),
+	);
 });
 
 test('isReportAuthor', (t) => {

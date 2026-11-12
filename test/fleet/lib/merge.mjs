@@ -1130,6 +1130,19 @@ test('repoOctokit and queueOctokit', async (t) => {
 	});
 });
 
+test('repoOctokit and queueOctokit: GitHub failing to make a token isn’t blamed on the App’s permissions', async (t) => {
+	const failing = /** @type {ReturnType<typeof appAuth>} */ (/** @type {unknown} */ (async () => {
+		throw Object.assign(new Error('Server Error'), { status: 502 });
+	}));
+	const failed = 'GitHub failed to make one, even when asked again, which isn’t about the App’s permissions: try again later';
+	await repoOctokit(failing, { installationId: 3, name: 'r', private: false }, readPermissions).then(() => t.fail('should have thrown'), (error) => {
+		t.equal(messageOf(error), `the fleet GitHub App could not get a token for it (HTTP 502): ${failed}`, 'for a repository');
+	});
+	await queueOctokit(failing, 'o', 'actions').then(() => t.fail('should have thrown'), (error) => {
+		t.equal(messageOf(error), `the fleet GitHub App could not get a token to read and write Actions variables in \`o/actions\` (HTTP 502): ${failed}`, 'for the queue');
+	});
+});
+
 test('readQueue and writeQueue', async (t) => {
 	const entry = {
 		repository: 'o/r',

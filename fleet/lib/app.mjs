@@ -112,6 +112,19 @@ export function failureMessage(error) {
 	return `could not be read${details.length > 0 ? ` (${details.join(', ')})` : ''}`;
 }
 
+/**
+ * What to do about a failure to get an installation token: GitHub refusing one (eg, with an HTTP 422, for a permission the installation hasn't approved, or a 404, where the App isn't installed) is fixed as `help` says; but GitHub failing to make one (HTTP 5xx, still, once retried: see `retry`) is GitHub's own failure, which says nothing about the App's permissions, so asking again later can work.
+ * @type {(error: unknown, help: string) => string}
+ */
+export function tokenHelp(error, help) {
+	const status = error && typeof error === 'object' && 'status' in error
+		? error.status
+		: null;
+	return typeof status === 'number' && status >= 500
+		? 'GitHub failed to make one, even when asked again, which isn’t about the App’s permissions: try again later'
+		: help;
+}
+
 /** @type {(appId: string, privateKey: string) => ReturnType<typeof createAppAuth>} */
 export function appAuth(appId, privateKey) {
 	// installation tokens are asked for with requests retried like any other (see `retry`); an Octokit without a token leaves the App's own authorization to `createAppAuth`, and its requests' log is `console`, as `createAppAuth`'s own would be, since they name only an installation
@@ -131,7 +144,8 @@ export async function appOctokit(auth, quiet = false) {
 // the login of the App's bot user, which is what an installation token acts as
 /** @type {(auth: ReturnType<typeof createAppAuth>, quiet?: boolean) => Promise<string>} */
 export async function botLogin(auth, quiet = false) {
-	const { data: app } = await (await appOctokit(auth, quiet)).rest.apps.getAuthenticated();
+	const kit = await appOctokit(auth, quiet);
+	const { data: app } = await kit.rest.apps.getAuthenticated();
 	if (!app?.slug) {
 		throw new Error('could not determine the GitHub App’s slug');
 	}
