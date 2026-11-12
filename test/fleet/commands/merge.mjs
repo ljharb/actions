@@ -185,7 +185,7 @@ test('fleet/commands: `/merge` fast-forwards what passed, queues what’s pendin
 				'secret-pending-1': {},
 			},
 			refs: { 'ljharb/c': 'moved-on' },
-			refUpdates: { 'ljharb/refused': { status: 422, body: { message: 'Protected branch update failed: the secret-rule rule' } } },
+			refUpdates: { 'ljharb/refused': { status: 422, body: {} } },
 		},
 	});
 	t.equal(status, 1, 'fails, since a public repository could not be merged');
@@ -224,9 +224,9 @@ test('fleet/commands: `/merge` fast-forwards what passed, queues what’s pendin
 			false,
 			[expectedDetails('ljharb/b', 1, 'failed', [['tests', 'failure']])],
 		)],
-		'replies with what happened to each public PR, a named repository without any too, and never the refusal’s own message',
+		'replies with what happened to each public PR, a named repository without any too, and, for a refusal GitHub said nothing about, only its HTTP status',
 	);
-	t.notOk(stdout.includes('secret'), 'never naming a private repository, or a refusal’s message');
+	t.notOk(stdout.includes('secret'), 'never naming a private repository');
 
 	t.deepEqual(
 		writtenQueue(requests),

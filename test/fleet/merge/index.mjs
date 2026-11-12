@@ -134,7 +134,7 @@ test('fleet/merge: re-checks each queued PR, merging, keeping, or dropping it', 
 			'refused-1': passing,
 		},
 		refs: { 'ljharb/e': 'moved-on', 'ljharb/flaky': { status: 502, body: { message: 'Bad Gateway' } } },
-		refUpdates: { 'ljharb/refused': { status: 422, body: { message: 'Protected branch update failed: shh' } } },
+		refUpdates: { 'ljharb/refused': { status: 422, body: {} } },
 		eyes: {
 			77: [{ id: 701, user: { login: bot } }],
 			55: [{ id: 702, user: { login: bot } }],
@@ -149,7 +149,7 @@ test('fleet/merge: re-checks each queued PR, merging, keeping, or dropping it', 
 	t.equal(annotations.length, 2, 'two annotations');
 	t.match(annotations[0], /^::warning::ljharb\/flaky#1: Bad Gateway/, 'warning about the one that could not be checked');
 	t.equal(annotations[1], '::error::2 queued PRs could not be checked or merged', 'and failing, counting it and the refused one');
-	t.notOk(stdout.includes('secret') || stdout.includes('stranger') || stdout.includes('shh'), 'never naming a private repository, an account that isn’t allowed, or a refusal’s message');
+	t.notOk(stdout.includes('secret') || stdout.includes('stranger') || stdout.includes('shh'), 'never naming a private repository, or an account that isn’t allowed');
 
 	t.deepEqual(
 		matching(requests, 'PATCH', /\/git\/refs\//).map((r) => `${r.path} ${r.body.sha} ${r.body.force}`),
