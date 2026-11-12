@@ -196,7 +196,7 @@ async function recheck(app, entry, visibility) {
 	}
 	const write = await repoOctokit(auth, repo, writePermissions);
 	try {
-		await fastForward(write, target);
+		await fastForward(write, target, { private: !visibility.shown });
 	} catch (error) {
 		return done(false, `not merged ${url}: ${messageOf(error)}`, { error: true });
 	}

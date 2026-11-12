@@ -312,6 +312,58 @@ test('fleet/merge: a public PR whose repository became private is no longer show
 	t.end();
 });
 
+test('fleet/merge: says which rule refused merging a public repository’s queued PR', (t) => {
+	const classic = { status: 422, body: { message: 'Protected branch update failed for refs/heads/main.\n\nAt least 1 approving review is required by reviewers with write access.', documentation_url: 'https://docs.github.com/rest/git/refs#update-a-reference' } }; // eslint-disable-line camelcase
+	/** @type {(message: string) => typeof classic} */
+	const secretly = (message) => ({ ...classic, body: { ...classic.body, message } });
+	const {
+		status,
+		stdout,
+		requests,
+		summary,
+	} = run(t, {
+		queue: queue(
+			entry('ljharb/classic', 1),
+			entry('ljharb/ruleset', 1),
+			entry('ljharb/secret', 1, { isPrivate: true }),
+			entry('ljharb/now-secret', 1),
+		),
+		prs: {
+			'ljharb/classic#1': pr('ljharb/classic', 1, fixBranch),
+			'ljharb/ruleset#1': pr('ljharb/ruleset', 1, fixBranch),
+			'ljharb/secret#1': { ...pr('ljharb/secret', 1, fixBranch), base: { ref: 'main', repo: { private: true } } },
+			'ljharb/now-secret#1': { ...pr('ljharb/now-secret', 1, fixBranch), base: { ref: 'main', repo: { private: true } } },
+		},
+		ci: {
+			'classic-1': passing,
+			'ruleset-1': passing,
+			'secret-1': passing,
+			'now-secret-1': passing,
+		},
+		refUpdates: {
+			'ljharb/classic': classic,
+			'ljharb/ruleset': { status: 422, body: { message: 'Repository rule violations found\n\nChanges must be made through a pull request.\n\nRequired status check "tests" is expected.\n\n' } },
+			'ljharb/secret': secretly('Protected branch update failed for refs/heads/main.\n\nCommits must have verified signatures.'),
+			'ljharb/now-secret': secretly('Repository rule violations found\n\nCannot update this protected ref.\n\n'),
+		},
+	});
+	t.equal(status, 1, 'fails, since a public PR could not be merged');
+	t.match(stdout, /^::error::2 queued PRs could not be checked or merged$/m, 'counting only the public ones');
+	t.equal(matching(requests, 'PATCH', /\/git\/refs\//).length, 4, 'trying to fast-forward each');
+	const fix = 'merge it yourself, or let the fleet GitHub App bypass that rule where GitHub allows that (eg, with a ruleset’s bypass list, or classic branch protection’s “Allow specified actors to bypass required pull requests”)';
+	const body = expectedReply([
+		`| \`ljharb/classic\` | not merged https://github.com/ljharb/classic/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422): \`Protected branch update failed for refs/heads/main. At least 1 approving review is required by reviewers with write access.\`; ${fix} ${row(77)} |`,
+		`| \`ljharb/ruleset\` | not merged https://github.com/ljharb/ruleset/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422): \`Repository rule violations found Changes must be made through a pull request. Required status check "tests" is expected.\`; ${fix} ${row(77)} |`,
+	]);
+	t.deepEqual(replies(requests), [body], 'quoting what GitHub said refusing each public one, which names the rule, and how to fix it');
+	t.equal(summary, body, 'which is also the run summary');
+	t.notOk(
+		[stdout].concat(replies(requests)).some((text) => (/secret|verified signatures|Cannot update/).test(text)),
+		'never naming a private repository (nor one made private since it was queued), nor saying what refused it',
+	);
+	t.end();
+});
+
 test('fleet/merge: a resolved PR whose command has another still queued', (t) => {
 	const { status, stdout, requests } = run(t, {
 		queue: queue(entry('ljharb/refused', 1), entry('ljharb/c', 1)),

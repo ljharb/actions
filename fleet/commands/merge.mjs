@@ -132,7 +132,7 @@ async function mergePR(
 	}
 	const octokit = await write();
 	try {
-		await fastForward(octokit, target);
+		await fastForward(octokit, target, state);
 	} catch (error) {
 		return {
 			text: `not merged ${url}: ${messageOf(error)}`,

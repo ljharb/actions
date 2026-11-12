@@ -228,9 +228,21 @@ export function assessmentDetails(pr, { failures = [], optional = [] }) {
 }
 
 /**
+ * What GitHub said refusing a request: its response body's `message` (not the error's own message, which appends a link to GitHub's docs), unless it said nothing.
+ * @type {(error: unknown) => string | undefined}
+ */
+function refusalOf(error) {
+	const message = /** @type {{ response?: { data?: { message?: unknown } } } | null | undefined} */ (error)?.response?.data?.message;
+	return typeof message === 'string' && message.trim() !== '' ? message.trim() : void undefined;
+}
+
+// how GitHub’s refusal starts when a classic branch protection rule refused it, or a ruleset did: the only refusals that letting the App bypass a rule can fix, where GitHub allows that (a ruleset’s bypass list bypasses any of its rules, but classic branch protection’s only bypass list is for its required pull requests, besides its allowlist of who can push)
+const ruleRefusal = /^(?:Protected branch update failed|Repository rule violations found)/;
+
+/**
  * Fast-forwards `base` to `head`, which GitHub then marks the PR as merged by; never forced, so it's refused if `base` has moved on since.
- * A refusal's message (eg, from branch protection) can name what refused it, so only its HTTP status is kept.
- * @type {(octokit: Octokit, target: Target) => Promise<void>}
+ * A refusal's message (eg, from branch protection) names what refused it, which for a private repository is private: so for one (as a repository not said to be public is taken to be), only its HTTP status is kept. For a public one, GitHub's message is quoted, inert (see `code`), so that it says exactly which rule refused it (the App can't read classic branch protection itself: that needs the Administration permission), with how to fix that when it's a rule; without one, it's as for a private one.
+ * @type {(octokit: Octokit, target: Target, repo?: { private?: boolean }) => Promise<void>}
  */
 export async function fastForward(
 	octokit,
@@ -240,6 +252,7 @@ export async function fastForward(
 		base,
 		head,
 	},
+	{ private: isPrivate = true } = {},
 ) {
 	try {
 		await octokit.rest.git.updateRef({
@@ -250,7 +263,13 @@ export async function fastForward(
 			force: false,
 		});
 	} catch (error) {
-		throw new Error(`GitHub refused to fast-forward ${code(base)} to it${httpStatus(error)}, eg because of a branch protection rule`);
+		const refused = `GitHub refused to fast-forward ${code(base)} to it${httpStatus(error)}`;
+		const refusal = isPrivate ? void undefined : refusalOf(error);
+		if (typeof refusal === 'string') {
+			const fix = ruleRefusal.test(refusal) ? '; merge it yourself, or let the fleet GitHub App bypass that rule where GitHub allows that (eg, with a ruleset’s bypass list, or classic branch protection’s “Allow specified actors to bypass required pull requests”)' : '';
+			throw new Error(`${refused}: ${code(refusal)}${fix}`);
+		}
+		throw new Error(`${refused}, eg because of a branch protection rule`);
 	}
 }
 

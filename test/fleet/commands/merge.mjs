@@ -251,6 +251,43 @@ test('fleet/commands: `/merge` fast-forwards what passed, queues what’s pendin
 	t.end();
 });
 
+test('fleet/commands: `/merge` says which rule refused merging a public repository’s PR', (t) => {
+	const names = ['classic', 'ruleset', 'secret'];
+	const classic = { status: 422, body: { message: 'Protected branch update failed for refs/heads/main.\n\nAt least 1 approving review is required by reviewers with write access.', documentation_url: 'https://docs.github.com/rest/git/refs#update-a-reference' } }; // eslint-disable-line camelcase
+	const line = `/merge ${names.map((n) => `ljharb/${n}`).join(' ')}`;
+	const { status, stdout, requests } = command(t, line, {
+		github: github(['classic', 'ruleset'], ['secret']),
+		merge: {
+			openPulls: Object.fromEntries(names.map((n) => [`ljharb/${n}`, [pr(`ljharb/${n}`, 1, fixBranch)]])),
+			ci: Object.fromEntries(names.map((n) => [`${n}-1`, passing])),
+			refUpdates: {
+				'ljharb/classic': classic,
+				'ljharb/ruleset': { status: 422, body: { message: 'Repository rule violations found\n\nChanges must be made through a pull request.\n\n' } },
+				'ljharb/secret': { ...classic, body: { ...classic.body, message: 'Protected branch update failed for refs/heads/main.\n\nCommits must have verified signatures.' } },
+			},
+		},
+	});
+	t.equal(status, 1, 'fails, since a public repository could not be merged');
+	t.deepEqual(annotations(stdout), ['::error::2 repositories could not be merged'], 'counting only the public ones');
+	t.equal(refUpdates(requests).length, 3, 'trying to fast-forward each');
+	const fix = 'merge it yourself, or let the fleet GitHub App bypass that rule where GitHub allows that (eg, with a ruleset’s bypass list, or classic branch protection’s “Allow specified actors to bypass required pull requests”)';
+	t.deepEqual(
+		replies(requests),
+		[expectedReply(
+			line,
+			[
+				`| \`ljharb/classic\` | not merged https://github.com/ljharb/classic/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422): \`Protected branch update failed for refs/heads/main. At least 1 approving review is required by reviewers with write access.\`; ${fix} |`,
+				`| \`ljharb/ruleset\` | not merged https://github.com/ljharb/ruleset/pull/1: GitHub refused to fast-forward \`main\` to it (HTTP 422): \`Repository rule violations found Changes must be made through a pull request.\`; ${fix} |`,
+			],
+			false,
+		)],
+		'quoting what GitHub said refusing each public one, which names the rule, and how to fix it',
+	);
+	t.notOk(stdout.includes('secret') || stdout.includes('verified signatures'), 'never naming a private repository, nor saying what refused it');
+	t.notOk(replies(requests).some((reply) => reply.includes('verified signatures')), 'not even in the reply');
+	t.end();
+});
+
 test('fleet/commands: `/merge` that resolves everything at once swaps its 👀', (t) => {
 	const merged = command(t, '/merge ljharb/a', { merge: { openPulls: { 'ljharb/a': [pr('ljharb/a', 1, fixBranch)] }, ci: { 'a-1': passing } } });
 	t.equal(merged.status, 0, 'exits successfully');

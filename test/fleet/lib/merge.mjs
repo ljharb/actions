@@ -955,6 +955,70 @@ test('fastForward', async (t) => {
 	});
 });
 
+test('fastForward: what GitHub said refusing it', async (t) => {
+	const target = {
+		owner: 'o',
+		name: 'r',
+		number: 1,
+		base: 'master',
+		head: 'h1',
+	};
+	const documentation = 'https://docs.github.com/rest/git/refs#update-a-reference';
+	const fix = '; merge it yourself, or let the fleet GitHub App bypass that rule where GitHub allows that (eg, with a ruleset’s bypass list, or classic branch protection’s “Allow specified actors to bypass required pull requests”)';
+	const fallback = 'GitHub refused to fast-forward `master` to it (HTTP 422), eg because of a branch protection rule';
+	const classic = {
+		message: 'Protected branch update failed for refs/heads/master.\n\nAt least 1 approving review is required by reviewers with write access.',
+		documentation_url: documentation, // eslint-disable-line camelcase
+		status: '422',
+	};
+	const ruleset = {
+		message: 'Repository rule violations found\n\nChanges must be made through a pull request.\n\nRequired status check "tests" is expected.\n\n',
+		documentation_url: documentation, // eslint-disable-line camelcase
+		status: '422',
+	};
+	/** @type {(body: unknown, repo?: { private?: boolean }) => Promise<string>} */
+	const refusal = async (body, repo) => {
+		setup(t, { refUpdates: { 'o/r': { status: 422, body } } });
+		return fastForward(octokit, target, repo).then(() => 'not refused', messageOf);
+	};
+
+	t.equal(
+		await refusal(classic, { private: false }),
+		`GitHub refused to fast-forward \`master\` to it (HTTP 422): \`Protected branch update failed for refs/heads/master. At least 1 approving review is required by reviewers with write access.\`${fix}`,
+		'a public repository’s classic branch protection refusal: quoting what GitHub said, on one line, not the error’s own message (which links GitHub’s docs), and how to fix it',
+	);
+	t.equal(
+		await refusal(ruleset, { private: false }),
+		`GitHub refused to fast-forward \`master\` to it (HTTP 422): \`Repository rule violations found Changes must be made through a pull request. Required status check "tests" is expected.\`${fix}`,
+		'a public repository’s ruleset refusal: naming each rule it violated',
+	);
+	t.equal(
+		await refusal({ message: 'Update is not a fast forward', documentation_url: documentation }, { private: false }), // eslint-disable-line camelcase
+		'GitHub refused to fast-forward `master` to it (HTTP 422): `Update is not a fast forward`',
+		'a refusal that isn’t a rule’s: quoted, without saying to bypass a rule',
+	);
+	t.equal(
+		await refusal({ message: '@someone `| [x](https://example.com) <b>\n|' }, { private: false }),
+		'GitHub refused to fast-forward `master` to it (HTTP 422): ``@someone `\\| [x](https://example.com) <b> \\|``',
+		'inert, as code: no mention, link, markup, line break, or table cell can get out of it',
+	);
+	t.equal(await refusal(classic, { private: true }), fallback, 'a private repository’s: only its HTTP status, since what refused it is private');
+	t.equal(await refusal(classic), fallback, 'as is one not said to be public');
+	t.equal(await refusal({ documentation_url: documentation }, { private: false }), fallback, 'a public repository’s without a message: only its HTTP status'); // eslint-disable-line camelcase
+	t.equal(await refusal({ message: ' \n ' }, { private: false }), fallback, 'or with only whitespace');
+	t.equal(await refusal({ message: 422 }, { private: false }), fallback, 'or with one that isn’t a string');
+	t.equal(await refusal('Unprocessable Entity', { private: false }), fallback, 'or a body that isn’t an object');
+
+	/** @type {(thrown: unknown) => Octokit} */
+	const throwing = (thrown) => /** @type {Octokit} */ (/** @type {unknown} */ ({ rest: { git: { async updateRef() { throw thrown; } } } }));
+	await fastForward(throwing(null), target, { private: false }).then(() => t.fail('should have thrown'), (error) => {
+		t.equal(messageOf(error), 'GitHub refused to fast-forward `master` to it, eg because of a branch protection rule', 'nor anything thrown that isn’t an error');
+	});
+	await fastForward(throwing(new Error('offline')), target, { private: false }).then(() => t.fail('should have thrown'), (error) => {
+		t.equal(messageOf(error), 'GitHub refused to fast-forward `master` to it, eg because of a branch protection rule', 'nor an error without a response');
+	});
+});
+
 test('candidatePRs', async (t) => {
 	const bot = 'fleet-bot[bot]';
 	/** @type {(number: number, branch: string, extra?: { repo?: string, user?: string | null }) => Record<string, unknown>} */
