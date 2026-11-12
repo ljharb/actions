@@ -9,6 +9,7 @@ import { packageJson } from './npmignore.mjs';
 import {
 	hideSaid,
 	hideStale,
+	hideable,
 	marker as saidMarker,
 } from './said.mjs';
 
@@ -474,7 +475,8 @@ export async function publish({
 
 /**
  * The first of `markers` that a comment on PR (or issue) `number` by `author` starts with (on a line of its own, as `commentOnce` puts it), or `null` if none does.
- * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, markers: string[] }) => Promise<string | null>}
+ * With `visible`, a comment that's been hidden (minimized), or deleted since it was listed, doesn't count (see `hideable`), since what it said was taken back (eg, that a PR needed a person, once its CI passed): that's only looked up when one has a marker, and one without a node ID, which can't be looked up, counts.
+ * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, markers: string[], visible?: boolean }) => Promise<string | null>}
  */
 export async function findMarked({
 	octokit,
@@ -483,20 +485,24 @@ export async function findMarked({
 	number,
 	author,
 	markers,
+	visible = false,
 }) {
-	const comments = (await octokit.paginate(octokit.rest.issues.listComments, {
+	const marked = (await octokit.paginate(octokit.rest.issues.listComments, {
 		owner,
 		repo: name,
 		issue_number: number, // eslint-disable-line camelcase
 		per_page: 100, // eslint-disable-line camelcase
-	})).filter((c) => c.user?.login === author);
-	return markers.find((m) => comments.some((c) => c.body?.startsWith(`${m}\n`))) ?? null;
+	})).filter((c) => c.user?.login === author && markers.some((m) => c.body?.startsWith(`${m}\n`)));
+	const ids = visible ? marked.flatMap((c) => (c.node_id ? [c.node_id] : [])) : [];
+	const shown = ids.length > 0 ? await hideable(octokit, ids) : null;
+	const counted = shown ? marked.filter((c) => !c.node_id || shown.has(c.node_id)) : marked;
+	return markers.find((m) => counted.some((c) => c.body?.startsWith(`${m}\n`))) ?? null;
 }
 
 /**
- * Comments `body` on PR (or issue) `number`, unless `author` already has a comment there with `marker` (see `findMarked`): so that something is only ever said once (eg, once per head commit, when `marker` names it).
+ * Comments `body` on PR (or issue) `number`, unless `author` already has a comment there with `marker` (see `findMarked`; with `visible`, one that's still shown): so that something is only ever said once (eg, once per head commit, when `marker` names it), or, with `visible`, said again once what was said was taken back, if it applies again after all.
  * Returns whether it commented.
- * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, marker: string, body: string }) => Promise<boolean>}
+ * @type {(options: { octokit: Octokit, owner: string, name: string, number: number, author: string, marker: string, body: string, visible?: boolean }) => Promise<boolean>}
  */
 export async function commentOnce({
 	octokit,
@@ -506,6 +512,7 @@ export async function commentOnce({
 	author,
 	marker,
 	body,
+	visible = false,
 }) {
 	if (await findMarked({
 		octokit,
@@ -514,6 +521,7 @@ export async function commentOnce({
 		number,
 		author,
 		markers: [marker],
+		visible,
 	})) {
 		return false;
 	}

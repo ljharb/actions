@@ -1477,3 +1477,78 @@ test('maintain: once it restores what a PR removed, hides what it said on it tha
 	);
 	t.end();
 });
+
+test('maintain: once CI passes on a head commit the App said needs a person, hides that it said so, as outdated', async (t) => {
+	const server = setup(t);
+	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
+	const old = 'e'.repeat(40);
+	const key = '/repos/ljharb/r/issues/1';
+	/** @type {Comment[]} */
+	const posted = [
+		{ key, node_id: 'C_stuck', user: { login: bot.name }, body: `${marker('stuck', head)}\nit needs a person` }, // eslint-disable-line camelcase
+		{ key, node_id: 'C_older', user: { login: bot.name }, body: `${marker('stuck', old)}\nstuck, at an earlier head` }, // eslint-disable-line camelcase
+		{ key, node_id: 'C_conflict', user: { login: bot.name }, body: `${marker('conflict', head, server.tip('main'))}\nconflicted` }, // eslint-disable-line camelcase
+		{ key, node_id: 'C_minimized', user: { login: bot.name }, body: `${marker('stuck', head)}\nalready hidden` }, // eslint-disable-line camelcase
+		{ key, node_id: 'C_theirs', user: { login: mallory.name }, body: `${marker('stuck', head)}\nnot the bot` }, // eslint-disable-line camelcase
+		{ key, node_id: 'C_plain', user: { login: bot.name }, body: 'no marker' }, // eslint-disable-line camelcase
+	];
+	const passing = { [head]: { checkRuns: [{ id: 1, name: 'tests', status: 'completed', conclusion: 'success' }] } };
+	/** @type {(ci: MergeScenario['ci'], github?: Partial<Scenario>, isPrivate?: boolean) => ReturnType<typeof run>} */
+	const once = (ci, github = {}, isPrivate = false) => run(t, {
+		server,
+		github: installed([{ name: 'r', private: isPrivate }], { minimized: ['C_minimized'], ...github }),
+		merge: shown(server, [[1, fixBranch, head]], { ci }),
+		posted: /** @type {Comment[]} */ ([]).concat(posted),
+		offline: true,
+	});
+
+	const pending = await once({ [head]: { checkRuns: [{ id: 1, name: 'tests', status: 'in_progress', conclusion: null }] } });
+	t.equal(pending.errors, 0, 'nothing failed');
+	t.ok(logged(pending.stdout).includes(`${prURL(server)}: up to date; its CI is still running`), 'while its CI is pending, nothing changes');
+	t.notOk(pending.requests.some((r) => r.path === '/graphql' && (r.body.variables.ids || r.body.variables.classifier)), 'with nothing even looked up to hide, nor hidden');
+
+	const failed = await once(failedIn(head, [pretest]));
+	t.ok(logged(failed.stdout).includes(`${prURL(server)}: left as it is: as already said on it, it’s \`stuck\` until its head commit changes, or its CI passes`), 'while it fails, it’s still stuck, until its CI passes');
+	t.deepEqual(hiddenComments(failed.requests), [], 'and nothing is hidden');
+	t.deepEqual(comments(failed.requests), [], 'nor said again');
+
+	const passed = await once(passing);
+	t.equal(passed.errors, 0, 'nothing failed, with nothing cloned');
+	t.ok(logged(passed.stdout).includes(`${prURL(server)}: up to date; its CI passed; it had been said to need a person, which no longer applies, so hid that`), 'once its CI passes, it’s an ordinary passed PR, and says it hid that it needed a person');
+	t.deepEqual(hiddenComments(passed.requests), [['C_stuck', 'OUTDATED']], 'that it needed a person, at this head, is hidden as outdated; never that it did at another head, anything else the App said, anyone else’s, one without a marker, or one already hidden');
+	t.deepEqual(comments(passed.requests), [], 'saying nothing');
+	t.deepEqual(prUpdates(passed.requests), [], 'and changing nothing');
+	t.equal(server.tip(`refs/heads/${fixBranch}`), head, 'nor pushing anything');
+
+	const unhidden = await once(passing, { minimizeFails: ['C_stuck'] });
+	t.equal(unhidden.errors, 0, 'a failure to hide it never fails the run');
+	t.ok(logged(unhidden.stdout).includes(`${prURL(server)}: up to date; its CI passed`), 'which then says nothing was hidden');
+	const warnings = logged(unhidden.stdout).filter((line) => line.startsWith('::warning::'));
+	t.equal(warnings.length, 1, 'but warns');
+	t.ok(warnings[0].startsWith('::warning::could not hide 1 of the App’s comments saying one of its PRs, whose CI has since passed, needed a person'), 'saying what it couldn’t hide');
+	t.notOk(warnings[0].includes('ljharb/r'), 'never where');
+
+	const secret = await once(passing, { minimizeFails: ['C_stuck'] }, true);
+	t.equal(secret.errors, 0, 'nor, for a private repository');
+	t.deepEqual(hiddenComments(secret.requests), [['C_stuck', 'OUTDATED']], 'where it tries to hide it too');
+	t.deepEqual(logged(secret.stdout), ['Open PRs in private repositories, if any, were also kept up to date; nothing about them is shown here.'], 'with nothing about it logged at all');
+
+	const retaken = await once(passing, { minimized: ['C_stuck', 'C_minimized'] });
+	t.equal(retaken.errors, 0, 'once it’s hidden, nothing failed');
+	t.ok(logged(retaken.stdout).includes(`${prURL(server)}: up to date; its CI passed`), 'a later run, while its CI still passes, has nothing to hide');
+	t.deepEqual(hiddenComments(retaken.requests), [], 'hiding nothing again');
+
+	const again = await run(t, {
+		server,
+		github: installed([{ name: 'r' }], { minimized: ['C_stuck', 'C_minimized'] }),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		posted: /** @type {Comment[]} */ ([]).concat(posted),
+	});
+	t.equal(again.errors, 0, 'once it’s hidden, CI failing again on that head fails nothing');
+	t.ok(logged(again.stdout).includes(`${prURL(server)}: its CI failed, with nothing left to restore; said so on it`), 'it’s looked at again, as a hidden comment no longer counts as said');
+	t.equal(comments(again.requests).length, 1, 'and, since it still needs a person, says so again');
+	t.ok(comments(again.requests)[0].startsWith(`${marker('stuck', head)}\n`), 'about that head commit');
+	t.deepEqual(hiddenComments(again.requests), [], 'hiding nothing');
+	t.equal(server.tip(`refs/heads/${fixBranch}`), head, 'nor pushing anything');
+	t.end();
+});

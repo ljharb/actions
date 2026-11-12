@@ -9,7 +9,7 @@ import { failureDetails } from './app.mjs';
  * - `foreign`: it has commits by someone else, so the App never touches it
  * - `conflict`: it conflicts with its base, so it can't be rebased
  * - `empty`: its base already has everything it changes
- * - `stuck`: its CI failed (not only in ways `continue-on-error` hides, which never make it stuck), and the App has nothing it can restore
+ * - `stuck`: its CI failed (not only in ways `continue-on-error` hides, which never make it stuck), and the App has nothing it can restore; once CI passes on that head commit after all (eg, once a flaky job that failed is re-run), it no longer applies, and is hidden as `OUTDATED`, after which it no longer counts as said (see `findMarked`'s `visible`), so if CI fails again on that head, it's decided, and said, again
  * - `matches`: all it would change on its base is the App's bookkeeping (see `onlyBookkeeping`), since its base's workflow files already match, so the App closed it
  * @typedef {'foreign' | 'conflict' | 'empty' | 'stuck' | 'matches'} Said
  */

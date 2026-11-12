@@ -34,7 +34,7 @@ import {
 	pushBranch,
 	remoteTip,
 } from '../lib/pr.mjs';
-import { hideStale, marker } from '../lib/said.mjs';
+import { hideSaid as hideMarked, hideStale, marker } from '../lib/said.mjs';
 import { reposWithAppPRs } from './repos.mjs';
 
 /** @import { Octokit, appAuth } from '../lib/app.mjs' */
@@ -52,11 +52,11 @@ import { reposWithAppPRs } from './repos.mjs';
  * - `rebased`: it was rebuilt as one commit on its base's tip
  * - `conflict`: it can't be, since it conflicts with its base (which it says, once per head and base tip)
  * - `empty`: it can't be, since its base already has everything it changes (which it says, once per head and base tip)
- * - `pending`, `passed`: it's one commit on its base's tip, and its CI is still running (or has failed only as its base's tip's has, so far), or passed (or, for a relock PR, isn't looked at); CI that failed only in ways `continue-on-error` hides passed (see `optionalFailures`)
+ * - `pending`, `passed`: it's one commit on its base's tip, and its CI is still running (or has failed only as its base's tip's has, so far), or passed (or, for a relock PR, isn't looked at); CI that failed only in ways `continue-on-error` hides passed (see `optionalFailures`); once it's passed, that it was said to be `stuck`, for that head, no longer applies, so that's hidden (see `hideStuck`)
  * - `restored`: its CI failed, and inputs it removed from a workflow file that failed in a way its base's tip doesn't were put back, and kept
  * - `stuck`: its CI failed, and there's nothing left to put back (or where to put it back is ambiguous, or every workflow file that failed only failed as on its base's tip), so it needs a person (which it says, once per head)
  * - `matches`: a `fleet/workflows` PR that would change nothing on its base's tip but the App's bookkeeping (see `onlyBookkeeping`), as it is, or once rebased, or once what it removed is put back: so it was closed (saying why, once per head), since its base's workflow files already match
- * Once it's said a PR is `stuck`, that's what it is until its head changes; once it's said it's `conflict` or `empty`, that's what it is until its head, or its base's tip, changes: later runs find what was said on it, and never clone it again to decide it again.
+ * Once it's said a PR is `stuck`, that's what it is until its head changes, or its CI, read again, passes (eg, once a flaky job that failed is re-run), when what it said is hidden, and so no longer counts: if its CI fails again on that head after all, that's decided again (and, if it's still `stuck`, said again); once it's said it's `conflict` or `empty`, that's what it is until its head, or its base's tip, changes: later runs find what was said on it, and never clone it again to decide it again.
  * @typedef {{ kind: 'changed' | 'foreign' | 'rebased' | 'conflict' | 'empty' | 'pending' | 'passed' | 'restored' | 'stuck' | 'matches', text: string }} Outcome
  */
 /** @typedef {{ auth: Auth, bot: string, serverURL: string, identities: Map<number, Promise<Identity>> }} Context */
@@ -177,6 +177,12 @@ async function hideSaid(
 	return hidden > 0 ? `; hid ${hidden} of its earlier comments that no longer apply` : '';
 }
 
+// only that a PR is `stuck` is ever hidden while it's still about the PR's head commit (once its CI passes: see `hideStuck`), so that's what's said again if it applies again after all, and what, once hidden, is no longer what the PR is
+/** @type {(kind: Said) => kind is 'stuck'} */
+function isRetractable(kind) {
+	return kind === 'stuck';
+}
+
 // about the PR's head commit, which is what it was looked at as (and, with `base`, its base's tip, which it was looked at on)
 /** @type {(target: Target, about: { kind: Said, base?: string }, body: string) => Promise<boolean>} */
 function say(
@@ -197,6 +203,7 @@ function say(
 		author: context.bot,
 		marker: marker(kind, pr.head.sha, base),
 		body,
+		visible: isRetractable(kind),
 	});
 }
 
@@ -479,7 +486,7 @@ function identityFor({ auth, identities }, installationId) {
 }
 
 /**
- * Which of `kinds` the bot already said the PR is, about its head commit (and, with `base`, its base's tip: see `say`), from the API: so that what's decided about them is never decided again (which would take a clone).
+ * Which of `kinds` the bot already said the PR is, about its head commit (and, with `base`, its base's tip: see `say`), from the API: so that what's decided about them is never decided again (which would take a clone); but for that it's `stuck`, once that's hidden (see `hideStuck`), since what it said was then taken back.
  * @type {(target: Target, kinds: Said[], base?: string) => Promise<Outcome | null>}
  */
 async function alreadySaid(
@@ -499,9 +506,10 @@ async function alreadySaid(
 		number: pr.number,
 		author: context.bot,
 		markers: kinds.map((k) => marker(k, pr.head.sha, base)),
+		visible: kinds.some(isRetractable),
 	});
 	const kind = kinds.find((k) => marker(k, pr.head.sha, base) === said);
-	return kind ? { kind, text: `left as it is: as already said on it, it’s \`${kind}\` until its head commit${base ? ', or its base’s tip,' : ''} changes` } : null;
+	return kind ? { kind, text: `left as it is: as already said on it, it’s \`${kind}\` until its head commit${base ? ', or its base’s tip,' : ''} changes${isRetractable(kind) ? ', or its CI passes' : ''}` } : null;
 }
 
 const branchChanged = /** @type {const} */ ({ kind: 'changed', text: 'its branch changed while it was being looked at; it’s looked at again next time' });
@@ -562,6 +570,30 @@ async function remediate(target, ci, baseTip) {
 		return { kind: 'stuck', text: `its CI failed only as ${code(base)}’s does; said so on it` };
 	}
 	return withClone(target, true, (job) => restore(job, blamed.files));
+}
+
+/**
+ * Once CI passes on a head commit the App said was `stuck` (eg, once a flaky job that failed is re-run), what it said no longer applies, so it's hidden as `OUTDATED` (see `hideSaid`; for a private repository, never warning): only what's about that head commit being stuck, never anything else it said, nor anyone else's. Returns how that's said in the PR's outcome.
+ * @type {(target: Target) => Promise<string>}
+ */
+async function hideStuck({
+	context,
+	repo,
+	pr,
+	octokit,
+}) {
+	const hidden = await hideMarked({
+		octokit,
+		owner: repo.owner,
+		name: repo.name,
+		number: pr.number,
+		author: context.bot,
+		isPrivate: repo.private,
+		classifierOf: ({ kind, head }) => (kind === 'stuck' && head === pr.head.sha ? 'OUTDATED' : null),
+		unread: 'could not read the App’s comments on one of its PRs whose CI passed, to hide that it said it needed a person',
+		unhidden: (count) => `could not hide ${count} of the App’s comments saying one of its PRs, whose CI has since passed, needed a person`,
+	});
+	return hidden > 0 ? '; it had been said to need a person, which no longer applies, so hid that' : '';
 }
 
 /**
@@ -638,7 +670,10 @@ export async function maintainPR(
 		// its one commit's parent is its base's tip
 		return await alreadySaid(target, ['stuck']) ?? remediate(target, ci, { ...headCommit, head: commits.parents[0] });
 	}
-	return { kind: ci.kind, text: `up to date; its CI ${ci.kind === 'pending' ? 'is still running' : 'passed'}` };
+	if (ci.kind === 'pending') {
+		return { kind: 'pending', text: 'up to date; its CI is still running' };
+	}
+	return { kind: 'passed', text: `up to date; its CI passed${await hideStuck(target)}` };
 }
 
 /**

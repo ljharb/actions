@@ -1272,6 +1272,79 @@ test('findMarked', async (t) => {
 	t.end();
 });
 
+test('findMarked: with `visible`, a hidden comment doesn’t count', async (t) => {
+	const comments = [
+		{ id: 1, node_id: 'C_hidden', user: { login: bot.name }, body: '<!-- a -->\nsaid, then hidden' }, // eslint-disable-line camelcase
+		{ id: 2, node_id: 'C_deleted', user: { login: bot.name }, body: '<!-- b -->\nsaid, then deleted' }, // eslint-disable-line camelcase
+		{ id: 3, node_id: 'C_shown', user: { login: bot.name }, body: '<!-- c -->\nsaid' }, // eslint-disable-line camelcase
+		{ id: 4, user: { login: bot.name }, body: '<!-- d -->\nwithout a node ID' },
+		{ id: 5, node_id: 'C_theirs', user: { login: 'mallory' }, body: '<!-- e -->\nhi' }, // eslint-disable-line camelcase
+		{ id: 6, node_id: 'C_plain', user: { login: bot.name }, body: 'no marker' }, // eslint-disable-line camelcase
+	];
+	const requests = mockAPI(t, [
+		['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [200, comments]],
+		[
+			'POST',
+			/^\/graphql$/,
+			({ body }) => [
+				200,
+				{
+					data: { nodes: body.variables.ids.map((/** @type {string} */ id) => (id === 'C_deleted' ? null : { id, isMinimized: id === 'C_hidden' })) },
+					errors: body.variables.ids.includes('C_deleted') ? [{ type: 'NOT_FOUND', message: 'not found' }] : undefined,
+				},
+			],
+		],
+	]);
+	/** @type {(markers: string[], visible?: boolean) => Promise<string | null>} */
+	const find = (markers, visible) => findMarked({
+		octokit: getOctokit('ghs_test'),
+		owner,
+		name,
+		number: 3,
+		author: bot.name,
+		markers,
+		visible,
+	});
+	/** @type {() => string[][]} */
+	const lookups = () => requests.filter((r) => r.path === '/graphql').map((r) => r.body.variables.ids);
+
+	t.equal(await find(['<!-- a -->', '<!-- b -->']), '<!-- a -->', 'without it, a hidden comment counts');
+	t.deepEqual(lookups(), [], 'with nothing looked up');
+	t.equal(await find(['<!-- a -->', '<!-- b -->', '<!-- c -->'], true), '<!-- c -->', 'with it, neither a hidden one nor a deleted one does');
+	t.deepEqual(lookups(), [['C_hidden', 'C_deleted', 'C_shown']], 'looking up only those of the author’s with a marker');
+	t.equal(await find(['<!-- a -->', '<!-- b -->'], true), null, 'so only hidden or deleted ones are none');
+	t.equal(await find(['<!-- a -->', '<!-- d -->'], true), '<!-- d -->', 'and one without a node ID, which can’t be looked up, counts');
+	t.equal(await find(['<!-- d -->', '<!-- e -->'], true), '<!-- d -->', 'on its own too');
+	t.equal(lookups().length, 3, 'with nothing looked up when none of them has a node ID');
+	t.equal(await find(['<!-- e -->', '<!-- f -->'], true), null, 'and someone else’s never counts');
+	t.equal(lookups().length, 3, 'with nothing looked up when none of the author’s has a marker');
+	t.end();
+});
+
+test('commentOnce: with `visible`, says it again once it’s hidden', async (t) => {
+	const marker = '<!-- fleet:x:abc -->';
+	const requests = mockAPI(t, [
+		['GET', /^\/repos\/o\/r\/issues\/3\/comments\?/, () => [200, [{ id: 1, node_id: 'C_hidden', user: { login: bot.name }, body: `${marker}\nsaid` }]]], // eslint-disable-line camelcase
+		['POST', /^\/graphql$/, ({ body }) => [200, { data: { nodes: body.variables.ids.map((/** @type {string} */ id) => ({ id, isMinimized: true })) } }]],
+		['POST', /^\/repos\/o\/r\/issues\/3\/comments$/, () => [201, {}]],
+	]);
+	/** @type {(visible?: boolean) => Promise<boolean>} */
+	const once = (visible) => commentOnce({
+		octokit: getOctokit('ghs_test'),
+		owner,
+		name,
+		number: 3,
+		author: bot.name,
+		marker,
+		body: 'the body',
+		visible,
+	});
+	t.equal(await once(), false, 'without it, a hidden comment with the marker is enough to say nothing');
+	t.equal(await once(true), true, 'with it, it comments');
+	t.deepEqual(requests.filter((r) => r.method === 'POST' && r.path !== '/graphql').map((r) => r.body), [{ body: `${marker}\nthe body` }], 'once, with the marker');
+	t.end();
+});
+
 test('closePR', (t) => {
 	t.test('with a comment', async (st) => {
 		const requests = mockAPI(st, [
