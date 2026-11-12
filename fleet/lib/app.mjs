@@ -1,6 +1,7 @@
 import { getOctokit } from '@actions/github';
-import { defaults } from '@actions/github/lib/utils';
+import { GitHub, defaults } from '@actions/github/lib/utils';
 import { createAppAuth } from '@octokit/auth-app';
+import { retry as retryPlugin } from '@octokit/plugin-retry';
 
 import { mergeConfig, parseConfig } from './config.mjs';
 import { isIgnored } from './ignored.mjs';
@@ -65,8 +66,11 @@ fragment state on Repository {
 /** @type {() => void} */
 function ignore() {}
 
+// only a server error (or not reaching GitHub at all, which Octokit reports as a 500) is transient: a client error is GitHub's answer, and asking again only delays it; a request that creates something (a comment, an issue, a PR, a gist, an Actions variable) is made with `request: { retries: 0 }` instead, since GitHub can fail one after making it, and asking again would make it twice (or fail, as already made)
+const retry = { doNotRetry: Array.from({ length: 100 }, (_, i) => 400 + i) };
+
 /**
- * An Octokit for one repository's requests: for a private one, Octokit's own log (eg, its deprecation warnings) is dropped, since it quotes request URLs, which name the repository, and run logs are public.
+ * An Octokit that retries GitHub's transient errors a few times (see `retry`), for one repository's requests: for a private one, Octokit's own log (eg, its deprecation warnings) is dropped, since it quotes request URLs, which name the repository, and run logs are public.
  * @type {(token: string, isPrivate: boolean) => Octokit}
  */
 export function octokitFor(token, isPrivate) {
@@ -77,7 +81,8 @@ export function octokitFor(token, isPrivate) {
 		error: ignore,
 	};
 	// Octokit's own log, and the one its requests use (which is otherwise `console`); `request` replaces the default one rather than merging with it, so the default's proxy-aware `agent` and `fetch` are kept explicitly
-	return isPrivate ? getOctokit(token, { log, request: { ...defaults.request, log } }) : getOctokit(token);
+	const quiet = isPrivate ? { log, request: { ...defaults.request, log } } : {};
+	return getOctokit(token, { ...quiet, retry }, retryPlugin);
 }
 
 /**
@@ -109,7 +114,12 @@ export function failureMessage(error) {
 
 /** @type {(appId: string, privateKey: string) => ReturnType<typeof createAppAuth>} */
 export function appAuth(appId, privateKey) {
-	return createAppAuth({ appId, privateKey });
+	// installation tokens are asked for with requests retried like any other (see `retry`); an Octokit without a token leaves the App's own authorization to `createAppAuth`, and its requests' log is `console`, as `createAppAuth`'s own would be, since they name only an installation
+	return createAppAuth({
+		appId,
+		privateKey,
+		request: new (GitHub.plugin(retryPlugin))({ retry }).request,
+	});
 }
 
 /** @type {(auth: ReturnType<typeof createAppAuth>, quiet?: boolean) => Promise<Octokit>} */
@@ -215,8 +225,11 @@ function toState(
 
 /** @type {(error: unknown) => Record<string, any>} */
 function partialData(error) {
-	if (error && typeof error === 'object' && 'data' in error && error.data && typeof error.data === 'object') {
-		return /** @type {Record<string, any>} */ (error.data);
+	// GitHub's "Something went wrong while executing your query" is retried as a server error (see `retry`), whose error has the last attempt's partial data only on its response
+	const failure = /** @type {{ data?: unknown, response?: { data?: { data?: unknown } } }} */ (Object(error));
+	const partial = 'data' in failure ? failure.data : failure.response?.data?.data;
+	if (partial && typeof partial === 'object') {
+		return /** @type {Record<string, any>} */ (partial);
 	}
 	throw error;
 }
@@ -284,7 +297,7 @@ const readPermissions = { contents: 'read', metadata: 'read' };
 
 /** @type {(auth: ReturnType<typeof createAppAuth>, installationId: number) => Promise<Octokit>} */
 async function readOctokit(auth, installationId) {
-	return getOctokit(await installationToken(auth, installationId, { permissions: readPermissions }));
+	return octokitFor(await installationToken(auth, installationId, { permissions: readPermissions }), false);
 }
 
 /** @type {(auth: ReturnType<typeof createAppAuth>, installation: Installation) => Promise<RepoState[]>} */

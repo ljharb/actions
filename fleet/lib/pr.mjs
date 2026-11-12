@@ -435,6 +435,7 @@ export async function publish({
 			head: branch,
 			title,
 			body,
+			request: { retries: 0 }, // never retried, since asking again for a PR GitHub already opened fails (see `retry` in `app.mjs`)
 		})
 		: await octokit.rest.pulls.update({
 			owner,
@@ -521,6 +522,7 @@ export async function commentOnce({
 		repo: name,
 		issue_number: number, // eslint-disable-line camelcase
 		body: `${marker}\n${body}`,
+		request: { retries: 0 }, // never retried, so never posted twice (see `retry` in `app.mjs`)
 	});
 	return true;
 }
@@ -551,6 +553,7 @@ export async function closePR({
 			repo: name,
 			issue_number: number, // eslint-disable-line camelcase
 			body: comment,
+			request: { retries: 0 }, // never retried, so never posted twice (see `retry` in `app.mjs`)
 		});
 	}
 	await octokit.rest.pulls.update({

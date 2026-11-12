@@ -1,5 +1,4 @@
 import * as core from '@actions/core';
-import { getOctokit } from '@actions/github';
 
 import {
 	appOctokit,
@@ -341,7 +340,7 @@ export async function queueOctokit(auth, owner, repo) {
 		throw new Error(`the fleet GitHub App could not get a token to read and write Actions variables in \`${owner}/${repo}\`${httpStatus(error)}: the App needs the “Variables: Read and write” repository permission, for the merge queue (the \`${queueVariable}\` variable), and must be installed on \`${owner}/${repo}\`. After that permission is added to the App, its installation on \`${owner}\` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.`);
 	}
 	core.setSecret(token);
-	return getOctokit(token);
+	return octokitFor(token, false);
 }
 
 /**
@@ -390,7 +389,8 @@ export async function writeQueue(
 		name: queueVariable,
 		value: JSON.stringify(entries),
 	};
-	await (exists ? octokit.rest.actions.updateRepoVariable(options) : octokit.rest.actions.createRepoVariable(options));
+	// creating it is never retried, since asking again for one GitHub already made fails (see `retry` in `app.mjs`)
+	await (exists ? octokit.rest.actions.updateRepoVariable(options) : octokit.rest.actions.createRepoVariable({ ...options, request: { retries: 0 } }));
 }
 
 /**

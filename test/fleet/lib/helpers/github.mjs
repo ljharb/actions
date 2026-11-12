@@ -1,6 +1,10 @@
 import { generateKeyPairSync } from 'crypto';
 
+import { defaults } from '@actions/github/lib/utils';
 import nock from 'nock';
+
+// a mocked error is the scenario's answer, not a transient one: every Octokit's requests default to `@actions/github`'s `defaults.request`, so none of them are retried (see `test/fleet/lib/retry.mjs` for the retrying itself)
+Object.assign(/** @type {NonNullable<typeof defaults.request>} */ (defaults.request), { retries: 0 });
 
 /**
  * A fork's parent, as far up as the query reads.
@@ -31,6 +35,7 @@ import nock from 'nock';
  *   missing?: boolean,
  *   failInBatch?: boolean,
  *   failAlways?: boolean,
+ *   broken?: boolean,
  * }} RepoSpec
  */
 /**
@@ -180,7 +185,11 @@ function graphqlReply(scenario, variables) {
 	/** @type {unknown[]} */
 	const errors = [];
 	specs.forEach((s, j) => {
-		if (s.missing) {
+		// a `broken` repository's part of the query fails as GitHub's own errors do, which Octokit's retrying only looks for in the first error
+		if (s.broken) {
+			data[`r${j}`] = null;
+			errors.unshift({ path: [`r${j}`], message: 'Something went wrong while executing your query. Please include `ABCD:1234` when reporting this issue.' });
+		} else if (s.missing) {
 			data[`r${j}`] = null;
 			errors.push({ type: 'NOT_FOUND', path: [`r${j}`], message: `Could not resolve to a Repository with the name '${names[j]}'.` });
 		} else {

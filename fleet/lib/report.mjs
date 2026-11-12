@@ -1,7 +1,6 @@
 import * as core from '@actions/core';
-import { getOctokit } from '@actions/github';
 
-import { botLogin } from './app.mjs';
+import { botLogin, octokitFor } from './app.mjs';
 import { upsertGist } from './gist.mjs';
 import { issueOctokit, upsertReportIssue } from './issues.mjs';
 import { code, html } from './markdown.mjs';
@@ -168,7 +167,7 @@ export async function publish({
 	let written;
 	try {
 		written = await upsertGist(
-			getOctokit(token),
+			octokitFor(token, false),
 			{
 				description: dryRun ? gist.dryRunDescription : gist.description,
 				base: gist.base,

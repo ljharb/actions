@@ -327,6 +327,23 @@ test('discover: GraphQL errors without usable partial data', async (t) => {
 	t.equal(find(states, 'ljharb/c').stateError, 'could not read the repository’s state', 'non-object data is an error');
 });
 
+test('discover: a repository whose part of the query GitHub fails with its own error keeps the rest of the batch’s partial data', async (t) => {
+	const requests = setup(t, {
+		installations: [{ id: 31, account: { login: 'ljharb' } }],
+		installationRepos: { 31: [installedRepo('ljharb', 'a'), installedRepo('ljharb', 'broken')] },
+		repos: {
+			'ljharb/a': { data: { defaultBranchRef: { name: 'main' } } },
+			'ljharb/broken': { broken: true },
+		},
+	});
+
+	const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb']));
+	t.deepEqual(failures, [], 'no failures');
+	t.equal(repoQueries(requests).length, 1, 'one batched query, not one for each repository');
+	t.equal(find(states, 'ljharb/a').defaultBranch, 'main', 'the readable repository is read');
+	t.equal(find(states, 'ljharb/broken').stateError, 'could not read the repository’s state', 'the other is an error');
+});
+
 test('discover: a failing installation does not fail the others', async (t) => {
 	setup(t, {
 		installations: [

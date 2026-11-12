@@ -1,7 +1,10 @@
 import * as core from '@actions/core';
-import { getOctokit } from '@actions/github';
 
-import { appOctokit, installationToken } from './app.mjs';
+import {
+	appOctokit,
+	installationToken,
+	octokitFor,
+} from './app.mjs';
 
 /** @import { Octokit, appAuth } from './app.mjs' */
 /** @typedef {ReturnType<typeof appAuth>} Auth */
@@ -31,7 +34,7 @@ export async function issueOctokit(auth, owner, repo) {
 		throw new Error(`the fleet GitHub App could not get a token to write issues in \`${owner}/${repo}\`${status(error)}: the App needs the “Issues: Read and write” repository permission, and must be installed on \`${owner}/${repo}\`. After that permission is added to the App, its installation on \`${owner}\` must approve it (from the account’s settings, under “Applications”, or from GitHub’s email about it) before the App can use it.`);
 	}
 	core.setSecret(token);
-	return getOctokit(token);
+	return octokitFor(token, false);
 }
 
 /**
@@ -85,6 +88,7 @@ export async function upsertReportIssue({
 				repo,
 				issue_number: issue.number, // eslint-disable-line camelcase
 				body: closing,
+				request: { retries: 0 }, // never retried, so never posted twice (see `retry` in `app.mjs`)
 			});
 			await octokit.rest.issues.update({
 				owner,
@@ -112,6 +116,7 @@ export async function upsertReportIssue({
 		repo,
 		title: found.title,
 		body: found.body,
+		request: { retries: 0 }, // never retried, so never opened twice (see `retry` in `app.mjs`)
 	});
 	return `created ${created.html_url}`;
 }

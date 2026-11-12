@@ -52,6 +52,7 @@ export async function upsertGist(octokit, { description, base }, parts) {
 			description,
 			public: false,
 			files: first,
+			request: { retries: 0 }, // never retried, so never made twice (see `retry` in `app.mjs`)
 		});
 	const id = String(data.id);
 	const htmlURL = String(data.html_url);

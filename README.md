@@ -10,7 +10,7 @@ The reusable workflows declare a least-privilege [`cache-mode`](https://docs.git
 
 ## The fleet GitHub App
 
-A GitHub App, installed on the repositories to manage, lets scheduled jobs in this repo work across all of them, with no per-repository workflow.
+A GitHub App, installed on the repositories to manage, lets scheduled jobs in this repo work across all of them, with no per-repository workflow. GitHub’s transient errors don’t fail them: any request to GitHub’s API (including for an installation token, or a report’s gist) that fails with a server error (HTTP 5xx, or GraphQL’s “Something went wrong”), or never reaches GitHub at all, is retried up to 3 times, a second, then 4, then 9 seconds later, before it counts as a failure (a GraphQL query’s partial data is still used, as it is for any other error); a client error (HTTP 4xx, including a rate limit) is GitHub’s answer, and is never retried. Nor is a request that creates something (a comment, an issue, a PR, a gist, or the merge queue’s variable): GitHub can fail one after making it, and asking again would make it twice, or fail as already made.
 
 ### Setup
 

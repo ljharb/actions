@@ -325,6 +325,7 @@ async function report({ auth, bot }, dropped, { finished, failedCommands }) {
 						repo,
 						issue_number: issueNumber, // eslint-disable-line camelcase
 						body,
+						request: { retries: 0 }, // never retried, so never posted twice (see `retry` in `fleet/lib/app.mjs`)
 					});
 					ours.push({ id: data.id, author: data.user?.login });
 				},

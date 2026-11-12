@@ -16,10 +16,13 @@ import { awaitingApproval } from '../lib/installations.mjs';
 
 const batchSize = 20;
 
-/** @type {(error: unknown) => Record<string, any>} */
+/** @type {(error: unknown) => Record<string, unknown>} */
 function partialData(error) {
-	if (error && typeof error === 'object' && 'data' in error && error.data && typeof error.data === 'object') {
-		return /** @type {Record<string, any>} */ (error.data);
+	// GitHub's "Something went wrong while executing your query" is retried as a server error (see `octokitFor`), whose error has the last attempt's partial data only on its response
+	const failure = /** @type {{ data?: unknown, response?: { data?: { data?: unknown } } }} */ (Object(error));
+	const partial = 'data' in failure ? failure.data : failure.response?.data?.data;
+	if (partial && typeof partial === 'object') {
+		return /** @type {Record<string, unknown>} */ (partial);
 	}
 	throw error;
 }

@@ -378,6 +378,21 @@ test('maintain: an installation that can’t be read fails, without naming what 
 	t.end();
 });
 
+test('maintain: a repository whose part of the query GitHub fails with its own error is skipped, and the rest of its installation is still found', async (t) => {
+	const server = setup(t);
+	const github = installed([{ name: 'broken' }, { name: 'r' }]);
+	const { errors, requests } = await run(t, {
+		server,
+		github: { ...github, repos: { ...github.repos, 'ljharb/broken': { broken: true } } },
+		merge: {},
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.equal(requests.filter((r) => r.path === '/graphql').length, 1, 'from one query');
+	t.ok(requests.some((r) => r.path.startsWith('/repos/ljharb/r/pulls?')), 'the readable repository is found, from the query’s partial data');
+	t.notOk(requests.some((r) => r.path.startsWith('/repos/ljharb/broken/')), 'the other is skipped');
+	t.end();
+});
+
 test('maintain: an installation waiting on its account to approve the App’s permissions is skipped, not failed', async (t) => {
 	const server = setup(t);
 	const granted = { ...permissions, metadata: 'read' };
