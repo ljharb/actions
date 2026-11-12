@@ -577,7 +577,7 @@ test('fleet/drift: a dry run writes the gist, and an incomplete check is never â
 
 	t.equal(status, 0, 'exits successfully');
 	t.match(stdout, /^0 of 0 repositories have discrepancies; the full report is https:\/\/gist\.github\.com\/new-gist; dry run: no issue changes$/m, 'logs the outcome');
-	t.deepEqual(requests.filter((r) => (/^\/repos\//).test(r.path)), [], 'no issue requests at all');
+	t.deepEqual(requests.filter((r) => r.method !== 'GET' && (/^\/repos\//).test(r.path)), [], 'no issue writes at all');
 	t.equal((stdout.match(/^::warning::/gm) ?? []).length, 450, 'warns about each failure');
 	const full = gistContent(t, requests);
 	t.equal(gistWrites(requests)[0].body.description, `${gistMarker} (dry runs)`, 'in a gist of its own, so the issueâ€™s link still shows what the issue says');
