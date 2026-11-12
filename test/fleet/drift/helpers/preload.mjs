@@ -4,15 +4,18 @@ import { appendFileSync, readFileSync } from 'fs';
 import nock from 'nock';
 
 import { mockGitHub } from '../../lib/helpers/github.mjs';
+import { mockReport } from './report.mjs';
 import { mockVersions } from './versions.mjs';
 
 /** @import { VersionFixture } from './versions.mjs' */
+/** @import { ReportScenario } from './report.mjs' */
 /** @import { Scenario } from '../../lib/helpers/github.mjs' */
 
 /**
  * @typedef {{
  *   versions?: VersionFixture,
  *   github?: Scenario,
+ *   report?: ReportScenario,
  *   log?: string,
  *   throwStringOnSplit?: string,
  * }} ChildScenario
@@ -33,6 +36,9 @@ if (FLEET_TEST_SCENARIO) {
 	const { log } = scenario;
 	if (scenario.github && log) {
 		mockGitHub(scenario.github, (r) => appendFileSync(log, `${JSON.stringify(r)}\n`));
+	}
+	if (scenario.report && log) {
+		mockReport(scenario.report, (r) => appendFileSync(log, `${JSON.stringify(r)}\n`));
 	}
 
 	// for exercising the handling of a thrown non-Error: `split` throws a string, but only for this exact input

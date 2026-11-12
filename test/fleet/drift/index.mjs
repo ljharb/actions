@@ -2,7 +2,8 @@ import path from 'path';
 
 import test from 'tape';
 
-import { legend } from '../../../fleet/commands/syntax.mjs';
+import { replyMarker } from '../../../fleet/commands/replies.mjs';
+import { legend, parseCommand } from '../../../fleet/commands/syntax.mjs';
 import { installedRepo, privateKey } from '../lib/helpers/github.mjs';
 import { runChild } from './helpers/child.mjs';
 import { nodeWorkflow, standardWorkflows, template } from './helpers/states.mjs';
@@ -10,6 +11,8 @@ import { versionFixture } from './helpers/versions.mjs';
 
 /** @import { Scenario, RepoSpec, Recorded, Gist } from '../lib/helpers/github.mjs' */
 /** @import { ChildResult } from './helpers/child.mjs' */
+/** @import { ReportScenario } from './helpers/report.mjs' */
+/** @import { Run } from '../../../fleet/commands/replies.mjs' */
 /** @import { Test } from 'tape' */
 
 const marker = '<!-- ljharb/actions: fleet workflow drift -->';
@@ -19,6 +22,15 @@ const legacy = { login: 'github-actions[bot]' };
 // the token for the report issue's repository, from its installation
 const issueToken = 'token ghs_installation_99';
 const script = path.join('fleet', 'drift', 'index.mjs');
+
+/** @type {(line: string) => Run} */
+function command(line) {
+	const parsed = parseCommand(line);
+	if (parsed.type !== 'fix' && parsed.type !== 'merge') {
+		throw new TypeError(`not a command: ${line}`);
+	}
+	return parsed;
+}
 
 /**
  * @type {(options?: {
@@ -1008,6 +1020,119 @@ test('fleet/drift: writes the gist and the summary even when the issue write fai
 	t.deepEqual(issueWrites(requests).map((r) => `${r.method} ${r.path}`), ['POST /repos/ljharb/actions/issues'], 'having tried to create the issue');
 	t.ok(summary.includes(gistLink('new-gist')), 'the summary was still written');
 	t.ok(gistContent(t, requests).includes('<code>ljharb/missing</code>'), 'and the gist');
+
+	t.end();
+});
+
+/**
+ * Runs the drift report, as `run` does, with `report` as what sweeping the report issue reads (see `mockReport`).
+ * @type {(github: Scenario, report: ReportScenario, env?: Record<string, string>) => ChildResult}
+ */
+function runSwept(github, report, env = {}) {
+	return runChild([script], {
+		scenario: { github, report },
+		env: {
+			'INPUT_APP-ID': '1234',
+			'INPUT_PRIVATE-KEY': privateKey(),
+			INPUT_ACCOUNTS: 'ljharb',
+			'INPUT_DRY-RUN': 'false',
+			'INPUT_GIST-TOKEN': 'ghp_gist',
+			GITHUB_REPOSITORY: 'ljharb/actions',
+			GITHUB_RUN_ID: '42',
+			...env,
+		},
+	});
+}
+
+/** @type {(id: number, body: string, login: string) => Record<string, unknown>} */
+function issueComment(id, body, login) {
+	return {
+		id,
+		node_id: `IC_${id}`, // eslint-disable-line camelcase
+		body,
+		user: { login },
+	};
+}
+
+/** @type {(requests: Recorded[]) => [string, string][]} */
+function minimized(requests) {
+	return requests.filter((r) => r.path === '/graphql' && String(r.body?.query).includes('minimizeComment')).map((r) => [r.body.variables.id, r.body.variables.classifier]);
+}
+
+const sweptScenario = {
+	installations: [{ id: 1, account: { login: 'ljharb' } }],
+	installationRepos: { 1: [installedRepo('ljharb', 'missing')] },
+	repos: { 'ljharb/missing': repo({ workflows: null }) },
+	issues: [
+		{ number: 10, user: bot, state: 'open', body: marker, created_at: '2026-10-01T00:00:00Z', html_url: 'https://github.com/ljharb/actions/issues/10' }, // eslint-disable-line camelcase
+	],
+};
+const sweptReport = {
+	comments: [
+		issueComment(1, '/dry-run fix ljharb/qs', 'maintainer'),
+		issueComment(2, `${replyMarker(command('/dry-run fix ljharb/qs'))}\n\`/dry-run fix ljharb/qs\` (a dry run, so nothing was changed; see the run):\n\n| Repository | Outcome |\n| --- | --- |\n| \`ljharb/qs\` | would open a PR |`, legacy.login),
+		issueComment(3, '/fix ljharb/qs', 'maintainer'),
+		issueComment(4, `${replyMarker(command('/fix ljharb/qs'))}\n\`/fix ljharb/qs\` (from each repository’s \`fleet/workflows\` branch; see the run):\n\n| Repository | Outcome |\n| --- | --- |\n| \`ljharb/qs\` | opened https://github.com/ljharb/qs/pull/3 |`, bot.login),
+		issueComment(5, '/dry-run merge ljharb/other', 'maintainer'),
+		issueComment(6, `${replyMarker(command('/dry-run merge ljharb/other'))}\n\`/dry-run merge ljharb/other\` (a dry run, so nothing was changed or queued; see the run):`, bot.login),
+		issueComment(7, `${replyMarker(command('/dry-run merge ljharb/other'))}\n\`/dry-run merge ljharb/other\` (a dry run, so nothing was changed or queued; see the run):`, bot.login),
+	],
+	pulls: { 'ljharb/qs#3': 'closed' },
+};
+
+test('fleet/drift: sweeps the report issue, hiding what’s stale on it', (t) => {
+	const { status, stdout, requests } = runSwept(sweptScenario, sweptReport);
+
+	t.equal(status, 0, 'exits successfully');
+	t.match(stdout, /; updated https:\/\/github\.com\/ljharb\/actions\/issues\/10$/m, 'after updating the report');
+	const listed = matching(requests, 'GET', /^\/repos\/ljharb\/actions\/issues\/10\/comments\?/);
+	t.deepEqual(listed.map((r) => r.authorization), [issueToken], 'reading its comments as the App’s bot');
+	t.deepEqual(matching(requests, 'GET', /^\/repos\/ljharb\/actions\/installation$/).length, 1, 'with the token it wrote the report with');
+	t.deepEqual(matching(requests, 'GET', /^\/repos\/ljharb\/qs\/pulls/).map((r) => [r.path.split('?')[0], r.authorization]), [['/repos/ljharb/qs/pulls/3', issueToken], ['/repos/ljharb/qs/pulls', issueToken], ['/repos/ljharb/qs/pulls', issueToken]], 'and the PRs the App’s replies name, and its open ones');
+	t.deepEqual(
+		minimized(requests),
+		[
+			['IC_1', 'RESOLVED'],
+			['IC_2', 'RESOLVED'],
+			['IC_3', 'RESOLVED'],
+			['IC_4', 'RESOLVED'],
+			['IC_6', 'OUTDATED'],
+		],
+		'hiding what’s only about a repository whose PRs are all closed as resolved, including GitHub Actions’ bot’s replies, and a reply posted twice’s earlier copy as outdated',
+	);
+	t.ok(stdout.split('\n').includes('hid 1 of the App’s replies on the report that later replies make outdated, as outdated'), 'logging how many were outdated');
+	t.ok(stdout.split('\n').includes('hid 4 comments on the report about a repository whose PRs the App has all closed or merged, as resolved'), 'and resolved');
+	t.notOk((/::warning::/).test(stdout), 'without a warning');
+
+	const created = runSwept({ ...sweptScenario, issues: [] }, sweptReport);
+	t.equal(created.status, 0, 'exits successfully');
+	t.deepEqual(matching(created.requests, 'GET', /\/comments\?/), [], 'a report just created has nothing to sweep');
+
+	t.end();
+});
+
+test('fleet/drift: a dry run sweeps nothing from the report issue, but says how much it would have', (t) => {
+	const { status, stdout, requests } = runSwept(sweptScenario, sweptReport, { 'INPUT_DRY-RUN': 'true' });
+
+	t.equal(status, 0, 'exits successfully');
+	t.match(stdout, /; dry run: no issue changes$/m, 'changing no issue');
+	t.deepEqual(issueWrites(requests), [], 'writing nothing to it');
+	t.deepEqual(minimized(requests), [], 'nor hiding anything');
+	t.ok(stdout.split('\n').includes('dry run: would have hidden 1 of the App’s replies on the report that later replies make outdated, as outdated'), 'saying how many it would have hidden as outdated');
+	t.ok(stdout.split('\n').includes('dry run: would have hidden 4 comments on the report about a repository whose PRs the App has all closed or merged, as resolved'), 'and as resolved');
+
+	const none = runSwept({ ...sweptScenario, issues: [] }, sweptReport, { 'INPUT_DRY-RUN': 'true' });
+	t.equal(none.status, 0, 'exits successfully');
+	t.deepEqual(matching(none.requests, 'GET', /\/comments\?/), [], 'without a report, sweeping nothing');
+
+	const unfound = runSwept({ ...sweptScenario, repoInstallations: { 'ljharb/actions': { status: 404 } } }, sweptReport, { 'INPUT_DRY-RUN': 'true' });
+	t.equal(unfound.status, 0, 'a dry run that can’t find the report still exits successfully');
+	t.ok(unfound.stdout.split('\n').includes('::warning::could not find the report issue, to say how many of its comments would be hidden'), 'only warning, without what failed');
+
+	const unread = runSwept({ ...sweptScenario, appSlug: null }, sweptReport, { 'INPUT_DRY-RUN': 'true' });
+	t.equal(unread.status, 0, 'nor when it can’t tell who the App’s bot is');
+	t.ok(unread.stdout.split('\n').includes('::warning::could not find the report issue, to say how many of its comments would be hidden'), 'only warning');
+	t.deepEqual(matching(unfound.requests, 'GET', /\/comments\?/), [], 'sweeping nothing');
 
 	t.end();
 });

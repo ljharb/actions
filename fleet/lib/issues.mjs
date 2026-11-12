@@ -9,6 +9,7 @@ import {
 
 /** @import { Octokit, appAuth } from './app.mjs' */
 /** @typedef {ReturnType<typeof appAuth>} Auth */
+/** @typedef {Awaited<ReturnType<Octokit['rest']['issues']['listForRepo']>>['data'][number]} ReportIssue */
 
 // the report issue was first opened as GitHub Actions' bot; GitHub can't change an issue's author, so the App's bot adopts it
 export const legacyAuthor = 'github-actions[bot]';
@@ -47,28 +48,15 @@ export function isReportAuthor(login, bot) {
 }
 
 /**
- * Keeps a report's issue in `owner/repo` up to date, as the App's bot (`bot`): the newest issue, open or closed, whose body has `marker`, opened by the App's bot or (for one it adopted) GitHub Actions' bot (see `isReportAuthor`); an issue anyone else opens is never written to.
- * With `found`, it's updated to that title and body, and reopened, or created when there's none; without, an open one is closed, with a comment saying `closing`, and otherwise nothing changes (which is `unchanged`).
- * @type {(options: {
- *   octokit: Octokit,
- *   owner: string,
- *   repo: string,
- *   bot: string,
- *   marker: string,
- *   closing: string,
- *   unchanged: string,
- *   found: { title: string, body: string } | null,
- * }) => Promise<string>}
+ * A report's issue in `owner/repo`: the newest issue, open or closed, whose body has `marker`, opened by the App's bot (`bot`) or (for one it adopted) GitHub Actions' bot (see `isReportAuthor`); or `null`, when there's none. An issue anyone else opens is never the report.
+ * @type {(options: { octokit: Octokit, owner: string, repo: string, bot: string, marker: string }) => Promise<ReportIssue | null>}
  */
-export async function upsertReportIssue({
+export async function findReportIssue({
 	octokit,
 	owner,
 	repo,
 	bot,
 	marker,
-	closing,
-	unchanged,
-	found,
 }) {
 	// the App's bot's own, or one opened as GitHub Actions' bot before the App wrote the report, which it adopts
 	const issues = (await Promise.all([bot, legacyAuthor].map((creator) => octokit.paginate(octokit.rest.issues.listForRepo, {
@@ -81,6 +69,44 @@ export async function upsertReportIssue({
 	const [issue] = issues
 		.filter((i) => !i.pull_request && i.body?.includes(marker) && isReportAuthor(i.user?.login, bot))
 		.sort((a, b) => b.created_at.localeCompare(a.created_at));
+	return issue ?? null;
+}
+
+/**
+ * Keeps a report's issue in `owner/repo` up to date, as the App's bot (`bot`): `issue`, when it's already been found (see `findReportIssue`, which, unspecified, finds it by `marker`); an issue anyone else opens is never written to.
+ * With `found`, it's updated to that title and body, and reopened, or created when there's none; without, an open one is closed, with a comment saying `closing`, and otherwise nothing changes (which is `unchanged`).
+ * @type {(options: {
+ *   octokit: Octokit,
+ *   owner: string,
+ *   repo: string,
+ *   bot: string,
+ *   marker: string,
+ *   closing: string,
+ *   unchanged: string,
+ *   found: { title: string, body: string } | null,
+ *   issue?: ReportIssue | null,
+ * }) => Promise<string>}
+ */
+export async function upsertReportIssue({
+	octokit,
+	owner,
+	repo,
+	bot,
+	marker,
+	closing,
+	unchanged,
+	found,
+	issue: known,
+}) {
+	const issue = known === undefined
+		? await findReportIssue({
+			octokit,
+			owner,
+			repo,
+			bot,
+			marker,
+		})
+		: known;
 
 	if (!found) {
 		if (issue?.state === 'open') {

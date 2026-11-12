@@ -2,11 +2,20 @@ import * as core from '@actions/core';
 
 import { botLogin, octokitFor } from './app.mjs';
 import { upsertGist } from './gist.mjs';
-import { issueOctokit, upsertReportIssue } from './issues.mjs';
+import {
+	findReportIssue,
+	issueOctokit,
+	upsertReportIssue,
+} from './issues.mjs';
 import { code, html } from './markdown.mjs';
 
-/** @import { Failure, appAuth } from './app.mjs' */
+/** @import { Failure, Octokit, appAuth } from './app.mjs' */
 /** @import { Gist } from './gist.mjs' */
+/** @import { ReportIssue } from './issues.mjs' */
+/**
+ * The report issue (`number`, in `owner/repo`), for sweeping (see `publish`): the App's bot's Octokit for its repository, the bot's login, and whether it's a dry run.
+ * @typedef {{ octokit: Octokit, owner: string, repo: string, number: number, bot: string, dryRun: boolean }} Sweeping
+ */
 /** @typedef {Gist | { error: string }} Written */
 /** @typedef {{ title: string, parts: string[], summary: (written: Written, forIssue: boolean) => string }} Report */
 
@@ -147,7 +156,35 @@ export function gistToken() {
 }
 
 /**
+ * The App's bot's Octokit for the report issue's repository (`owner/repo`; see `issueOctokit`), the bot's login, and the report issue there (marked with `marker`; see `findReportIssue`), if there is one.
+ * @type {(auth: ReturnType<typeof appAuth>, where: { owner: string, repo: string, marker: string }) => Promise<{ octokit: Octokit, bot: string, report: ReportIssue | null }>}
+ */
+async function reportIssue(
+	auth,
+	{
+		owner,
+		repo,
+		marker,
+	},
+) {
+	const octokit = await issueOctokit(auth, owner, repo);
+	const bot = await botLogin(auth);
+	return {
+		octokit,
+		bot,
+		report: await findReportIssue({
+			octokit,
+			owner,
+			repo,
+			bot,
+			marker,
+		}),
+	};
+}
+
+/**
  * Publishes `found` (or, when it's `null`, `none`): its full report to its gist (`gist.description`, or, in a dry run, `gist.dryRunDescription`, so that a dry run never changes what the issue links to; its files named for `gist.base`); then its summary to the run's; then, unless it's a dry run, its summary to its issue (see `upsertReportIssue`, which `issue` is passed to), as the App's bot.
+ * Then, with `sweep`, the report issue that was already there (not one just created, which has no comments yet) is swept with it, in a dry run too (which `sweep` is told, so that it changes nothing); sweeping is never worth failing the report over, so a dry run that can't find the issue only warns, without what GitHub said (a run that isn't dry fails, since it can't write the issue either).
  * A failure to write the gist is in the summary and the issue (which are still updated, so neither is left out of date), and in `written`, for the caller to fail the run with.
  * @type {(options: {
  *   auth: ReturnType<typeof appAuth>,
@@ -156,6 +193,7 @@ export function gistToken() {
  *   issue: { marker: string, closing: string, unchanged: string },
  *   found: Report | null,
  *   none: string,
+ *   sweep?: (report: Sweeping) => Promise<unknown>,
  * }) => Promise<{ written: Written, outcome: string }>}
  */
 export async function publish({
@@ -165,6 +203,7 @@ export async function publish({
 	issue,
 	found,
 	none,
+	sweep,
 }) {
 	const dryRun = core.getBooleanInput('dry-run');
 	/** @type {Written} */
@@ -183,18 +222,62 @@ export async function publish({
 	}
 	await core.summary.addRaw(found ? found.summary(written, false) : none).write();
 	const [owner, repo] = (core.getInput('issue-repository') || thisRepository).split('/');
+	const where = {
+		owner,
+		repo,
+		marker: issue.marker,
+	};
+	if (dryRun) {
+		const outcome = 'dry run: no issue changes';
+		if (!sweep) {
+			return { written, outcome };
+		}
+		/** @type {Awaited<ReturnType<typeof reportIssue>>} */
+		let read;
+		try {
+			read = await reportIssue(auth, where);
+		} catch {
+			core.warning('could not find the report issue, to say how many of its comments would be hidden');
+			return { written, outcome };
+		}
+		if (read.report) {
+			await sweep({
+				octokit: read.octokit,
+				owner,
+				repo,
+				number: read.report.number,
+				bot: read.bot,
+				dryRun,
+			});
+		}
+		return { written, outcome };
+	}
 	// the issue is written by the App's bot, with a token for only its repository
-	const outcome = dryRun
-		? 'dry run: no issue changes'
-		: await upsertReportIssue({
-			octokit: await issueOctokit(auth, owner, repo),
+	const {
+		octokit,
+		bot,
+		report,
+	} = await reportIssue(auth, where);
+	const outcome = await upsertReportIssue({
+		octokit,
+		owner,
+		repo,
+		bot,
+		marker: issue.marker,
+		closing: issue.closing,
+		unchanged: issue.unchanged,
+		found: found && { title: found.title, body: found.summary(written, true) },
+		issue: report,
+	});
+	if (sweep && report) {
+		await sweep({
+			octokit,
 			owner,
 			repo,
-			bot: await botLogin(auth),
-			marker: issue.marker,
-			closing: issue.closing,
-			unchanged: issue.unchanged,
-			found: found && { title: found.title, body: found.summary(written, true) },
+			number: report.number,
+			bot,
+			dryRun,
 		});
+	}
 	return { written, outcome };
 }
