@@ -980,7 +980,7 @@ test('maintain: a `fleet/workflows` PR whose CI failed gets back the inputs it r
 
 	const third = await run(t, { ...scenario, offline: true });
 	t.equal(third.errors, 0, 'the next run, for the same head, clones nothing');
-	t.ok(logged(third.stdout).includes(`${prURL(server)}: left as it is: as already said on it, it’s \`stuck\` until its head commit changes`), 'says why');
+	t.ok(logged(third.stdout).some((line) => line.startsWith(`${prURL(server)}: left as it is: as already said on it, it’s \`stuck\` until its head commit changes`)), 'says why');
 	t.deepEqual(comments(third.requests), [], 'and only says so once for that head');
 	t.equal(server.tip(`refs/heads/${fixBranch}`), restored, 'never changing it again');
 	t.end();
