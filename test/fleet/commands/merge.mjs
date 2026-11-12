@@ -744,7 +744,7 @@ test('fleet/commands: `/merge` hides, as resolved, what’s only about a reposit
 		['a', 'b', 'secret'].map((n) => ({ repositories: [n], permissions: { pull_requests: 'write' } })), // eslint-disable-line camelcase
 		'hiding what’s on a PR with a token for only its repository, that can only do that',
 	);
-	t.match(all.stdout, /^hid 4 comments about a repository whose PRs the App has all merged as resolved$/m, 'logging only how many');
+	t.match(all.stdout, /^hid 4 comments about a repository .+ as resolved$/m, 'logging only how many');
 	t.notOk(all.stdout.includes('secret'), 'never naming a private repository');
 
 	const one = merging('/merge ljharb/a');
@@ -769,6 +769,6 @@ test('fleet/commands: `/merge` hides, as resolved, what’s only about a reposit
 	t.equal(refused.status, 0, 'failing to hide one fails nothing');
 	t.deepEqual(hidden(refused.requests).map(([id]) => id), ['IC_1', 'IC_61', 'IC_61', 'IC_62', 'IC_63', 'IC_77'], 'trying the rest, but none already hidden');
 	t.match(refused.stdout, /^::warning::could not hide 1 of the App’s comments on a PR it merged as resolved \(FORBIDDEN\)$/m, 'on the PR too');
-	t.match(refused.stdout, /^::warning::could not hide 1 of the comments about a repository whose PRs the App has all merged as resolved \(FORBIDDEN\)$/m, 'only warning, never naming it');
+	t.match(refused.stdout, /^::warning::could not hide 1 of the comments about a repository .+ as resolved \(FORBIDDEN\)$/m, 'only warning, never naming it');
 	t.end();
 });

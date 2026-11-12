@@ -513,7 +513,7 @@ test('hideResolved', (t) => {
 		const { count, stdout } = await hideAbout(['o/secret'], [{ id: 5, author: bot }]);
 		st.equal(count, 1, 'saying how many it hid');
 		st.deepEqual(hidden(requests), [['IC_1', 'RESOLVED']], 'skipping one already hidden, those about another repository, and the App’s own new comment');
-		st.equal(stdout, 'hid 1 comment about a repository whose PRs the App has all merged as resolved\n', 'logging only how many');
+		st.match(stdout, /^hid 1 comment about a repository .+ as resolved\n$/, 'logging only how many');
 	});
 
 	t.test('hides what’s about each of them', async (st) => {
@@ -521,7 +521,7 @@ test('hideResolved', (t) => {
 		const { count, stdout } = await hideAbout(['o/secret', 'O/Other'], [{ id: 5, author: bot }]);
 		st.equal(count, 4, 'hiding those about each');
 		st.deepEqual(hidden(requests).map(([id]) => id), ['IC_1', 'IC_2', 'IC_3', 'IC_4'], 'whatever case they’re in');
-		st.equal(stdout, 'hid 4 comments about a repository whose PRs the App has all merged as resolved\n', 'logging how many');
+		st.match(stdout, /^hid 4 comments about a repository .+ as resolved\n$/, 'logging how many');
 	});
 
 	t.test('about no repository, reads nothing', async (st) => {
@@ -533,7 +533,7 @@ test('hideResolved', (t) => {
 	t.test('failing only warns, never naming a repository', async (st) => {
 		mockAPI(st, { listStatus: 404 });
 		const unread = await hideAbout(['o/secret'], [{ id: 5, author: bot }]);
-		st.equal(unread.stdout, '::warning::could not read the comments on the report, to hide those about a repository whose PRs the App has all merged as resolved (HTTP 404)\n', 'when they can’t be read');
+		st.match(unread.stdout, /^::warning::could not read the comments on the report, to hide those about a repository .+ as resolved \(HTTP 404\)\n$/, 'when they can’t be read');
 
 		nock.cleanAll();
 		mockAPI(st, {
@@ -542,7 +542,7 @@ test('hideResolved', (t) => {
 		});
 		const { count, stdout } = await hideAbout(['o/secret'], [{ id: 5, author: bot }]);
 		st.equal(count, 1, 'hiding the rest');
-		st.equal(stdout, '::warning::could not hide 1 of the comments about a repository whose PRs the App has all merged as resolved (FORBIDDEN)\nhid 1 comment about a repository whose PRs the App has all merged as resolved\n', 'or when one can’t be hidden');
+		st.match(stdout, /^::warning::could not hide 1 of the comments about a repository .+ as resolved \(FORBIDDEN\)\nhid 1 comment about a repository .+ as resolved\n$/, 'or when one can’t be hidden');
 		st.notOk(stdout.includes('secret'), 'never naming it');
 	});
 

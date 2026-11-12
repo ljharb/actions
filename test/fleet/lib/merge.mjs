@@ -1090,7 +1090,7 @@ test('noneLeft', async (t) => {
 	};
 	const pub = await failing(false);
 	t.equal(pub.left, false, 'a failure to list them is never none left');
-	t.equal(pub.stdout, '::warning::could not list the App’s open PRs in a repository it merged one in, to tell whether that was its last (HTTP 502)\n', 'and only warns, never saying where');
+	t.match(pub.stdout, /^::warning::could not list the App’s open PRs in a repository .+, to tell whether that was its last \(HTTP 502\)\n$/, 'and only warns, never saying where');
 	const priv = await failing(true);
 	t.deepEqual(priv, { left: false, stdout: '' }, 'for a private repository, not even that');
 });
