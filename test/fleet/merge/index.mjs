@@ -616,3 +616,71 @@ test('fleet/merge: merging the App’s last open PR in a repository hides, as re
 	t.notOk(stdout.includes('secret'), 'never naming the private one');
 	t.end();
 });
+
+test('fleet/merge: a queued PR found already merged or closed that was the App’s last open PR in a repository hides, as resolved, what’s only about it', (t) => {
+	/** @type {(id: number, body: string, login?: string) => Record<string, unknown>} */
+	const listed = (id, body, login = bot) => ({
+		id,
+		node_id: `IC_${id}`, // eslint-disable-line camelcase
+		body,
+		user: { login },
+	});
+	const closed = { state: 'closed', merged_at: null }; // eslint-disable-line camelcase
+	/** @type {(openPulls: Record<string, Record<string, unknown>[]>, found?: Record<string, unknown>) => ReturnType<typeof runScript>} */
+	const closing = (openPulls, found = closed) => runScript(t, script, {
+		merge: {
+			queue: queue(entry('ljharb/f', 1, { commentId: 33 }), entry('ljharb/secret', 1, { commentId: 22, isPrivate: true })),
+			prs: {
+				'ljharb/f#1': { ...pr('ljharb/f', 1, fixBranch), ...found },
+				'ljharb/secret#1': {
+					...pr('ljharb/secret', 1, fixBranch),
+					...closed,
+					base: { ref: 'main', repo: { private: true } },
+				},
+			},
+			openPulls,
+			eyes: { 33: [{ id: 704, user: { login: bot } }] },
+		},
+		commands: {
+			comments: {
+				'ljharb/actions#9': [
+					listed(53, '/merge ljharb/f', 'maintainer'),
+					listed(54, '/merge ljharb/secret', 'maintainer'),
+				],
+				'ljharb/f#1': [listed(1, `${saidMarker('stuck', 'abc0')}\nneeds a person`)],
+				'ljharb/secret#1': [listed(2, `${saidMarker('stuck', 'abc0')}\nneeds a person`)],
+			},
+		},
+	});
+	/** @type {(requests: ReturnType<typeof runScript>['requests']) => string[]} */
+	const hiddenIds = (requests) => matching(requests, 'POST', /^\/graphql$/).filter((r) => r.body.variables.classifier).map((r) => `${r.body.variables.id} ${r.body.variables.classifier}`);
+
+	const none = closing({ 'ljharb/secret': [] });
+	t.equal(none.status, 0, 'none left: exits successfully');
+	t.deepEqual(
+		replies(none.requests),
+		[expectedReply([`| \`ljharb/f\` | not merged https://github.com/ljharb/f/pull/1: it was closed ${row(33)} |`])],
+		'none left: still saying it wasn’t merged, and nothing about the private one',
+	);
+	t.deepEqual(hiddenIds(none.requests), ['IC_53 RESOLVED'], 'none left: hiding what’s only about the public repository on the report, but not what the App said on the closed PR, nor anything about the private one');
+	t.match(none.stdout, /^hid 1 comment about a repository the App has no PRs left open in, as resolved$/m, 'none left: logging only how many');
+	t.deepEqual(reactions(none.requests, 33), ['+confused', '-704'], 'none left: its command is still 😕, since it wasn’t merged');
+	t.deepEqual(matching(none.requests, 'GET', /^\/repos\/ljharb\/secret\/pulls\?/), [], 'never listing the private repository’s open PRs');
+	t.notOk(none.stdout.includes('secret'), 'never naming the private one');
+
+	const left = closing({ 'ljharb/f': [pr('ljharb/f', 2, relockBranch)] });
+	t.equal(left.status, 0, 'one left: exits successfully');
+	t.equal(replies(left.requests).length, 1, 'one left: still replying');
+	t.deepEqual(hiddenIds(left.requests), [], 'one left: hiding nothing, since a PR of the App’s is still open there');
+
+	const merged = closing({ 'ljharb/secret': [] }, { state: 'closed', merged_at: '2026-11-12T00:00:00Z' }); // eslint-disable-line camelcase
+	t.equal(merged.status, 0, 'already merged: exits successfully');
+	t.deepEqual(
+		replies(merged.requests),
+		[expectedReply([`| \`ljharb/f\` | already merged https://github.com/ljharb/f/pull/1 ${row(33)} |`])],
+		'already merged: saying so, and nothing about the private one',
+	);
+	t.deepEqual(hiddenIds(merged.requests), ['IC_53 RESOLVED'], 'already merged: hiding what’s only about the public repository on the report, as once the App merges it');
+	t.deepEqual(reactions(merged.requests, 33), ['+rocket', '-704'], 'already merged: its command is 🚀');
+	t.end();
+});

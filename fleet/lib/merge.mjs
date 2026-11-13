@@ -308,7 +308,7 @@ export async function hideSaidOnMerged(
 }
 
 /**
- * Whether the App's bot (`bot`) has no open PRs left in `owner/name` (see `candidatePRs`) but those it just merged (`merged`, which GitHub can still list as open for a moment). Since that only decides what's hidden, a failure only warns (for a private repository, not even that), never saying where, and is `false`.
+ * Whether the App's bot (`bot`) has no open PRs left in `owner/name` (see `candidatePRs`) but those it just merged, or found already merged or closed (`merged`, which GitHub can still list as open for a moment). Since that only decides what's hidden, a failure only warns (for a private repository, not even that), never saying where, and is `false`.
  * @type {(read: Octokit, repo: { owner: string, name: string, repository: string, private: boolean }, app: { bot: string, merged: Set<number> }) => Promise<boolean>}
  */
 export async function noneLeft(read, repo, { bot, merged }) {
@@ -316,7 +316,7 @@ export async function noneLeft(read, repo, { bot, merged }) {
 		return (await candidatePRs(read, repo, bot)).every((pr) => merged.has(pr.number));
 	} catch (error) {
 		if (!repo.private) {
-			core.warning(`could not list the App’s open PRs in a repository it merged one in, to tell whether that was its last${httpStatus(error)}`);
+			core.warning(`could not list the App’s open PRs in a repository where one of its PRs was just merged or closed, to tell whether that was its last${httpStatus(error)}`);
 		}
 		return false;
 	}

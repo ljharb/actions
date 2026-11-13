@@ -30,12 +30,12 @@ import { maintain } from './maintain.mjs';
 /** @import { Entry } from '../lib/merge.mjs' */
 /** @typedef {{ auth: ReturnType<typeof appAuth>, bot: () => Promise<string> }} App */
 /**
- * The App, as one run of the queue has it: with what it's merged so far in each repository (by `owner/name`, lowercased).
+ * The App, as one run of the queue has it: with the queued PRs it's merged, or found already merged or closed, so far in each repository (by `owner/name`, lowercased).
  * @typedef {App & { merged: Map<string, Set<number>> }} QueueRun
  */
 /**
  * What checking one queued PR came to: kept, to check again next time, or dropped, with whether it was merged (`ok`), and what to say about it (`null`: nothing, since it's private, or can't be shown to be public), and what to list about it below the reply's table (`details`: see `assessmentDetails`), only when there's something to say about it.
- * `error` is whether it's a public failure that fails the run; `resolved`, whether it was the last open PR of the App's in its public repository, and was merged.
+ * `error` is whether it's a public failure that fails the run; `resolved`, whether it was the last open PR of the App's in its public repository, and was merged, or found already merged or closed.
  * @typedef {{ entry: Entry, keep: boolean, ok: boolean, text: string | null, details: string[], error: boolean, resolved: boolean }} Result
  */
 
@@ -86,15 +86,36 @@ function keep(entry, error = false) {
 }
 
 /**
- * Once the App has merged the queued PR `entry` (whose repository `read` can read, with installation `installationId`), hides what it said on that PR as resolved (see `hideSaidOnMerged`); returns whether it was the App's last open PR in its repository (see `noneLeft`), which is only looked at for a public one (`shown`), since hiding what's on the report about a private one would confirm what happened in it.
+ * Once the queued PR `entry` (whose repository `read` can read) is no longer open (the App merged it, or it was found already merged or closed), notes that, and returns whether it was the App's last open PR in its repository (see `noneLeft`), which is only looked at for a public one (`shown`), since hiding what's on the report about a private one would confirm what happened in it.
+ * @type {(app: QueueRun, entry: Entry, repo: { read: Octokit, shown: boolean }) => Promise<boolean>}
+ */
+async function wasLast(
+	{ bot, merged },
+	entry,
+	{ read, shown },
+) {
+	const [owner, name] = entry.repository.split('/');
+	const repository = entry.repository.toLowerCase();
+	const inRepository = merged.get(repository) ?? new Set();
+	merged.set(repository, inRepository.add(entry.number));
+	return shown && noneLeft(
+		read,
+		{
+			owner,
+			name,
+			repository: entry.repository,
+			private: false,
+		},
+		{ bot: await bot(), merged: inRepository },
+	);
+}
+
+/**
+ * Once the App has merged the queued PR `entry` (whose repository `read` can read, with installation `installationId`), hides what it said on that PR as resolved (see `hideSaidOnMerged`); returns whether it was the App's last open PR in its public repository (see `wasLast`).
  * @type {(app: QueueRun, entry: Entry, merge: { read: Octokit, installationId: number, shown: boolean }) => Promise<boolean>}
  */
 async function afterMerge(
-	{
-		auth,
-		bot,
-		merged,
-	},
+	app,
 	entry,
 	{
 		read,
@@ -102,27 +123,23 @@ async function afterMerge(
 		shown,
 	},
 ) {
+	const { auth, bot } = app;
 	const [owner, name] = entry.repository.split('/');
-	const repository = entry.repository.toLowerCase();
-	const inRepository = merged.get(repository) ?? new Set();
-	merged.set(repository, inRepository.add(entry.number));
-	const where = {
-		installationId,
-		owner,
-		name,
-		repository: entry.repository,
-		private: !shown,
-	};
 	await hideSaidOnMerged(
 		auth,
-		where,
+		{
+			installationId,
+			owner,
+			name,
+			private: !shown,
+		},
 		{
 			read,
 			number: entry.number,
 			bot: await bot(),
 		},
 	);
-	return shown && noneLeft(read, where, { bot: await bot(), merged: inRepository });
+	return wasLast(app, entry, { read, shown });
 }
 
 /**
@@ -163,8 +180,13 @@ async function recheck(app, entry, visibility) {
 		error: error && visibility.shown,
 		resolved,
 	});
+	// one that someone else merged, or that was closed (eg, by the App, since it only changed its bookkeeping), that was the App's last open PR there leaves nothing there to fix or merge, as once the App merges it; what the App said on it is left alone, since the App closing it hides that itself
 	if (pr.state !== 'open') {
-		return pr.merged_at ? done(true, `already merged ${url}`) : done(false, `not merged ${url}: it was closed`);
+		return done(
+			Boolean(pr.merged_at),
+			pr.merged_at ? `already merged ${url}` : `not merged ${url}: it was closed`,
+			{ resolved: await wasLast(app, entry, { read, shown: visibility.shown }) },
+		);
 	}
 	// only what `/merge` was asked to merge is ever merged, and only into the branch it was asked to
 	if (pr.head.sha !== entry.headSha || pr.base.ref !== entry.base) {

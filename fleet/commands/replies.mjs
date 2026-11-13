@@ -295,7 +295,7 @@ export async function hideEarlierReplies({
 }
 
 /**
- * Once the App's bot has posted the comments `ours` on issue `number`, saying that it merged the last of its open PRs in each of `repositories` (each `owner/name`, public), hides every comment before them that's only about one of those (see `aboutOnly`), as `RESOLVED`: there's nothing left there to fix or merge.
+ * Once the App's bot has posted the comments `ours` on issue `number`, saying that the last of its open PRs in each of `repositories` was merged (or, for the merge queue, found already merged or closed) (each `owner/name`, public), hides every comment before them that's only about one of those (see `aboutOnly`), as `RESOLVED`: there's nothing left there to fix or merge.
  * A failure only warns, never naming a repository.
  * @type {(options: { octokit: Octokit, owner: string, repo: string, number: number, repositories: string[], ours: { id: number, author?: string }[] }) => Promise<number>}
  */
@@ -319,8 +319,8 @@ export async function hideResolved({
 		ours,
 		pick: (earlier, author) => aboutOnly(earlier, author, resolved),
 		classifier: 'RESOLVED',
-		unread: 'could not read the comments on the report, to hide those about a repository whose PRs the App has all merged as resolved',
-		unhidden: (count) => `could not hide ${count} of the comments about a repository whose PRs the App has all merged as resolved`,
-		hid: (count) => `hid ${count} ${count === 1 ? 'comment' : 'comments'} about a repository whose PRs the App has all merged as resolved`,
+		unread: 'could not read the comments on the report, to hide those about a repository the App has no PRs left open in, as resolved',
+		unhidden: (count) => `could not hide ${count} of the comments about a repository the App has no PRs left open in, as resolved`,
+		hid: (count) => `hid ${count} ${count === 1 ? 'comment' : 'comments'} about a repository the App has no PRs left open in, as resolved`,
 	});
 }
