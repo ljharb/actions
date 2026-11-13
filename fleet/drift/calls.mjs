@@ -7,7 +7,7 @@ import {
 	parseDocument,
 } from 'yaml';
 
-/** @import { Document, Scalar, Node } from 'yaml' */
+/** @import { Document, Pair, Scalar, Node } from 'yaml' */
 
 /**
  * The calls a workflow file makes (in its jobs) of this repo's reusable workflows, as YAML's parser finds them.
@@ -59,6 +59,17 @@ export function isComment(line) {
 /** @type {(node: unknown) => node is Scalar<string>} */
 export function isString(node) {
 	return isScalar(node) && typeof node.value === 'string';
+}
+
+/** @type {(pair: Pair) => pair is Pair<Scalar<string>>} */
+function isStringKeyed(pair) {
+	return isString(pair.key);
+}
+
+// the first of `map`'s pairs whose key is the string `name`
+/** @type {(map: YAMLMap, name: string) => Pair<Scalar<string>> | undefined} */
+function pairOf(map, name) {
+	return map.items.values().filter(isStringKeyed).find((pair) => pair.key.value === name);
 }
 
 /** @typedef {(offset: number) => { line: number, col: number }} LineOf */
@@ -167,11 +178,11 @@ export function read(original) {
 	/** @type {Call[]} */
 	const calls = [];
 	(isMap(jobs) ? jobs.items : []).forEach(({ key, value: job }) => {
-		const uses = isMap(job) ? job.items.find((pair) => isString(pair.key) && pair.key.value === 'uses') : null;
+		const uses = isMap(job) ? pairOf(job, 'uses') : null;
 		const file = isString(uses?.value) ? uses.value.value.match(usesValue)?.groups?.file : null;
-		if (isScalar(key) && uses && isString(uses.value) && file) {
-			const indent = lineOf(Number(/** @type {Scalar} */ (uses.key).range?.[0])).col; // eslint-disable-line no-extra-parens
-			const pair = /** @type {{ key: Scalar, value: unknown } | undefined} */ (/** @type {YAMLMap} */ (job).items.find((p) => isString(p.key) && p.key.value === 'with')); // eslint-disable-line no-extra-parens
+		if (isMap(job) && isScalar(key) && uses && isString(uses.value) && file) {
+			const indent = lineOf(Number(uses.key.range?.[0])).col;
+			const pair = pairOf(job, 'with');
 			calls.push({
 				job: String(key.value),
 				file,

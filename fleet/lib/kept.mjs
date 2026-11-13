@@ -12,7 +12,7 @@ function show(git, rev) {
 }
 
 /** @type {(value: unknown) => value is Record<string, unknown>} */
-function isObject(value) {
+export function isObject(value) {
 	return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 

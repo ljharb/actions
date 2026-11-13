@@ -73,7 +73,9 @@ export function awaiting(waiting) {
  * @type {(failures: Failure[], waiting: string[]) => string[]}
  */
 export function problems(failures, waiting) {
-	return /** @type {string[]} */ ([]).concat(
+	/** @type {string[]} */
+	const lines = [];
+	return lines.concat(
 		failures.length > 0
 			? ['', incomplete].concat(failures.map(failureItem))
 			: [],
@@ -90,7 +92,9 @@ export function summaryProblems(failures, waiting, listed, fullReport, count = f
 	if (listed) {
 		return problems(failures, waiting);
 	}
-	return /** @type {string[]} */ ([]).concat(
+	/** @type {string[]} */
+	const lines = [];
+	return lines.concat(
 		failures.length > 0
 			? ['', `⚠️ ${count} repositories or installations could not be checked, so this report is incomplete; ${fullReport} lists them all.`]
 			: [],

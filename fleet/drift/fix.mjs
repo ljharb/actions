@@ -23,7 +23,7 @@ import {
 /** @typedef {Pick<Result, 'missing' | 'unexpected'> & { drifted: { name: string }[] }} Discrepancies */
 /** @typedef {'missing' | 'drifted' | 'unexpected'} Category */
 // `kept`, `ignored`, and `unignored` are only ever `/fix`'s own: for the config that keeps what its PR put back, and for `package.json`, to keep that config out of the published package, or to stop ignoring it once it's gone
-/** @typedef {{ path: string, content: string, reason: Category | 'range' | 'kept' | 'ignored' | 'unignored' }} Write */
+/** @typedef {{ path: string, content: string, reason: Exclude<Category, 'unexpected'> | 'range' | 'kept' | 'ignored' | 'unignored' }} Write */
 /** @typedef {{ path: string, reason: 'unexpected' }} Delete */
 /** @typedef {{ path: string, why: string }} Skip */
 /** @typedef {{ writes: Write[], deletes: Delete[], skipped: Skip[] }} Plan */

@@ -228,7 +228,9 @@ async function readCI(octokit, commit) {
 		}
 	});
 	if (failures.length === 0 && !pending) {
-		pending = unreportedPending(suites.unreported, /** @type {(string | null | undefined)[]} */ ([]).concat(
+		/** @type {(string | null | undefined)[]} */
+		const times = [];
+		pending = unreportedPending(suites.unreported, times.concat(
 			runs.map((run) => run.updated_at),
 			checkRuns.map((run) => run.completed_at),
 			statuses.map((status) => status.updated_at),

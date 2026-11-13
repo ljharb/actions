@@ -28,7 +28,6 @@ import { maintain } from './maintain.mjs';
 
 /** @import { Octokit } from '../lib/app.mjs' */
 /** @import { Entry } from '../lib/merge.mjs' */
-/** @import { Unit } from '../lib/markdown.mjs' */
 /** @typedef {{ auth: ReturnType<typeof appAuth>, bot: () => Promise<string> }} App */
 /**
  * The App, as one run of the queue has it: with what it's merged so far in each repository (by `owner/name`, lowercased).
@@ -262,10 +261,11 @@ function replies(results) {
 	return new Map(Array.from(issues).map(([issueNumber, { rows, details }]) => [
 		issueNumber,
 		split(
-			/** @type {(string | Unit)[]} */ ([]).concat(
+			[
 				`The merge queue, as of [this run](${runURL}):`,
 				'',
 				{ text: table.open, group: table },
+			].concat(
 				rows.map((text) => ({ text, group: table })),
 				details.flatMap((text) => ['', text]),
 				'',
@@ -373,19 +373,19 @@ async function runQueue(app, accounts) {
 		return 0;
 	}
 
-	/** @type {Map<Entry, Result>} */
-	const results = new Map();
+	/** @type {Result[]} */
+	const all = [];
 	/** @type {QueueRun} */
 	const run = { ...app, merged: new Map() };
 	// one at a time, private repositories last, as the commands do
-	await entries.filter((e) => !e.private).concat(entries.filter((e) => e.private)).reduce(
-		async (previous, entry) => {
+	const indexed = entries.map((entry, index) => ({ entry, index }));
+	await indexed.filter(({ entry }) => !entry.private).concat(indexed.filter(({ entry }) => entry.private)).reduce(
+		async (previous, { entry, index }) => {
 			await previous;
-			results.set(entry, await check(run, accounts, entry));
+			all[index] = await check(run, accounts, entry);
 		},
 		Promise.resolve(),
 	);
-	const all = entries.map((e) => /** @type {Result} */ (results.get(e)));
 	const {
 		remaining,
 		changed,

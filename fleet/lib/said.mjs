@@ -24,6 +24,21 @@ import { failureDetails } from './app.mjs';
 // the kinds that are about the PR's base's tip too, and so have it in their marker
 const aboutBase = new Set(['conflict', 'empty']);
 
+// every kind of `Said`, which TypeScript checks is neither missing one nor has an extra one
+/** @satisfies {Record<Said, true>} */
+const saidKinds = {
+	foreign: true,
+	conflict: true,
+	empty: true,
+	stuck: true,
+	matches: true,
+};
+
+/** @type {(value: unknown) => value is Said} */
+function isSaid(value) {
+	return typeof value === 'string' && Object.hasOwn(saidKinds, value);
+}
+
 /**
  * The marker hidden at the start of each comment, so that each is only ever made once for each head commit (and, for `conflict` and `empty`, for each of its base's tips).
  * @type {(kind: Said, head: string, base?: string) => string}
@@ -38,14 +53,18 @@ export function marker(kind, head, base) {
  */
 export function parseMarker(body) {
 	const groups = (/^<!-- fleet:(?<kind>foreign|conflict|empty|stuck|matches):(?<head>[0-9a-f]+)(?::(?<base>[0-9a-f]+))? -->\n/).exec(body ?? '')?.groups;
-	if (!groups || aboutBase.has(groups.kind) !== (typeof groups.base === 'string')) {
+	if (!groups) {
 		return null;
 	}
 	const {
 		kind,
 		head,
 		base,
-	} = /** @type {Marked} */ (groups);
+	} = groups;
+	// the pattern only matches kinds that are `Said`, so `isSaid` only tells TypeScript so
+	if (!isSaid(kind) || aboutBase.has(kind) !== (typeof base === 'string')) {
+		return null;
+	}
 	return base ? {
 		kind,
 		head,
@@ -77,6 +96,7 @@ export function classify(
  * @type {(error: unknown) => Nodes}
  */
 function foundNodes(error) {
+	// Octokit's rejection is untyped, and checking its shape would change what a `null` or `undefined` one throws
 	const { errors, data } = /** @type {{ errors?: { type?: string }[], data?: Nodes }} */ (error);
 	if (!data?.nodes || !errors?.every((e) => e?.type === 'NOT_FOUND')) {
 		throw error;
@@ -92,13 +112,14 @@ export async function hideable(octokit, ids) {
 	// as many as GitHub looks up at once
 	const batches = Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) => ids.slice(i * 100, (i + 1) * 100));
 	const found = await Promise.all(batches.map(async (batch) => {
-		/** @type {Nodes} */
-		const data = await octokit.graphql(
+		/** @type {Promise<Nodes>} */
+		const lookup = octokit.graphql(
 			`query($ids: [ID!]!) {
 			nodes(ids: $ids) { id ... on Minimizable { isMinimized } }
 		}`,
 			{ ids: batch },
-		).then((d) => /** @type {Nodes} */ (d), foundNodes);
+		);
+		const data = await lookup.catch(foundNodes);
 		return data.nodes.flatMap((n) => (n && !n.isMinimized ? [n.id] : []));
 	}));
 	return new Set(found.flat());

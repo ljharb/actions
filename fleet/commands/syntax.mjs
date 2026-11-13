@@ -27,11 +27,11 @@ export function quote(text) {
 
 /** @type {(token: string) => token is Category} */
 function isCategory(token) {
-	return categories.includes(/** @type {Category} */ (token)); // eslint-disable-line no-extra-parens
+	return categories.some((category) => category === token);
 }
 
 /** @type {(word: string | undefined) => word is Verb} */
-function isVerb(word) {
+export function isVerb(word) {
 	return word === 'fix' || word === 'merge';
 }
 

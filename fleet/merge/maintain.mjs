@@ -512,7 +512,8 @@ async function alreadySaid(
 	return kind ? { kind, text: `left as it is: as already said on it, it’s \`${kind}\` until its head commit${base ? ', or its base’s tip,' : ''} changes${isRetractable(kind) ? ', or its CI passes' : ''}` } : null;
 }
 
-const branchChanged = /** @type {const} */ ({ kind: 'changed', text: 'its branch changed while it was being looked at; it’s looked at again next time' });
+/** @type {Outcome} */
+const branchChanged = { kind: 'changed', text: 'its branch changed while it was being looked at; it’s looked at again next time' };
 
 /**
  * Clones the PR's repository, as little of it as `act` needs, and has `act` change its branch: unless what the clone has isn't what the API showed.

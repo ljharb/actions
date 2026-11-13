@@ -53,8 +53,7 @@ function accountList({ owner, results }) {
 		open: `<details><summary>${label} (continued)</summary>\n`,
 		close: '\n</details>',
 	};
-	return /** @type {Unit[]} */ ([]).concat(
-		{ text: `<details><summary>${label}</summary>\n`, group },
+	return [{ text: `<details><summary>${label}</summary>\n`, group }].concat(
 		results.map((result) => ({ text: repoItem(result), group })),
 		{ text: group.close, group },
 	);
@@ -93,13 +92,18 @@ export function report(results, privateCount, failures, checked, waiting = [], p
 	].concat(updated ? [updated] : []).join(' ');
 	const accounts = byAccount(results);
 	const title = `Optional-job failures: ${total} of ${count} repositories`;
-	const lists = accounts.flatMap((account) => /** @type {(string | Unit)[]} */ (['']).concat(accountList(account)));
+	/** @type {(string | Unit)[]} */
+	const blankLine = [''];
+	const lists = accounts.flatMap((account) => blankLine.concat(accountList(account)));
 
 	// everything: every failure, every repository, and every job, in as many files as it takes
+	/** @type {(string | Unit)[]} */
+	const heading = [
+		`# ${title}`,
+		'',
+	];
 	const parts = split(
-		/** @type {(string | Unit)[]} */ ([]).concat(
-			`# ${title}`,
-			'',
+		heading.concat(
 			intro('This report is updated in place on every run.'),
 			problems(unchecked, waiting),
 			lists,
@@ -125,8 +129,7 @@ export function report(results, privateCount, failures, checked, waiting = [], p
 					: [`${accounts.length} accounts have repositories with such failures; ${fullReport} lists them all.`]);
 			};
 			/** @type {(listFailures: boolean, withAccounts: 'jobs' | 'counts' | false, detailed?: boolean) => string} */
-			const render = (listFailures, withAccounts, detailed = true) => /** @type {string[]} */ ([]).concat(
-				forIssue ? [marker] : [],
+			const render = (listFailures, withAccounts, detailed = true) => (forIssue ? [marker] : []).concat(
 				intro(forIssue ? 'This issue is updated in place on every run, and closed when there are none.' : ''),
 				'',
 				reportLink(written, 'every repository, and every job, with every one of its failures', detailed),

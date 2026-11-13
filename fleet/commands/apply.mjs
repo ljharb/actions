@@ -65,7 +65,7 @@ const {
 	GITHUB_REPOSITORY = '',
 } = process.env;
 
-/** @type {Record<Exclude<Plan['writes'][number]['reason'], 'unexpected'>, string>} */
+/** @type {Record<Plan['writes'][number]['reason'], string>} */
 const reasons = {
 	missing: 'added, since it’s missing',
 	drifted: 'rewritten from its template, since it has drifted',
@@ -78,7 +78,7 @@ const reasons = {
 /** @type {(plan: Plan) => string[]} */
 function changes({ writes, deletes }) {
 	return [
-		...writes.map((w) => `${code(w.path)}: ${reasons[/** @type {keyof typeof reasons} */ (w.reason)]}`),
+		...writes.map((w) => `${code(w.path)}: ${reasons[w.reason]}`),
 		...deletes.map((d) => `${code(d.path)}: deleted, since it’s unexpected`),
 	];
 }

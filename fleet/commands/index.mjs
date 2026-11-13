@@ -45,6 +45,11 @@ const {
 } = process.env;
 const runURL = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`;
 
+/** @type {(names: string[], category: Category) => { name: string, category: Category }[]} */
+function categorized(names, category) {
+	return names.map((name) => ({ name, category }));
+}
+
 /**
  * Which of a repository's discrepancies the filters keep, as the file names to pass to `planFixes` (`undefined` limits nothing, and an empty set means none matched); `null` when the repository isn't kept at all.
  * A repository with no matching discrepancies is only kept when it's named, so that `/fix owner/name` always says what happened to it.
@@ -70,10 +75,9 @@ function select(
 	if (files.size === 0 && categories.size === 0) {
 		return result || repositories.size > 0 ? undefined : null;
 	}
-	const entries = /** @type {{ name: string, category: Category }[]} */ ([]).concat(
-		(result?.missing ?? []).map((name) => ({ name, category: /** @type {const} */ ('missing') })),
-		(result?.unexpected ?? []).map((name) => ({ name, category: /** @type {const} */ ('unexpected') })),
-		(result?.drifted ?? []).map(({ name }) => ({ name, category: /** @type {const} */ ('drifted') })),
+	const entries = categorized(result?.missing ?? [], 'missing').concat(
+		categorized(result?.unexpected ?? [], 'unexpected'),
+		categorized((result?.drifted ?? []).map(({ name }) => name), 'drifted'),
 	);
 	// file names are case-sensitive, but the filters aren't
 	const names = entries
@@ -139,10 +143,13 @@ function replyBodies({
 	const { line, dryRun } = command;
 	const prefix = `${replyMarker(command)}\n`;
 	const table = { open: '| Repository | Outcome |\n| --- | --- |', close: '' };
+	/** @type {(string | Unit)[]} */
+	const intro = [
+		`${quote(line)} (${dryRun ? what : `from each repository’s ${what}`}; see [the run](${runURL})):`,
+		'',
+	];
 	const parts = split(
-		/** @type {(string | Unit)[]} */ ([]).concat(
-			`${quote(line)} (${dryRun ? what : `from each repository’s ${what}`}; see [the run](${runURL})):`,
-			'',
+		intro.concat(
 			rows.length > 0
 				? [{ text: table.open, group: table }].concat(rows.map((text) => ({ text, group: table })))
 				: ['No repository matches those filters.'],

@@ -11,6 +11,7 @@ import { botBranches } from './branches.mjs';
 import { ciStatus } from './ci.mjs';
 import { commitsRefusal, isSingleOnBase } from './merge-guards.mjs';
 import { code, fence, html } from './markdown.mjs';
+import { isObject } from './kept.mjs';
 import { hideSaid } from './said.mjs';
 
 export { ciStatus };
@@ -222,7 +223,9 @@ export function failureDetails(
  * @type {(pr: { repository: string, number: number, url: string }, assessment: { kind: string, failures?: Failed[], optional?: Failed[] }) => string[]}
  */
 export function assessmentDetails(pr, { failures = [], optional = [] }) {
-	return /** @type {string[]} */ ([]).concat(
+	/** @type {string[]} */
+	const details = [];
+	return details.concat(
 		failures.length > 0 ? failureDetails(pr, 'the checks that failed', failures) : [],
 		optional.length > 0 ? failureDetails(pr, 'optional jobs that failed, which don’t block merging', optional) : [],
 	);
@@ -233,6 +236,7 @@ export function assessmentDetails(pr, { failures = [], optional = [] }) {
  * @type {(error: unknown) => string | undefined}
  */
 function refusalOf(error) {
+	// a thrown value is untyped, and narrowing it to an object would stop reading this from a thrown function
 	const message = /** @type {{ response?: { data?: { message?: unknown } } } | null | undefined} */ (error)?.response?.data?.message;
 	return typeof message === 'string' && message.trim() !== '' ? message.trim() : void undefined;
 }
@@ -318,19 +322,16 @@ export async function noneLeft(read, repo, { bot, merged }) {
 
 /** @type {(value: unknown) => value is Entry} */
 function isEntry(value) {
-	if (!value || typeof value !== 'object') {
-		return false;
-	}
-	const e = /** @type {Record<string, unknown>} */ (value);
-	return typeof e.repository === 'string'
-		&& typeof e.number === 'number'
-		&& typeof e.headSha === 'string'
-		&& typeof e.base === 'string'
-		&& typeof e.commentId === 'number'
-		&& typeof e.issueNumber === 'number'
-		&& typeof e.queuedAt === 'string'
-		&& !Number.isNaN(Date.parse(e.queuedAt))
-		&& typeof e.private === 'boolean';
+	return isObject(value)
+		&& typeof value.repository === 'string'
+		&& typeof value.number === 'number'
+		&& typeof value.headSha === 'string'
+		&& typeof value.base === 'string'
+		&& typeof value.commentId === 'number'
+		&& typeof value.issueNumber === 'number'
+		&& typeof value.queuedAt === 'string'
+		&& !Number.isNaN(Date.parse(value.queuedAt))
+		&& typeof value.private === 'boolean';
 }
 
 /** @type {(entry: { repository: string, number: number }) => string} */

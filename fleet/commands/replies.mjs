@@ -4,7 +4,7 @@ import * as core from '@actions/core';
 
 import { failureDetails } from '../lib/app.mjs';
 import { hideable, minimizeEach } from '../lib/said.mjs';
-import { parseCommand } from './syntax.mjs';
+import { isVerb, parseCommand } from './syntax.mjs';
 
 /** @import { Octokit } from '../lib/app.mjs' */
 /** @import { Classifier } from '../lib/said.mjs' */
@@ -27,8 +27,7 @@ export function identify({
 	dryRun,
 	filters,
 }) {
-	const tokens = /** @type {string[]} */ ([]).concat(
-		Array.from(filters.repositories),
+	const tokens = Array.from(filters.repositories).concat(
 		Array.from(filters.accounts),
 		Array.from(filters.files),
 		Array.from(filters.categories),
@@ -68,9 +67,10 @@ export function unmarked(body) {
  */
 export function repliedTo(body) {
 	const marked = markerPattern.exec(body)?.groups;
-	if (marked) {
+	// the marker's pattern only matches a verb
+	if (marked && isVerb(marked.verb)) {
 		return {
-			verb: /** @type {Verb} */ (marked.verb),
+			verb: marked.verb,
 			dryRun: !!marked.dryRun,
 			digest: marked.digest,
 			marked: true,
@@ -143,7 +143,7 @@ export function queueReplyAbout(parts) {
 	if (!(parts[0].body ?? '').startsWith('The merge queue, as of [this run](')) {
 		return null;
 	}
-	const repositories = new Set(parts.flatMap((c) => Array.from(String(c.body).matchAll(/^\| `(?<repository>[^`|]+)` \|/gm), (m) => /** @type {{ repository: string }} */ (m.groups).repository.toLowerCase())));
+	const repositories = new Set(parts.flatMap((c) => Array.from(String(c.body).matchAll(/^\| `(?<repository>[^`|]+)` \|/gm), (m) => m[1].toLowerCase())));
 	return repositories.size === 1 ? Array.from(repositories)[0] : null;
 }
 
@@ -188,8 +188,7 @@ export function aboutOnly(comments, author, repositories) {
 		const about = queueReplyAbout(parts);
 		return about && repositories.has(about) ? nodeIds(parts) : [];
 	});
-	const hide = new Set(/** @type {string[]} */ ([]).concat(
-		ids,
+	const hide = new Set(ids.concat(
 		repliesMatching(comments, author, (earlier) => commands.some((c) => c.verb === earlier.verb
 			&& c.dryRun === earlier.dryRun
 			&& c.digest === earlier.digest)),

@@ -9,11 +9,9 @@ import {
 	presets,
 } from './versions.mjs';
 
-/** @import { nvmVersionish, Type } from './versions.mjs' */
+/** @import { nvmVersionish } from './versions.mjs' */
 
-/* eslint no-extra-parens: 0 */
-
-/** @type {(opts: { envs: Record<string, string>, key: 'node-version', versionsAsRoot: boolean, reqs: nvmVersionish[], opts: nvmVersionish[] }) => void} */
+/** @type {(opts: { envs: Record<string, string>, key: string, versionsAsRoot: boolean, reqs: nvmVersionish[], opts: nvmVersionish[] }) => void} */
 function setOutput({
 	envs,
 	key,
@@ -24,7 +22,7 @@ function setOutput({
 	const makePayload = versionsAsRoot
 		? /** @type {<T extends nvmVersionish[]>(x: T) => T} */ (x) => x
 		// eslint-disable-next-line operator-linebreak
-		: /** @type {<T extends nvmVersionish[]>(versions: T) => { envs: typeof envs, 'node-version': T }} */
+		: /** @type {<T extends nvmVersionish[]>(versions: T) => Record<string, typeof envs | T>} */
 		(versions) => ({
 			...envs && { envs },
 			[key]: versions,
@@ -45,12 +43,12 @@ function setOutput({
 
 async function main() {
 	const empty = core.getInput('empty') === 'true';
-	const key = /** @type {'node-version'} */ (core.getInput('version_key')) || 'node-version';
+	const key = core.getInput('version_key') || 'node-version';
 	const versionsAsRoot = !!core.getInput('versionsAsRoot');
 
 	const requireds = core.getInput('requireds');
 	const optionals = core.getInput('optionals');
-	const type = /** @type {Type} */ (core.getInput('type'));
+	const type = core.getInput('type');
 	const preset = core.getInput('preset');
 	const notable = core.getInput('notable');
 	const fullSemver = core.getInput('fullSemver') === 'true';
@@ -65,7 +63,7 @@ async function main() {
 	if (!preset && notable) {
 		throw new TypeError('`notable` may only be provided if `preset` is provided');
 	}
-	if (type && (type !== 'majors' && type !== 'minors')) {
+	if (type !== '' && type !== 'majors' && type !== 'minors') {
 		throw new TypeError('`type` must be "majors" or "minors"');
 	}
 

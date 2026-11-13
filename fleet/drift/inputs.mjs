@@ -19,7 +19,8 @@ import {
  */
 
 /** @import { Call, Parsed } from './calls.mjs' */
-/** @typedef {Map<string, { file: string, inputs: Map<string, string[]> }>} Inputs */
+/** @typedef {{ file: string, inputs: Map<string, string[]> }} Passing */
+/** @typedef {Map<string, Passing>} Inputs */
 /** @typedef {{ moved: Inputs, ambiguous: Inputs }} Moved */
 
 const workflowsDir = path.join(import.meta.dirname, '..', '..', '.github', 'workflows');
@@ -120,19 +121,19 @@ export function inputsOf(text) {
 }
 
 /**
- * Each of `from`'s calls' counterpart in `to` (see above): its job in `to`, or `null` when it has none; and when that's because it's ambiguous, the jobs in `to` it might be.
- * @type {(from: Inputs, to: Inputs) => Map<string, { job: string | null, candidates: string[] }>}
+ * Each of `from`'s calls, and its counterpart in `to` (see above): its job in `to`, or `null` when it has none; and when that's because it's ambiguous, the jobs in `to` it might be.
+ * @type {(from: Inputs, to: Inputs) => Map<string, { call: Passing, counterpart: { job: string | null, candidates: string[] } }>}
  */
 function counterparts(from, to) {
 	const same = new Set([...from].filter(([job, { file }]) => to.get(job)?.file === file).map(([job]) => job));
 	/** @type {(of: Inputs, file: string) => string[]} */
 	const others = (of, file) => [...of].filter(([job, call]) => call.file === file && !same.has(job)).map(([job]) => job);
-	return new Map([...from].map(([job, { file }]) => {
+	return new Map([...from].map(([job, call]) => {
 		if (same.has(job)) {
-			return [job, { job, candidates: [] }];
+			return [job, { call, counterpart: { job, candidates: [] } }];
 		}
-		const candidates = others(to, file);
-		return [job, others(from, file).length === 1 && candidates.length === 1 ? { job: candidates[0], candidates: [] } : { job: null, candidates }];
+		const candidates = others(to, call.file);
+		return [job, { call, counterpart: others(from, call.file).length === 1 && candidates.length === 1 ? { job: candidates[0], candidates: [] } : { job: null, candidates } }];
 	}));
 }
 
@@ -146,8 +147,7 @@ function move(from, to) {
 	const result = { moved: new Map(), ambiguous: new Map() };
 	/** @type {(passing: string[], key: string) => boolean} */
 	const passedBy = (passing, key) => passing.some((c) => to.get(c)?.inputs.has(key));
-	from.forEach(({ file, inputs }, job) => {
-		const { job: target, candidates } = /** @type {{ job: string | null, candidates: string[] }} */ (where.get(job)); // eslint-disable-line no-extra-parens
+	where.forEach(({ call: { file, inputs }, counterpart: { job: target, candidates } }, job) => {
 		const passing = target === null ? candidates : [target];
 		const missing = new Map([...inputs].filter(([key]) => !passedBy(passing, key)));
 		if (missing.size > 0 && passing.length > 0) {
@@ -229,32 +229,32 @@ function malformed(key, lines) {
 }
 
 /**
- * Why `after` isn't exactly `before` with `added` (each job's new inputs, by name) put in each job's `with:`, if it isn't: each such `with:` must have exactly the inputs it had, and those (and no other key); and the whole document, as its values (with every alias resolved where it is), without them (and without a `with:` that's new), must be exactly what `before`'s is.
- * @type {(before: Parsed, after: Parsed, added: Map<string, string[]>) => string | null}
+ * Why `after` isn't exactly `before` with `added` (each of `before`'s calls' new inputs, by name) put in each job's `with:`, if it isn't: each such `with:` must have exactly the inputs it had, and those (and no other key); and the whole document, as its values (with every alias resolved where it is), without them (and without a `with:` that's new), must be exactly what `before`'s is.
+ * @type {(before: Parsed, after: Parsed, added: Map<Call, string[]>) => string | null}
  */
 function changedOtherwise(before, after, added) {
-	const without = /** @type {Map<unknown, unknown>} */ (after.doc.toJS({ mapAsMap: true })); // eslint-disable-line no-extra-parens
+	/** @type {Map<unknown, unknown>} */
+	const without = after.doc.toJS({ mapAsMap: true });
 	// there's a call in it, so its `jobs` is a mapping
 	const jobs = /** @type {Map<unknown, unknown>} */ (without.get('jobs')); // eslint-disable-line no-extra-parens
-	const unexpected = Array.from(added).find(([job, keys]) => {
-		const had = /** @type {Call} */ (before.calls.find((call) => call.job === job)); // eslint-disable-line no-extra-parens
-		const found = [...jobs].filter(([id]) => String(id) === job).map(([, value]) => value);
+	const unexpected = Array.from(added).find(([had, keys]) => {
+		const found = [...jobs].filter(([id]) => String(id) === had.job).map(([, value]) => value);
 		const map = found.length === 1 && found[0] instanceof Map ? found[0] : null;
 		const inputs = map?.get('with');
 		const expected = new Set([...had.with?.inputs.keys() ?? [], ...keys]);
-		if (!(inputs instanceof Map) || inputs.size !== expected.size || ![...inputs.keys()].every((key) => expected.has(key))) {
+		if (!map || !(inputs instanceof Map) || inputs.size !== expected.size || ![...inputs.keys()].every((key) => expected.has(key))) {
 			return true;
 		}
 		keys.forEach((key) => inputs.delete(key));
 		if (!had.with) {
-			/** @type {Map<unknown, unknown>} */ (map).delete('with'); // eslint-disable-line no-extra-parens
+			map.delete('with');
 		} else if (inputs.size === 0 && had.with.inputs.size === 0) {
-			/** @type {Map<unknown, unknown>} */ (map).set('with', null); // eslint-disable-line no-extra-parens
+			map.set('with', null);
 		}
 		return false;
 	});
 	if (unexpected) {
-		const [job] = unexpected;
+		const [{ job }] = unexpected;
 		return `job “${job}”’s \`with:\` wouldn’t have exactly the inputs it has, and those added`;
 	}
 	return isDeepStrictEqual(without, before.doc.toJS({ mapAsMap: true })) ? null : 'adding them would change more of the file than those inputs';
@@ -271,7 +271,7 @@ export function addInputs(text, inputs) {
 		return { text, why: unwritten(inputs) };
 	}
 	const lines = [...parsed.lines];
-	/** @type {Map<string, string[]>} */
+	/** @type {Map<Call, string[]>} */
 	const added = new Map();
 	// from the last call up, so that each insertion leaves the earlier calls' line numbers alone
 	/** @type {{ why?: string }} */
@@ -297,7 +297,7 @@ export function addInputs(text, inputs) {
 			} else {
 				lines.splice(call.after, 0, `${' '.repeat(call.indent)}with:`, ...lined);
 			}
-			added.set(call.job, [...added.get(call.job) ?? [], ...wanted.map(([key]) => key)]);
+			added.set(call, [...added.get(call) ?? [], ...wanted.map(([key]) => key)]);
 		}
 		return false;
 	});

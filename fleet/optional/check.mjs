@@ -67,11 +67,11 @@ export async function checkRepos(auth, states) {
 		tokens.set(installationId, token);
 		return token;
 	};
-	const ordered = states.filter((s) => !s.private).concat(states.filter((s) => s.private));
-	/** @type {Map<RepoState, Checked>} */
-	const checked = new Map();
-	await ordered.reduce(
-		async (previous, state) => {
+	const indexed = states.map((state, index) => ({ state, index }));
+	/** @type {Checked[]} */
+	const checked = [];
+	await indexed.filter(({ state }) => !state.private).concat(indexed.filter(({ state }) => state.private)).reduce(
+		async (previous, { state, index }) => {
 			await previous;
 			const base = { repository: state.repository, private: state.private };
 			const result = state.stateError
@@ -80,9 +80,9 @@ export async function checkRepos(auth, states) {
 					(token) => checkRepo(octokitFor(token, state.private), state),
 					(error) => ({ ...base, error: failureMessage(error) }),
 				);
-			checked.set(state, result);
+			checked[index] = result;
 		},
 		Promise.resolve(),
 	);
-	return states.map((state) => /** @type {Checked} */ (checked.get(state)));
+	return checked;
 }

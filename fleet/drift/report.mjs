@@ -139,14 +139,16 @@ export function report(results, privateCount, failures, checked, waiting = []) {
 	const accounts = byAccount(results);
 	const title = `Workflow drift: ${total} of ${count} repositories`;
 
+	/** @type {(string | Unit)[]} */
+	const noUnits = [];
 	// everything: every failure, every repository, and every diff, in as many files as it takes
 	const parts = split(
-		/** @type {(string | Unit)[]} */ ([]).concat(
+		noUnits.concat(
 			`# ${title}`,
 			'',
 			intro('This report is updated in place on every run.'),
 			problems(failures, waiting),
-			accounts.flatMap((account) => /** @type {(string | Unit)[]} */ (['']).concat(accountTable(account))),
+			accounts.flatMap((account) => noUnits.concat('', accountTable(account))),
 			'',
 			legend(),
 		),
@@ -158,8 +160,10 @@ export function report(results, privateCount, failures, checked, waiting = []) {
 		parts,
 		summary(written, forIssue) {
 			const fullReport = fullReportLink(written);
+			/** @type {string[]} */
+			const noLines = [];
 			/** @type {(listFailures: boolean, withAccounts: boolean, detailed?: boolean) => string} */
-			const render = (listFailures, withAccounts, detailed = true) => /** @type {string[]} */ ([]).concat(
+			const render = (listFailures, withAccounts, detailed = true) => noLines.concat(
 				forIssue ? [marker] : [],
 				intro(forIssue ? 'This issue is updated in place on every run, and closed when there are none.' : ''),
 				'',

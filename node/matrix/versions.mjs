@@ -12,17 +12,18 @@ import getJSON from 'get-json';
 /** @typedef {nvmVersionishBaseV | nvmVersionishBaseBare | `iojs-${nvmVersionishBaseV}`} nvmVersionish */
 /** @typedef {'majors' | 'minors'} Type */
 /** @typedef {{ requireds: nvmVersionish[], optionals: nvmVersionish[] }} ReqOptMap */
+/** @typedef {{ version: Version, date: string, files: string[], npm: BareVersion, v8: `${BareVersion}.${number}`, uv: BareVersion, zlib: string, openssl: string, modules: `${number}`, lts: boolean, security: boolean }} IndexEntry */
 
 /** @type {(type?: 'nodejs' | 'iojs') => Promise<Version[]>} */
 async function getNodeVersions(type = 'nodejs') {
 	const url = `https://raw.githubusercontent.com/ljharb/actions/${type}/index.json`; // `https://${type}.org/dist/index.json`;
 
-	const index = /** @type {{ version: Version, date: string, files: string[], npm: BareVersion, v8: `${BareVersion}.${number}`, uv: BareVersion, zlib: string, openssl: string, modules: `${number}`, lts: boolean, security: boolean }[]} */ (
-		await getJSON(url).catch(/** @type {(e: Error) => never} */ (e) => {
-			console.error(`Error fetching and parsing JSON from \`${url}\``);
-			throw e;
-		})
-	);
+	/** @type {Promise<IndexEntry[]>} */
+	const fetched = getJSON(url);
+	const index = await fetched.catch(/** @type {(e: Error) => never} */ (e) => {
+		console.error(`Error fetching and parsing JSON from \`${url}\``);
+		throw e;
+	});
 	console.log(`all versions of type ${type}`, index.map(({ version }) => version));
 	return index.map(({ version }) => version).filter((x) => x !== 'v22.5.0');
 }
@@ -37,16 +38,14 @@ export function allVersions() {
 	return allVersionsPromise;
 }
 
-/** @type {(v: Version) => `${number}.${number}`} */
+/** @type {(v: Version) => BareMajMin} */
 function majMin(v) {
 	return `${semver.major(v)}.${semver.minor(v)}`;
 }
 
-/** @type {(versions: Version[]) => Record<MajMin | Maj, Version[]>} */
+/** @type {(versions: Version[]) => Record<BareMajMin | BareMaj, BareMajMin[]>} */
 function getMinorsByMajor(versions) {
-	const minorEntries = /** @type {[keyof ReturnType<typeof getMinorsByMajor>, ReturnType<typeof majMin>][]} */ (
-		versions.map((v) => [`${semver.satisfies(v, '< 1') ? majMin(v) : semver.major(v)}`, majMin(v)])
-	);
+	const minorEntries = versions.map(/** @type {(v: Version) => [BareMajMin | BareMaj, BareMajMin]} */ (v) => [`${semver.satisfies(v, '< 1') ? majMin(v) : semver.major(v)}`, majMin(v)]);
 	/** @type {ReturnType<typeof getMinorsByMajor>} */
 	const minorsByMajor = {};
 	minorEntries.forEach(([maj, v]) => {
@@ -71,21 +70,22 @@ function comparator(a, b) {
 function get0xReqs(filter) {
 	/** @type {(x: string) => boolean} */
 	const filterer = (x) => !filter || filter.some((f) => semver.satisfies(f, x));
-	const requireds = [
+	/** @type {BareMajMin[]} */
+	const requiredCandidates = [
 		'0.12',
 		'0.10',
 		'0.8',
-	].filter(filterer);
-	const optionals = [
+	];
+	/** @type {BareMajMin[]} */
+	const optionalCandidates = [
 		'0.11',
 		'0.9',
 		// '0.6',
 		// '0.4',
-	].filter(filterer);
-	/* eslint no-extra-parens: 0, object-shorthand: 0 */
+	];
 	return {
-		requireds: /** @type {ReqOptMap['requireds']} */ (requireds),
-		optionals: /** @type {ReqOptMap['optionals']} */ (optionals),
+		requireds: requiredCandidates.filter(filterer),
+		optionals: optionalCandidates.filter(filterer),
 	};
 }
 
@@ -99,7 +99,7 @@ function iojsMapper(x) {
 /**
  * @param {string} reqRange
  * @param {string} optRange
- * @param {Type} type
+ * @param {Type | ''} type
  * @param {boolean} isNotable
  * @param {boolean} fullSemver
  */
@@ -118,27 +118,26 @@ export async function getReqOpts(reqRange, optRange, type, isNotable, fullSemver
 
 	if (type === 'majors') {
 		if (reqRange) {
-			const entries = (/** @type {[MajMin | Maj, Version[]]} */ (/** @type {unknown} */ (Object.entries(map))));
-			/** @type {(entry: [MajMin | Maj, Version[]]) => [MajMin | Maj] | []} */
+			// Object.entries can't know that every key is a `keyof typeof map`
+			const entries = /** @type {[keyof typeof map, BareMajMin[]][]} */ (Object.entries(map));
+			/** @type {(entry: [keyof typeof map, BareMajMin[]]) => [keyof typeof map] | []} */
 			const mapper = ([x, [latest]]) => {
 				const subset = semver.subset(x, '>= 1') && semver.subset(latest, reqRange);
 				return subset || req0x.includes(x) ? [x] : [];
 			};
-			// @ts-expect-error FIXME no idea why TS can't handle this one
 			requireds = entries.flatMap(mapper);
 		}
 		if (optRange) {
-			optionals = /** @type {nvmVersionish[]} */ (
-				Object.keys(map)
-					.flat()
-					.filter((x) => (
-						!requireds.includes(/** @type {nvmVersionish} */ (x))
-						&& (
-							opt0x.includes(/** @type {nvmVersionish} */ (x))
-							|| semver.subset(map[/** @type {keyof typeof map} */ (x)][0], optRange)
-						)
-					))
-			);
+			// Object.keys can't know that every key is a `keyof typeof map`
+			optionals = /** @type {(keyof typeof map)[]} */ (Object.keys(map))
+				.flat()
+				.filter((x) => (
+					!requireds.includes(x)
+					&& (
+						opt0x.includes(x)
+						|| semver.subset(map[x][0], optRange)
+					)
+				));
 		}
 	} else if (isNotable) {
 		return { requireds: values.flat().sort(comparator), optionals };
@@ -174,7 +173,7 @@ export async function getReqOpts(reqRange, optRange, type, isNotable, fullSemver
 	return { requireds, optionals };
 }
 
-/** @type {(map: Awaited<ReturnType<typeof getReqOpts>>, opts: { type: Type, notable: string }) => Promise<typeof map>} */
+/** @type {(map: Awaited<ReturnType<typeof getReqOpts>>, opts: { type: Type | '', notable: string }) => Promise<typeof map>} */
 export async function addNotable({ requireds: oldReqs, optionals: oldOpts }, { type, notable }) {
 	const { requireds: notableVersions } = await getReqOpts(notable, '', type, true, false);
 
@@ -190,7 +189,7 @@ export async function addNotable({ requireds: oldReqs, optionals: oldOpts }, { t
 
 /**
  * @param {'0.x' | 'iojs' | string} preset
- * @param {Type} type @param {boolean} fullSemver
+ * @param {Type | ''} type @param {boolean} fullSemver
  */
 export async function getPreset(preset, type, fullSemver) {
 	if (preset === '0.x') {

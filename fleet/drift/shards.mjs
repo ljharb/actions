@@ -125,6 +125,6 @@ export function nodeType(files) {
 		.map(([, text]) => text?.match(/^\s+type:\s*['"]?(?<type>majors|minors)\b/m)?.groups?.type);
 	// there's at least one (the first), and every one is `majors`
 	return types.next()?.value === 'majors' && types.every((t) => t === 'majors')
-		? /** @type {const} */ ('majors')
-		: /** @type {const} */ ('minors');
+		? 'majors'
+		: 'minors';
 }

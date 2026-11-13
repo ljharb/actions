@@ -264,10 +264,11 @@ function toState(
 /** @type {(error: unknown) => Record<string, any>} */
 function partialData(error) {
 	// GitHub's "Something went wrong while executing your query" is retried as a server error (see `retry`), whose error has the last attempt's partial data only on its response
-	const failure = /** @type {{ data?: unknown, response?: { data?: { data?: unknown } } }} */ (Object(error));
+	/** @type {{ data?: unknown, response?: { data?: { data?: unknown } } }} */
+	const failure = Object(error);
 	const partial = 'data' in failure ? failure.data : failure.response?.data?.data;
 	if (partial && typeof partial === 'object') {
-		return /** @type {Record<string, any>} */ (partial);
+		return partial;
 	}
 	throw error;
 }
