@@ -69,7 +69,7 @@ function mockAPI(t, handlers) {
 	const requests = [];
 	const scope = nock('https://api.github.com').persist();
 	handlers.forEach(([method, pattern, handler]) => {
-		scope.intercept(pattern, method).reply(/** @type {any} */ (async (/** @type {Request} */ req) => {
+		scope.intercept(pattern, method).reply(async (/** @type {Request} */ req) => {
 			const url = new URL(req.url);
 			const text = await req.text();
 			const body = text ? JSON.parse(text) : null;
@@ -81,7 +81,7 @@ function mockAPI(t, handlers) {
 				authorization: req.headers.get('authorization') ?? '',
 			});
 			return handler({ path: requestPath, body });
-		}));
+		});
 	});
 	t.teardown(() => {
 		nock.cleanAll();
@@ -102,14 +102,14 @@ function captureMasks(fn) {
 	/** @type {string[]} */
 	const masks = [];
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk, /** @type {any[]} */ ...rest) {
+	process.stdout.write = function (/** @type {string} */ chunk, /** @type {any[]} */ ...rest) {
 		const match = String(chunk).match(/^::add-mask::(?<value>.*)$/m);
 		if (match?.groups) {
 			masks.push(match.groups.value);
 			return true;
 		}
 		return write.call(process.stdout, chunk, ...rest);
-	});
+	};
 	try {
 		return { result: fn(), masks };
 	} finally {
@@ -1137,10 +1137,10 @@ test('publish', (t) => {
 			botCommit(dir, 'the title', { [lockfile]: contents });
 			let stdout = '';
 			const { write } = process.stdout;
-			process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+			process.stdout.write = function (/** @type {string} */ chunk) {
 				stdout += String(chunk);
 				return true;
-			});
+			};
 			try {
 				const outcome = await publish({
 					...common,
@@ -1403,10 +1403,10 @@ test('closePR: hiding what the App said on it', (t) => {
 	const output = async (fn) => {
 		let stdout = '';
 		const { write } = process.stdout;
-		process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+		process.stdout.write = function (/** @type {string} */ chunk) {
 			stdout += String(chunk);
 			return true;
-		});
+		};
 		try {
 			await fn();
 		} finally {

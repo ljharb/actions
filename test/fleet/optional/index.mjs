@@ -9,6 +9,7 @@ import { runChild } from '../drift/helpers/child.mjs';
 /** @import { Scenario as GitHubScenario, Recorded } from '../lib/helpers/github.mjs' */
 /** @import { MergeScenario, CI } from '../commands/helpers/merge.mjs' */
 /** @import { ChildResult } from '../drift/helpers/child.mjs' */
+/** @import { Scenario } from '../commands/helpers/preload.mjs' */
 
 const marker = '<!-- ljharb/actions: fleet optional-job failures -->';
 const bot = { login: 'fleet-bot[bot]' };
@@ -93,9 +94,15 @@ function failingCI(repository, base) {
 /** @type {(github: GitHubScenario, merge?: MergeScenario, env?: Record<string, string>, throwStringOnSplit?: string) => ChildResult} */
 
 function run(github, merge = {}, env = {}, throwStringOnSplit = '') {
+	/** @type {Scenario} */
+	const scenario = {
+		github,
+		merge,
+		...throwStringOnSplit ? { throwStringOnSplit } : {},
+	};
 	return runChild([script], {
 		preload,
-		scenario: /** @type {any} */ ({ github, merge, ...throwStringOnSplit ? { throwStringOnSplit } : {} }),
+		scenario,
 		env: {
 			'INPUT_APP-ID': '1234',
 			'INPUT_PRIVATE-KEY': privateKey(),
@@ -121,7 +128,7 @@ function issueWrites(requests) {
 
 /** @type {(requests: Recorded[]) => string} */
 function gistContent(requests) {
-	return gistWrites(requests).flatMap((r) => Object.values(r.body.files).filter(Boolean).map((file) => String(/** @type {{ content: string }} */ (file).content))).join('\n');
+	return gistWrites(requests).flatMap((r) => Object.values(r.body.files).filter(Boolean).map((file) => String(file.content))).join('\n');
 }
 
 /** @type {Record<string, unknown>} */

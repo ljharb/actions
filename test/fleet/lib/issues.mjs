@@ -30,14 +30,14 @@ async function captureMasks(fn) {
 	/** @type {string[]} */
 	const masks = [];
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk, /** @type {any[]} */ ...rest) {
+	process.stdout.write = function (/** @type {string} */ chunk, /** @type {any[]} */ ...rest) {
 		const match = String(chunk).match(/^::add-mask::(?<value>.*)$/m);
 		if (match?.groups) {
 			masks.push(match.groups.value);
 			return true;
 		}
 		return write.call(process.stdout, chunk, ...rest);
-	});
+	};
 	try {
 		return { result: await fn(), masks };
 	} finally {

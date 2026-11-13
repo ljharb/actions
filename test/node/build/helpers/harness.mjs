@@ -80,9 +80,7 @@ function parseOutputFile(file) {
 	/** @type {Record<string, string>} */
 	const outputs = {};
 	const re = /^(?<name>[^\n<]+)<<(?<delimiter>ghadelimiter_[^\n]+)\n(?<value>[\s\S]*?)\n\k<delimiter>$/gm;
-	Array.from(content.matchAll(re)).forEach(({ groups }) => {
-		// eslint-disable-next-line no-extra-parens
-		const { name, value } = /** @type {Record<string, string>} */ (groups);
+	content.matchAll(re).forEach(([, name, , value]) => {
 		outputs[name] = value;
 	});
 	return outputs;
@@ -97,7 +95,7 @@ function parseOutputFile(file) {
  *   env?: Record<string, string>,
  *   fakes?: string[],
  *   nvmVersion?: string,
- *   cache?: { mode: 'hit' | 'miss', key?: string, cacheId?: number },
+ *   cache?: { mode: 'miss', cacheId?: number } | { mode: 'hit', key: string, cacheId?: number },
  *   setup?: (dirs: { cwd: string }) => void,
  * }} RunOptions
  */
@@ -172,11 +170,9 @@ export function runAction(script, options = {}) {
 	if (options.cache) {
 		env.ACTIONS_CACHE_URL = CACHE_URL;
 		env.ACTIONS_RUNTIME_TOKEN = 'fake-token';
-		preloadConfig.cache = {
-			url: CACHE_URL,
-			...options.cache,
-			...options.cache.mode === 'hit' && { archive: makeArchive(root, `from cache ${options.cache.key}`) },
-		};
+		preloadConfig.cache = options.cache.mode === 'hit'
+			? { url: CACHE_URL, ...options.cache, archive: makeArchive(root, `from cache ${options.cache.key}`) }
+			: { url: CACHE_URL, ...options.cache };
 	}
 	env.TEST_PRELOAD_CONFIG = JSON.stringify(preloadConfig);
 

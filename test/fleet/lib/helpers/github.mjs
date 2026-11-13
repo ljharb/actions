@@ -4,7 +4,12 @@ import { defaults } from '@actions/github/lib/utils';
 import nock from 'nock';
 
 // a mocked error is the scenario's answer, not a transient one: every Octokit's requests default to `@actions/github`'s `defaults.request`, so none of them are retried (see `test/fleet/lib/retry.mjs` for the retrying itself)
-Object.assign(/** @type {NonNullable<typeof defaults.request>} */ (defaults.request), { retries: 0 });
+const { request } = defaults;
+if (!request) {
+	throw new TypeError('`@actions/github` has no request defaults to turn retrying off in');
+}
+export const requestDefaults = request;
+Object.assign(requestDefaults, { retries: 0 });
 
 /**
  * A fork's parent, as far up as the query reads.
@@ -69,7 +74,7 @@ Object.assign(/** @type {NonNullable<typeof defaults.request>} */ (defaults.requ
  *   graphqlStringData?: string[],
  *   commits?: Record<string, number | ErrorReply>,
  *   commitsDelay?: number,
- *   issues?: unknown[],
+ *   issues?: ({ user?: { login?: string } } & Record<string, unknown>)[],
  *   created?: Record<string, unknown>,
  *   createError?: ErrorReply,
  *   commentErrorAfter?: number,
@@ -155,9 +160,11 @@ function graphqlReply(scenario, variables) {
 		return accountReply(scenario, variables.owner);
 	}
 	if ('ids' in variables) {
+		/** @type {string[]} */
+		const none = [];
 		return scenario.nodesError
 			? [scenario.nodesError.status, scenario.nodesError.body ?? { message: 'error' }]
-			: [200, { data: { nodes: /** @type {string[]} */ ([]).concat(variables.ids).map((id) => ({ id, isMinimized: (scenario.minimized ?? []).includes(id) })) } }];
+			: [200, { data: { nodes: none.concat(variables.ids).map((id) => ({ id, isMinimized: (scenario.minimized ?? []).includes(id) })) } }];
 	}
 	if ('classifier' in variables) {
 		return (scenario.minimizeFails ?? []).includes(variables.id)
@@ -289,7 +296,7 @@ export function mockGitHub(scenario, record) {
 	graphql.reply(handle(({ body }) => graphqlReply(scenario, body.variables)));
 	listIssues.reply(handle(({ path }) => {
 		const creator = new URLSearchParams(path.split('?')[1]).get('creator');
-		return [200, (scenario.issues ?? []).filter((i) => !creator || (/** @type {{ user?: { login?: string } }} */ (i)).user?.login === creator)];
+		return [200, (scenario.issues ?? []).filter((i) => !creator || i.user?.login === creator)];
 	}));
 	createIssue.reply(handle(() => (scenario.createError
 		? [scenario.createError.status, scenario.createError.body ?? { message: 'error' }]

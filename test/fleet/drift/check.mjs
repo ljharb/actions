@@ -501,9 +501,10 @@ test('checkRepo: inputs a reusable workflow declares are a repository’s own, n
 		t.deepEqual(summarize(evilResults[i]).drifted, ['node-pretest.yml'], `so is ${JSON.stringify(evil.trim())}, after a declared input`);
 	});
 
+	const keepEngines = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } };
 	const kept = await checkRepo(repoState({
 		workflows: withWorkflows([{ name: 'node-pretest.yml', text: unknown }], ['node-pretest.yml']),
-		config: /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } }), // eslint-disable-line no-extra-parens
+		config: keepEngines,
 	}));
 	const [{ diff: keptDiff }] = present(kept).drifted;
 	t.doesNotMatch(keptDiff, /^-.*skip-engines/m, 'unless it’s kept, which fixing it keeps');
@@ -511,13 +512,12 @@ test('checkRepo: inputs a reusable workflow declares are a repository’s own, n
 
 	const keptCommented = await checkRepo(repoState({
 		workflows: withWorkflows([{ name: 'node-pretest.yml', text: `${commented}      bogus: 1\n` }], ['node-pretest.yml']),
-		config: /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } }), // eslint-disable-line no-extra-parens
+		config: keepEngines,
 	}));
 	const [{ diff: commentedDiff }] = present(keptCommented).drifted;
 	t.doesNotMatch(commentedDiff, /^-.*(?:skip-engines|bin\/tape)/m, 'a kept input keeps its comment on a line of its own too');
 	t.match(commentedDiff, /^- {6}bogus: 1$/m, 'and only the unknown one is dropped');
 
-	const keepEngines = /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } }); // eslint-disable-line no-extra-parens
 	const renamed = await checkRepo(repoState({
 		workflows: withWorkflows([{ name: 'node-pretest.yml', text: pretest.replace('  tests:', '  pretest:') }], ['node-pretest.yml']),
 		config: keepEngines,

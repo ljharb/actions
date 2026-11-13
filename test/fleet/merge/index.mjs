@@ -50,11 +50,12 @@ function row(commentId) {
 
 /** @type {(rows: string[], details?: string[]) => string} */
 function expectedReply(rows, details = []) {
-	return /** @type {string[]} */ ([]).concat(
+	return [
 		`The merge queue, as of [this run](${runURL}):`,
 		'',
 		'| Repository | Outcome |',
 		'| --- | --- |',
+	].concat(
 		rows,
 		details.flatMap((text) => ['', text]),
 		'',
@@ -548,8 +549,7 @@ test('fleet/merge: merging the App’s last open PR in a repository hides, as re
 	if (mergeD.type !== 'merge') {
 		throw new TypeError('not a command');
 	}
-	const issue = /** @type {Record<string, unknown>[]} */ ([]).concat(
-		listed(50, mergeD.line, 'maintainer'),
+	const issue = [listed(50, mergeD.line, 'maintainer')].concat(
 		listed(51, `${replyMarker(mergeD)}\n\`${mergeD.line}\` (…):`),
 		listed(52, '/merge ljharb/e', 'maintainer'),
 		listed(53, '/merge ljharb/f', 'maintainer'),

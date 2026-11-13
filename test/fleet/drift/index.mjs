@@ -91,10 +91,15 @@ function gistContent(t, requests) {
 	return String(writes[0]?.body.files['workflow-drift.md'].content);
 }
 
+/** @type {(entry: [string, { content: unknown }]) => [string, string]} */
+function nameAndContent([name, file]) {
+	return [name, String(file.content)];
+}
+
 // the full report's files, as written to its gist, in order, one in each request
 /** @type {(requests: Recorded[]) => [string, string][]} */
 function gistFiles(requests) {
-	return gistWrites(requests).flatMap((r) => Object.entries(r.body.files).filter(([, file]) => file !== null).map(([name, file]) => /** @type {[string, string]} */ ([name, String(file.content)])));
+	return gistWrites(requests).flatMap((r) => Object.entries(r.body.files).filter(([, file]) => file !== null).map(nameAndContent));
 }
 
 /** @type {(requests: Recorded[]) => Recorded[]} */

@@ -1,7 +1,6 @@
 import { mock } from 'node:test';
 import { setImmediate as immediately } from 'timers/promises';
 
-import { defaults } from '@actions/github/lib/utils';
 import nock from 'nock';
 import test from 'tape';
 
@@ -10,12 +9,10 @@ import { upsertGist } from '../../../fleet/lib/gist.mjs';
 import { upsertReportIssue } from '../../../fleet/lib/issues.mjs';
 import { writeQueue } from '../../../fleet/lib/merge.mjs';
 import { closePR, commentOnce } from '../../../fleet/lib/pr.mjs';
-import { privateKey } from './helpers/github.mjs';
+import { privateKey, requestDefaults } from './helpers/github.mjs';
 
 /** @import { Test } from 'tape' */
 /** @import { Octokit } from '../../../fleet/lib/app.mjs' */
-
-const requestDefaults = /** @type {NonNullable<typeof defaults.request>} */ (defaults.request);
 
 /**
  * Mocks `api.github.com` for one test, with the retrying every other test turns off (see `helpers/github.mjs`) turned back on, and its waits between attempts made instant; returns what was logged meanwhile.
@@ -27,13 +24,14 @@ function setup(t) {
 	delete requestDefaults.retries;
 	/** @type {unknown[][]} */
 	const logged = [];
-	const methods = /** @type {const} */ ([
+	/** @satisfies {(keyof Console)[]} */
+	const methods = [
 		'debug',
 		'info',
 		'log',
 		'warn',
 		'error',
-	]);
+	];
 	const originals = methods.map((method) => console[method]);
 	methods.forEach((method) => {
 		console[method] = (...args) => {

@@ -10,9 +10,13 @@ import nock from 'nock';
  *   nvmVersion?: string,
  *   cache?: {
  *     url: string,
- *     mode: 'hit' | 'miss',
- *     key?: string,
- *     archive?: string,
+ *     mode: 'miss',
+ *     cacheId?: number,
+ *   } | {
+ *     url: string,
+ *     mode: 'hit',
+ *     key: string,
+ *     archive: string,
  *     cacheId?: number,
  *   },
  * }} PreloadConfig
@@ -77,8 +81,7 @@ if (rawConfig) {
 					archiveLocation: `${cache.url}archive.tgz`,
 				})
 				.get('/archive.tgz')
-				// eslint-disable-next-line no-extra-parens
-				.reply(200, () => fs.readFileSync(/** @type {string} */ (cache.archive)))
+				.reply(200, () => fs.readFileSync(cache.archive))
 				.post('/_apis/artifactcache/caches')
 				.optionally()
 				.reply(201, { cacheId: cache.cacheId })

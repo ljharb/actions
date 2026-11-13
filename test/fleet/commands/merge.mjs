@@ -553,7 +553,7 @@ test('fleet/commands: `/merge`’s reply is split only between whole collapsed s
 	t.ok(parts.length > 1, `too long for one comment, the reply is in ${parts.length}`);
 	t.ok(parts.every((part) => part.length <= 60e3), 'each of which fits');
 	[1, 2, 3].forEach((n) => {
-		const job = /** @type {[string, ...string[]]} */ ([`job ${n + 10}`].concat(messages(n + 10, 250)));
+		const job = [`job ${n + 10}`].concat(messages(n + 10, 250));
 		const block = expectedDetails('ljharb/a', n, 'optional', [job]).replace(/^```$/gm, '`````');
 		t.equal(parts.filter((part) => part.includes(block)).length, 1, `#${n}’s collapsed section is whole, in one comment, fenced longer than any backtick run in it`);
 	});
@@ -566,7 +566,7 @@ test('fleet/commands: `/merge`’s reply is split only between whole collapsed s
 		},
 	});
 	const hugeParts = replies(huge.requests);
-	const job = /** @type {[string, ...string[]]} */ (['job 21'].concat(messages(21, 700)));
+	const job = ['job 21'].concat(messages(21, 700));
 	const block = expectedDetails('ljharb/a', 1, 'optional', [job]).replace(/^```$/gm, '`````');
 	t.ok(hugeParts[0].includes(`| \`ljharb/a\` | would merge ${url(1)}; optional jobs failed, which doesn’t block merging (see below) |`), 'a section too long for any comment still leaves the table in the first');
 	const sources = hugeParts.flatMap((part) => {

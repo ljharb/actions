@@ -139,8 +139,7 @@ test('earlierReplies', (t) => {
 	const dryMerge = command('/dry-run merge tape-testing/tape');
 	t.deepEqual(
 		earlierReplies(
-			/** @type {IssueComment[]} */ ([]).concat(
-				comments(1, ['/dry-run merge tape-testing/tape'], 'maintainer'),
+			comments(1, ['/dry-run merge tape-testing/tape'], 'maintainer').concat(
 				comments(2, oldReply('/dry-run merge tape-testing/tape', 3)),
 				comments(5, ['/dry-run merge Tape-Testing/tape'], 'maintainer'),
 				comments(6, newReply('/dry-run merge tape-testing/tape', 2)),
@@ -153,8 +152,7 @@ test('earlierReplies', (t) => {
 	);
 	t.deepEqual(
 		earlierReplies(
-			/** @type {IssueComment[]} */ ([]).concat(
-				comments(1, oldReply('/dry-run merge tape-testing/tape', 2), 'FLEET-BOT[bot]'),
+			comments(1, oldReply('/dry-run merge tape-testing/tape', 2), 'FLEET-BOT[bot]').concat(
 				comments(3, newReply('/dry-run merge tape-testing/tape'), 'mallory'),
 				comments(4, oldReply('/dry-run merge tape-testing/tape'), 'mallory'),
 				comments(5, newReply('/dry-run merge ljharb/qs', 2)),
@@ -174,8 +172,7 @@ test('earlierReplies', (t) => {
 	const [first, second, third] = oldReply('/dry-run merge tape-testing/tape', 3);
 	t.deepEqual(
 		earlierReplies(
-			/** @type {IssueComment[]} */ ([]).concat(
-				comments(1, [first, 'something else', second, third]),
+			comments(1, [first, 'something else', second, third]).concat(
 				comments(5, [oldReply('/dry-run merge ljharb/qs', 2)[0], second]),
 				comments(7, [first, third]),
 				comments(9, [oldReply('/dry-run merge tape-testing/tape', 2)[0], third]),
@@ -239,8 +236,7 @@ test('aboutOnly', (t) => {
 	const tape = new Set(['tape-testing/tape']);
 	t.deepEqual(
 		aboutOnly(
-			/** @type {IssueComment[]} */ ([]).concat(
-				comments(1, ['/dry-run merge tape-testing/tape'], 'maintainer'),
+			comments(1, ['/dry-run merge tape-testing/tape'], 'maintainer').concat(
 				comments(2, oldReply('/dry-run merge tape-testing/tape', 2)),
 				comments(4, ['/fix Tape-Testing/tape rebase.yml'], 'someone'),
 				comments(5, newReply('/fix tape-testing/tape rebase.yml')),
@@ -295,8 +291,7 @@ test('queueReplyAbout', (t) => {
 test('aboutOnly: the merge queue’s replies', (t) => {
 	t.deepEqual(
 		aboutOnly(
-			/** @type {IssueComment[]} */ ([]).concat(
-				comments(1, queueReply(['tape-testing/tape', 'tape-testing/tape'], 2)),
+			comments(1, queueReply(['tape-testing/tape', 'tape-testing/tape'], 2)).concat(
 				comments(3, queueReply(['tape-testing/tape', 'ljharb/qs'])),
 				comments(4, queueReply(['tape-testing/tape']), 'mallory'),
 				comments(5, queueReply(['ljharb/qs'])),
@@ -346,8 +341,8 @@ function mockAPI(
 		});
 		return handler(body);
 	};
-	scope.get(/^\/repos\/o\/r\/issues\/9\/comments\?/).reply(/** @type {any} */ (handle(() => (listStatus ? [listStatus, { message: 'Not Found: o/secret' }] : [200, listed]))));
-	scope.post('/graphql').reply(/** @type {any} */ (handle(({ query, variables }) => {
+	scope.get(/^\/repos\/o\/r\/issues\/9\/comments\?/).reply(handle(() => (listStatus ? [listStatus, { message: 'Not Found: o/secret' }] : [200, listed])));
+	scope.post('/graphql').reply(handle(({ query, variables }) => {
 		if (query.includes('nodes(')) {
 			if (nodesStatus) {
 				return [nodesStatus, { message: 'Server Error: o/secret' }];
@@ -359,7 +354,7 @@ function mockAPI(
 		return fails[variables.id]
 			? [200, { data: { minimizeComment: null }, errors: fails[variables.id] }]
 			: [200, { data: { minimizeComment: { minimizedComment: { isMinimized: true } } } }];
-	})));
+	}));
 	t.teardown(() => {
 		nock.cleanAll();
 		nock.enableNetConnect();
@@ -379,10 +374,10 @@ function hidden(requests) {
 async function hide(line, ours) {
 	let stdout = '';
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+	process.stdout.write = function (/** @type {string} */ chunk) {
 		stdout += String(chunk);
 		return true;
-	});
+	};
 	try {
 		const count = await hideEarlierReplies({
 			octokit: getOctokit('ghs_test'),
@@ -403,8 +398,7 @@ test('hideEarlierReplies', (t) => {
 
 	t.test('hides every part of each earlier reply to the same command, as outdated', async (st) => {
 		const requests = mockAPI(st, {
-			comments: /** @type {IssueComment[]} */ ([]).concat(
-				comments(1, oldReply(line, 2)),
+			comments: comments(1, oldReply(line, 2)).concat(
 				comments(3, newReply(line)),
 				comments(4, newReply(line)),
 				comments(5, newReply('/dry-run merge o/other')),
@@ -487,10 +481,10 @@ test('hideEarlierReplies', (t) => {
 async function hideAbout(repositories, ours) {
 	let stdout = '';
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+	process.stdout.write = function (/** @type {string} */ chunk) {
 		stdout += String(chunk);
 		return true;
-	});
+	};
 	try {
 		const count = await hideResolved({
 			octokit: getOctokit('ghs_test'),
@@ -507,8 +501,7 @@ async function hideAbout(repositories, ours) {
 }
 
 test('hideResolved', (t) => {
-	const listed = /** @type {IssueComment[]} */ ([]).concat(
-		comments(1, ['/merge O/Secret'], 'maintainer'),
+	const listed = comments(1, ['/merge O/Secret'], 'maintainer').concat(
 		comments(2, newReply('/merge o/secret')),
 		comments(3, ['/merge o/other'], 'maintainer'),
 		comments(4, newReply('/merge o/other')),

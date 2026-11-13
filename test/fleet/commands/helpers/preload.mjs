@@ -61,29 +61,29 @@ if (FLEET_TEST_SCENARIO) {
 	const repoOf = (path) => decodeURIComponent(path.split('/').slice(2, 4).join('/'));
 
 	const scope = nock('https://api.github.com').persist();
-	scope.get(/^\/repos\/[^/]+\/[^/]+\/collaborators\/[^/]+\/permission$/).reply(/** @type {any} */ (handle(({ path }) => [
+	scope.get(/^\/repos\/[^/]+\/[^/]+\/collaborators\/[^/]+\/permission$/).reply(handle(({ path }) => [
 		200,
 		{ permission: commands.permissions?.[decodeURIComponent(path.split('/')[5])] ?? 'none' },
-	])));
-	scope.post(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions$/).reply(/** @type {any} */ (handle(({ body }) => (
+	]));
+	scope.post(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions$/).reply(handle(({ body }) => (
 		body.content === 'eyes' ? [201, { id: 501, content: 'eyes' }] : [commands.reactions?.finish ?? 201, { id: 502, content: body.content }]
-	))));
-	scope.delete(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions\/\d+$/).reply(/** @type {any} */ (handle(() => [commands.reactions?.remove ?? 204, ''])));
-	scope.get(/^\/users\/[^/]+$/).reply(/** @type {any} */ (handle(() => [200, { id: 42, login: 'fleet-bot[bot]' }])));
-	scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\?/).reply(/** @type {any} */ (handle(({ path }) => {
+	)));
+	scope.delete(/^\/repos\/[^/]+\/[^/]+\/issues\/comments\/\d+\/reactions\/\d+$/).reply(handle(() => [commands.reactions?.remove ?? 204, '']));
+	scope.get(/^\/users\/[^/]+$/).reply(handle(() => [200, { id: 42, login: 'fleet-bot[bot]' }]));
+	scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\?/).reply(handle(({ path }) => {
 		const reply = commands.pulls?.[repoOf(path)] ?? [];
 		return Array.isArray(reply) ? [200, reply] : [reply.status, reply.body ?? { message: 'error' }];
-	})));
-	scope.get(/^\/repos\/[^/]+\/[^/]+\/issues\/\d+\/comments(?:\?.*)?$/).reply(/** @type {any} */ (handle(({ path }) => [
+	}));
+	scope.get(/^\/repos\/[^/]+\/[^/]+\/issues\/\d+\/comments(?:\?.*)?$/).reply(handle(({ path }) => [
 		200,
 		commands.comments?.[`${repoOf(path)}#${path.split('?')[0].split('/')[5]}`] ?? [],
-	])));
-	scope.post(/^\/repos\/[^/]+\/[^/]+\/pulls$/).reply(/** @type {any} */ (handle(({ path }) => [
+	]));
+	scope.post(/^\/repos\/[^/]+\/[^/]+\/pulls$/).reply(handle(({ path }) => [
 		201,
 		{ number: 1, html_url: `${serverURL}/${repoOf(path)}/pull/1` }, // eslint-disable-line camelcase
-	])));
-	scope.patch(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/).reply(/** @type {any} */ (handle(({ path }) => [
+	]));
+	scope.patch(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/).reply(handle(({ path }) => [
 		200,
 		{ html_url: `${serverURL}/${repoOf(path)}/pull/${path.split('/').pop()}` }, // eslint-disable-line camelcase
-	])));
+	]));
 }

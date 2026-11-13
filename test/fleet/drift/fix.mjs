@@ -141,9 +141,9 @@ test('planFixes: filters', async (t) => {
 	t.deepEqual(await plan(state), all, 'no filters: everything');
 	t.deepEqual(await plan(state, { files: new Set(), categories: new Set() }), all, 'empty filters: everything');
 	t.deepEqual(await plan(state, { files: new Set(['rebase.yml']) }), { ...empty, writes: [drifted] }, 'by file name');
-	t.deepEqual(await plan(state, { categories: new Set(/** @type {Category[]} */ (['missing'])) }), { ...empty, writes: [missing] }, 'by category'); // eslint-disable-line no-extra-parens
+	t.deepEqual(await plan(state, { categories: new Set(['missing']) }), { ...empty, writes: [missing] }, 'by category');
 	t.deepEqual(
-		await plan(state, { files: new Set(['rebase.yml']), categories: new Set(/** @type {Category[]} */ (['missing'])) }), // eslint-disable-line no-extra-parens
+		await plan(state, { files: new Set(['rebase.yml']), categories: new Set(['missing']) }),
 		empty,
 		'both must match',
 	);
@@ -454,13 +454,14 @@ test('planFixes: a rewritten file keeps the inputs the repository keeps', async 
 	const plain = await plan(repoState({ workflows }));
 	t.deepEqual(plain.writes.map((w) => [w.path, w.content]), [[at('node-pretest.yml'), template('node-pretest.yml')]], 'without `keep`, rewritten from its template');
 
+	const keepBoth = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'], 'rebase.yml': ['nothing'] } };
 	const kept = await plan(repoState({
 		workflows,
-		config: /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'], 'rebase.yml': ['nothing'] } }), // eslint-disable-line no-extra-parens
+		config: keepBoth,
 	}));
 	t.deepEqual(kept.writes.map((w) => [w.path, w.content]), [[at('node-pretest.yml'), `${template('node-pretest.yml')}    with:\n      skip-engines: true # bin/tape requires node 8+, but the rest of tape supports 0.4+\n`]], 'with it, keeping the kept input’s value and comment, and only that');
 
-	const keepConfig = /** @type {Config} */ ({ relock: {}, workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } }); // eslint-disable-line no-extra-parens
+	const keepConfig = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } };
 	const renamed = await plan(repoState({ workflows: withWorkflows([{ name: 'node-pretest.yml', text: pretest.replace('  tests:', '  pretest:') }], ['node-pretest.yml']), config: keepConfig }));
 	t.deepEqual(renamed.writes.map((w) => [w.path, w.content]), kept.writes.map((w) => [w.path, w.content]), 'from a job with another id than the template’s, too');
 

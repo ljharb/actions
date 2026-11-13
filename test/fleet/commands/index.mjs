@@ -592,7 +592,9 @@ test('fleet/commands: filters', (t) => {
 });
 
 test('fleet/commands: a reply for filters that match only private repositories is the same as for ones that match nothing', (t) => {
-	/** @type {const} */ ([['/dry-run fix ljharb/secret', true], ['/fix ljharb/secret', false], ['/fix ljharb/secret-broken', false]]).forEach(([line, dryRun]) => {
+	/** @type {[string, boolean][]} */
+	const cases = [['/dry-run fix ljharb/secret', true], ['/fix ljharb/secret', false], ['/fix ljharb/secret-broken', false]];
+	cases.forEach(([line, dryRun]) => {
 		const remotes = makeRemotes(t, { 'ljharb/secret': {} });
 		const commands = { permissions: { maintainer: 'write' }, serverURL: remotes.serverURL };
 		const env = { GITHUB_SERVER_URL: remotes.serverURL };

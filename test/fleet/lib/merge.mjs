@@ -82,10 +82,10 @@ function setup(t, merge, github = {}) {
 async function captureStdout(fn) {
 	let stdout = '';
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+	process.stdout.write = function (/** @type {string} */ chunk) {
 		stdout += String(chunk);
 		return true;
-	});
+	};
 	try {
 		return { result: await fn(), stdout };
 	} finally {
@@ -915,7 +915,7 @@ test('assess: only the App’s bot’s own commits', async (t) => {
 	t.deepEqual(linked.filter((r) => r.path.includes('/pulls/1/commits')).map((r) => new URLSearchParams(r.path.split('?')[1]).get('per_page')), ['100'], 'listing the PR’s commits 100 at a time');
 
 	const many = Array.from({ length: 300 }, (_, i) => prCommit(i === 299 ? 'h1' : `c${i}`));
-	await /** @type {[number, string][]} */ ([[249, 'behind'], [250, 'refused'], [300, 'refused']]).reduce(
+	await /** @satisfies {[number, string][]} */ ([[249, 'behind'], [250, 'refused'], [300, 'refused']]).reduce(
 		async (previous, [count, expected]) => {
 			await previous;
 			const requests = setup(t, { commits: { 'o/r#1': many.slice(0, count - 1).concat(prCommit('h1')) }, ci: { h1: { checkRuns: [checkRun('a', 'success')] } } });
@@ -1077,10 +1077,10 @@ test('noneLeft', async (t) => {
 		}));
 		let stdout = '';
 		const { write } = process.stdout;
-		process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+		process.stdout.write = function (/** @type {string} */ chunk) {
 			stdout += String(chunk);
 			return true;
-		});
+		};
 		try {
 			const left = await noneLeft(broken, { ...repo, private: isPrivate }, { bot, merged: new Set() });
 			return { left, stdout };

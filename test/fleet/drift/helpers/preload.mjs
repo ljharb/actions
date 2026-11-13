@@ -39,13 +39,17 @@ if (FLEET_TEST_SCENARIO) {
 	const sentinel = scenario.throwStringOnSplit;
 	if (sentinel) {
 		const { split } = String.prototype;
-		// eslint-disable-next-line no-extend-native
-		String.prototype.split = /** @type {typeof split} */ (/** @type {unknown} */ (function (/** @type {any[]} */ ...args) { // eslint-disable-line no-extra-parens
+		/**
+		 * @this {string}
+		 * @param {any[]} args
+		 * @returns {string[]}
+		 */
+		String.prototype.split = function (...args) { // eslint-disable-line no-extend-native
 			if (String(this) === sentinel) {
 				throw sentinel;
 			}
 			// @ts-expect-error spreading into an overloaded signature
 			return split.apply(this, args);
-		}));
+		};
 	}
 }

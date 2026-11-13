@@ -51,7 +51,7 @@ function errorReply(reply) {
 /**
  * One page of `items`, as `per_page` and `page` ask (unspecified, 30, and the first), with a `Link` to the next if there is one.
  * `key` is the property a list is wrapped in (eg, `check_runs`), if it is.
- * @type {(url: URL, items: unknown[], key?: string) => [number, unknown, Record<string, string>]}
+ * @type {(url: URL, items: unknown[], key?: string) => [number, Record<string, unknown> | unknown[], Record<string, string>]}
  */
 function paged(url, items, key) {
 	const perPage = Number(url.searchParams.get('per_page') ?? 30);
@@ -211,7 +211,7 @@ export function mockMerge(scenario, record) {
 					return errorReply(ci.error);
 				}
 				const [status, body] = paged(url, ci.statuses ?? [], 'statuses');
-				return [status, { state: 'pending', ...(/** @type {object} */ (body)) }]; // eslint-disable-line no-extra-parens
+				return [status, { state: 'pending', ...body }];
 			}),
 		],
 		[
@@ -272,7 +272,7 @@ export function mockMerge(scenario, record) {
 	];
 
 	routes.forEach(([interceptor, handler]) => {
-		interceptor.reply(/** @type {any} */ (handler)); // eslint-disable-line no-extra-parens
+		interceptor.reply(handler);
 	});
 
 	return () => {

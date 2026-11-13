@@ -46,7 +46,7 @@ test('shardDecade', (t) => {
 
 // `allVersions` is cached for the life of a process, so the version index is mocked in a child process of its own
 test('expectedShards', (t) => {
-	const cases = /** @type {const} */ ([ // eslint-disable-line no-extra-parens
+	const cases = [
 		['no matching versions', '>= 1000', 'minors'],
 		['fits in one file', '^20', 'minors'],
 		['a majors matrix needs far fewer jobs', '>= 4', 'majors'],
@@ -55,7 +55,7 @@ test('expectedShards', (t) => {
 		['the last decade alone doesn’t fit', '>= 100', 'minors'],
 		['a `||` range, including io.js', '^1 || ^2 || ^3 || >= 4 < 30', 'minors'],
 		['a `||` range that skips a decade', '>= 4 < 10 || >= 20 < 30', 'minors'],
-	]);
+	];
 	const { status, stderr, output, requests } = evalModule(`
 		import { writeFileSync } from 'fs';
 		import { expectedShards } from ${JSON.stringify(moduleURL('fleet/drift/shards.mjs'))};

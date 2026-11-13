@@ -104,7 +104,7 @@ async function run(
 	const requests = [];
 	const scope = nock('https://api.github.com').persist();
 	const listComments = scope.get(/^\/repos\/[^/]+\/[^/]+\/issues\/\d+\/comments(?:\?.*)?$/);
-	listComments.reply(/** @type {any} */ ((/** @type {Request} */ req) => {
+	listComments.reply((/** @type {Request} */ req) => {
 		const { pathname, search } = new URL(req.url);
 		requests.push({
 			method: 'GET',
@@ -113,9 +113,9 @@ async function run(
 			authorization: '',
 		});
 		return [200, posted.filter((c) => c.key === pathname.replace(/\/comments$/, ''))];
-	}));
+	});
 	const updatePR = scope.patch(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/);
-	updatePR.reply(/** @type {any} */ (async (/** @type {Request} */ req) => {
+	updatePR.reply(async (/** @type {Request} */ req) => {
 		const body = JSON.parse(await req.text());
 		requests.push({
 			method: 'PATCH',
@@ -124,7 +124,7 @@ async function run(
 			authorization: '',
 		});
 		return [200, body];
-	}));
+	});
 	const teardowns = [mockMerge(merge, (r) => requests.push(r)), mockGitHub(github, (r) => requests.push(r))];
 	current = () => {
 		nock.removeInterceptor(listComments);
@@ -139,10 +139,10 @@ async function run(
 
 	let stdout = '';
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+	process.stdout.write = function (/** @type {string | Uint8Array} */ chunk) {
 		stdout += String(chunk);
 		return true;
-	});
+	};
 	/** @type {number} */
 	let errors;
 	if (offline) {
@@ -349,7 +349,8 @@ test('maintain: with no open PRs from the App’s branches, exits fast', async (
 
 test('maintain: the installed repositories are found in batches, by how many PRs are open from each of the App’s branches', async (t) => {
 	const server = setup(t);
-	const names = Array.from({ length: 21 }, (_, i) => ({ name: `quiet${i}`, open: /** @type {[number, number]} */ ([0, 0]) }));
+	/** @type {{ name: string, open: [number, number] }[]} */
+	const names = Array.from({ length: 21 }, (_, i) => ({ name: `quiet${i}`, open: [0, 0] }));
 	const { requests, stdout } = await run(t, { server, github: installed(names), merge: {} });
 	const queries = requests.filter((r) => r.path === '/graphql');
 	t.equal(queries.length, 2, 'twenty at a time');
@@ -1498,7 +1499,7 @@ test('maintain: once CI passes on a head commit the App said needs a person, hid
 		server,
 		github: installed([{ name: 'r', private: isPrivate }], { minimized: ['C_minimized'], ...github }),
 		merge: shown(server, [[1, fixBranch, head]], { ci }),
-		posted: /** @type {Comment[]} */ ([]).concat(posted),
+		posted: posted.slice(),
 		offline: true,
 	});
 
@@ -1542,7 +1543,7 @@ test('maintain: once CI passes on a head commit the App said needs a person, hid
 		server,
 		github: installed([{ name: 'r' }], { minimized: ['C_stuck', 'C_minimized'] }),
 		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
-		posted: /** @type {Comment[]} */ ([]).concat(posted),
+		posted: posted.slice(),
 	});
 	t.equal(again.errors, 0, 'once it’s hidden, CI failing again on that head fails nothing');
 	t.ok(logged(again.stdout).includes(`${prURL(server)}: its CI failed, with nothing left to restore; said so on it`), 'it’s looked at again, as a hidden comment no longer counts as said');

@@ -374,10 +374,10 @@ test('discover: a failing installation does not fail the others', async (t) => {
 async function captureStdout(fn) {
 	let stdout = '';
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+	process.stdout.write = function (/** @type {string} */ chunk) {
 		stdout += String(chunk);
 		return true;
-	});
+	};
 	try {
 		return { result: await fn(), stdout };
 	} finally {

@@ -3,17 +3,18 @@ import test from 'tape';
 import { legend, parseCommand } from '../../../fleet/commands/syntax.mjs';
 
 /** @import { Filters } from '../../../fleet/commands/syntax.mjs' */
+/** @import { Category } from '../../../fleet/drift/fix.mjs' */
 
-/** @type {(filters: Partial<Record<'repositories' | 'accounts' | 'files' | 'categories', string[]>>) => Filters} */
+/** @type {(filters: Partial<Record<'repositories' | 'accounts' | 'files', string[]> & { categories?: Category[] }>) => Filters} */
 function filters({
 	repositories = [], accounts = [], files = [], categories = [],
 }) {
-	return /** @type {Filters} */ ({ // eslint-disable-line no-extra-parens
+	return {
 		repositories: new Set(repositories),
 		accounts: new Set(accounts),
 		files: new Set(files),
 		categories: new Set(categories),
-	});
+	};
 }
 
 test('parseCommand: not a command', (t) => {

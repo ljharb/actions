@@ -71,8 +71,8 @@ function mockAPI(
 		requests.push({ method: req.method, path: `${url.pathname}${url.search}`, body });
 		return handler(body);
 	};
-	scope.get(/^\/repos\/o\/r\/issues\/3\/comments\?/).reply(/** @type {any} */ (handle(() => (listStatus ? [listStatus, { message: 'Not Found: o/r' }] : [200, comments]))));
-	scope.post('/graphql').reply(/** @type {any} */ (handle(({ query, variables }) => {
+	scope.get(/^\/repos\/o\/r\/issues\/3\/comments\?/).reply(handle(() => (listStatus ? [listStatus, { message: 'Not Found: o/r' }] : [200, comments])));
+	scope.post('/graphql').reply(handle(({ query, variables }) => {
 		if (query.includes('nodes(')) {
 			if (nodesStatus) {
 				return [nodesStatus, { message: 'Server Error: o/r' }];
@@ -80,7 +80,9 @@ function mockAPI(
 			/** @type {{ ids: string[] }} */
 			const { ids } = variables;
 			const data = { nodes: ids.map((id) => (deleted.includes(id) ? null : { id, isMinimized: minimized.includes(id) })) };
-			const errors = /** @type {unknown[]} */ ([]).concat(
+			/** @type {unknown[]} */
+			const none = [];
+			const errors = none.concat(
 				nodesErrors ?? [],
 				ids.filter((id) => deleted.includes(id)).map((id) => ({ type: 'NOT_FOUND', path: ['nodes', ids.indexOf(id)], message: `Could not resolve to a node with the global id of '${id}'` })),
 			);
@@ -89,7 +91,7 @@ function mockAPI(
 		return fails[variables.id]
 			? [200, { data: { minimizeComment: null }, errors: fails[variables.id] }]
 			: [200, { data: { minimizeComment: { minimizedComment: { isMinimized: true } } } }];
-	})));
+	}));
 	t.teardown(() => {
 		nock.cleanAll();
 		nock.enableNetConnect();
@@ -114,10 +116,10 @@ function lookedUp(requests) {
 async function hide(current = rebased, isPrivate = false) {
 	let stdout = '';
 	const { write } = process.stdout;
-	process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+	process.stdout.write = function (/** @type {string} */ chunk) {
 		stdout += String(chunk);
 		return true;
-	});
+	};
 	try {
 		const count = await hideStale({
 			octokit: getOctokit('ghs_test'),
@@ -356,10 +358,10 @@ test('hideSaid', (t) => {
 	const resolve = async (writer) => {
 		let stdout = '';
 		const { write } = process.stdout;
-		process.stdout.write = /** @type {typeof write} */ (function (/** @type {string} */ chunk) {
+		process.stdout.write = function (/** @type {string} */ chunk) {
 			stdout += String(chunk);
 			return true;
-		});
+		};
 		try {
 			const count = await hideSaid({
 				octokit: getOctokit('ghs_read'),

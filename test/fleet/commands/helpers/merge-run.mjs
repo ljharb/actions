@@ -204,11 +204,10 @@ export function privateNote(dryRun) {
 
 /**
  * What a reply lists below its table about one PR, collapsed: each of `jobs` (a name, then its messages), in a block fenced with three backticks.
- * @type {(repository: string, number: number, what: 'failed' | 'optional', jobs: [string, ...string[]][]) => string}
+ * @type {(repository: string, number: number, what: 'failed' | 'optional', jobs: string[][]) => string}
  */
 export function expectedDetails(repository, number, what, jobs) {
-	return /** @type {string[]} */ ([]).concat(
-		`<details><summary><code>${repository}</code> <a href="https://github.com/${repository}/pull/${number}">#${number}</a>: ${what === 'failed' ? 'the checks that failed' : 'optional jobs that failed, which don’t block merging'}</summary>`,
+	return [`<details><summary><code>${repository}</code> <a href="https://github.com/${repository}/pull/${number}">#${number}</a>: ${what === 'failed' ? 'the checks that failed' : 'optional jobs that failed, which don’t block merging'}</summary>`].concat(
 		'',
 		'```',
 		jobs.flatMap(([name, ...messages]) => [name].concat(messages.map((message) => `  ${message}`))),
@@ -220,8 +219,7 @@ export function expectedDetails(repository, number, what, jobs) {
 
 /** @type {(line: string, rows: string[], dryRun: boolean, details?: string[]) => string} */
 export function expectedReply(line, rows, dryRun, details = []) {
-	return /** @type {string[]} */ ([]).concat(
-		`\`${line}\` (${dryRun ? 'a dry run, so nothing was changed or queued' : 'from each repository’s `fleet/workflows` and `actions-lock/relock` PRs by the App’s bot'}; see [the run](${runURL})):`,
+	return [`\`${line}\` (${dryRun ? 'a dry run, so nothing was changed or queued' : 'from each repository’s `fleet/workflows` and `actions-lock/relock` PRs by the App’s bot'}; see [the run](${runURL})):`].concat(
 		'',
 		rows.length > 0 ? ['| Repository | Outcome |', '| --- | --- |'].concat(rows) : 'No repository matches those filters.',
 		details.flatMap((text) => ['', text]),
