@@ -75,7 +75,7 @@ function repo({
 			defaultBranchRef: defaultBranch ? { name: defaultBranch } : null,
 			config: typeof config === 'string' ? { text: config } : null,
 			packageJson: typeof packageJson === 'string' ? { text: packageJson } : null,
-			root: { entries: typeof packageJson === 'string' ? [{ name: 'package.json', mode: packageJsonMode }] : [] },
+			root: { entries: [{ name: '.github', mode: 0o40000 }].concat(typeof packageJson === 'string' ? [{ name: 'package.json', mode: packageJsonMode }] : []) },
 			workflows: workflows && {
 				entries: workflows.map(({ name, text }) => ({ name, type: 'blob', object: typeof text === 'string' ? { text } : {} })),
 			},
