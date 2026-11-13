@@ -55,7 +55,7 @@ test('setup: RUNNER_TEMP for this file', (t) => {
 
 /** @type {(workflows: Record<string, boolean> | false) => Config} */
 function config(workflows) {
-	return /** @type {Config} */ ({ workflows }); // eslint-disable-line no-extra-parens
+	return { workflows, keep: {} };
 }
 
 /** @type {(extra: { name: string, text: string | null }[], without?: string[]) => RepoState['workflows']} */

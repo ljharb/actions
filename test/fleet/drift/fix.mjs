@@ -37,7 +37,7 @@ test('setup: RUNNER_TEMP for this file', (t) => {
 
 /** @type {(workflows: Record<string, boolean> | false) => Config} */
 function config(workflows) {
-	return /** @type {Config} */ ({ workflows }); // eslint-disable-line no-extra-parens
+	return { workflows, keep: {} };
 }
 
 /** @type {(extra: { name: string, text: string | null }[], without?: string[]) => RepoState['workflows']} */
@@ -496,7 +496,7 @@ function diffOf(name, actual, expected) {
 test('planFixes: a drifted file’s diff is against exactly what fixing it writes', (t) => {
 	const tensOpen = nodeWorkflow({ range: '>= 10', label: '>= 10' });
 	const keepEngines = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } };
-	/** @type {[label: string, engines: string | null, workflows: { name: string, text: string | null }[], config?: Partial<Config>][]} */
+	/** @type {[label: string, engines: string | null, workflows: { name: string, text: string | null }[], config?: Config][]} */
 	const cases = [
 		[
 			'no aggregating job, so no label to recover',
@@ -544,10 +544,10 @@ test('planFixes: a drifted file’s diff is against exactly what fixing it write
 			keepEngines,
 		],
 	];
-	const states = cases.map(([, engines, workflows, workflowsConfig = { workflows: {} }]) => repoState({
+	const states = cases.map(([, engines, workflows, workflowsConfig = { workflows: {}, keep: {} }]) => repoState({
 		packageJson: JSON.stringify(engines ? { engines: { node: engines } } : {}),
 		workflows: withWorkflows(workflows, workflows.map((w) => w.name)),
-		config: /** @type {Config} */ (workflowsConfig), // eslint-disable-line no-extra-parens
+		config: workflowsConfig,
 	}));
 
 	const source = `
