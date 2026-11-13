@@ -60,7 +60,7 @@ export function keptOnBranch(git, { base, tip }) {
 
 /**
  * `keep`, with `kept` added to it.
- * @type {(keep: Record<string, string[]>, kept: Map<string, string[]>) => Record<string, string[]>}
+ * @type {(keep: Record<string, string[]> | undefined, kept: Map<string, string[]>) => Record<string, string[]>}
  */
 export function withKept(keep, kept) {
 	/** @type {Record<string, string[]>} */

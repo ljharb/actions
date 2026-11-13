@@ -43,17 +43,15 @@ function majMin(v) {
 	return `${semver.major(v)}.${semver.minor(v)}`;
 }
 
-/** @type {(versions: Version[]) => Record<BareMajMin | BareMaj, BareMajMin[]>} */
+/** @type {(versions: Version[]) => Map<BareMajMin | BareMaj, BareMajMin[]>} */
 function getMinorsByMajor(versions) {
-	const minorEntries = versions.map(/** @type {(v: Version) => [BareMajMin | BareMaj, BareMajMin]} */ (v) => [`${semver.satisfies(v, '< 1') ? majMin(v) : semver.major(v)}`, majMin(v)]);
 	/** @type {ReturnType<typeof getMinorsByMajor>} */
-	const minorsByMajor = {};
-	minorEntries.forEach(([maj, v]) => {
-		minorsByMajor[maj] = Array.from(new Set([].concat(
-			// @ts-expect-error TS sucks with concat
-			minorsByMajor[maj] || [],
-			v,
-		)));
+	const minorsByMajor = new Map();
+	versions.forEach((v) => {
+		const minor = majMin(v);
+		/** @type {BareMajMin | BareMaj} */
+		const maj = semver.satisfies(v, '< 1') ? minor : `${semver.major(v)}`;
+		minorsByMajor.set(maj, Array.from(new Set((minorsByMajor.get(maj) || []).concat(minor))));
 	});
 	return minorsByMajor;
 }
@@ -91,6 +89,20 @@ function get0xReqs(filter) {
 
 const iojsRange = '^1 || ^2 || ^3';
 
+const bareVersion = /^\d+\.\d+\.\d+$/;
+
+/** @type {(x: string) => x is BareVersion} */
+function isBareVersion(x) {
+	return bareVersion.test(x);
+}
+
+// `x`, as a full `major.minor.patch` version, when it can be one
+/** @type {(x: nvmVersionish) => nvmVersionish} */
+function fullVersion(x) {
+	const version = semver.coerce(x)?.version;
+	return typeof version === 'string' && isBareVersion(version) ? version : x;
+}
+
 /** @type {(x: nvmVersionishBaseBare) => `iojs-${nvmVersionishBaseV}` | typeof x} */
 function iojsMapper(x) {
 	return semver.satisfies(x, iojsRange) ? `iojs-v${x}` : x;
@@ -109,7 +121,7 @@ export async function getReqOpts(reqRange, optRange, type, isNotable, fullSemver
 		.filter((v) => (reqRange && semver.satisfies(v, reqRange)) || (optRange && semver.satisfies(v, optRange)));
 	const map = getMinorsByMajor(versions);
 	const { requireds: req0x, optionals: opt0x } = get0xReqs(versions);
-	const values = Object.values(map);
+	const values = Array.from(map.values());
 
 	/** @type {ReqOptMap['requireds']} */
 	let requireds = [];
@@ -118,26 +130,22 @@ export async function getReqOpts(reqRange, optRange, type, isNotable, fullSemver
 
 	if (type === 'majors') {
 		if (reqRange) {
-			// Object.entries can't know that every key is a `keyof typeof map`
-			const entries = /** @type {[keyof typeof map, BareMajMin[]][]} */ (Object.entries(map));
-			/** @type {(entry: [keyof typeof map, BareMajMin[]]) => [keyof typeof map] | []} */
-			const mapper = ([x, [latest]]) => {
-				const subset = semver.subset(x, '>= 1') && semver.subset(latest, reqRange);
-				return subset || req0x.includes(x) ? [x] : [];
-			};
-			requireds = entries.flatMap(mapper);
+			requireds = map.entries()
+				.filter(([x, [latest]]) => (semver.subset(x, '>= 1') && semver.subset(latest, reqRange)) || req0x.includes(x))
+				.map(([x]) => x)
+				.toArray();
 		}
 		if (optRange) {
-			// Object.keys can't know that every key is a `keyof typeof map`
-			optionals = /** @type {(keyof typeof map)[]} */ (Object.keys(map))
-				.flat()
-				.filter((x) => (
+			optionals = map.entries()
+				.filter(([x, [latest]]) => (
 					!requireds.includes(x)
 					&& (
 						opt0x.includes(x)
-						|| semver.subset(map[x][0], optRange)
+						|| semver.subset(latest, optRange)
 					)
-				));
+				))
+				.map(([x]) => x)
+				.toArray();
 		}
 	} else if (isNotable) {
 		return { requireds: values.flat().sort(comparator), optionals };
@@ -161,8 +169,8 @@ export async function getReqOpts(reqRange, optRange, type, isNotable, fullSemver
 	requireds.sort(comparator);
 	optionals.sort(comparator);
 	if (fullSemver) {
-		requireds = requireds.map((x) => /** @type {typeof x} */ (semver.coerce(x)?.version) ?? x);
-		optionals = optionals.map((x) => /** @type {typeof x} */ (semver.coerce(x)?.version) ?? x);
+		requireds = requireds.map(fullVersion);
+		optionals = optionals.map(fullVersion);
 	}
 
 	// @ts-expect-error FIXME figure out how to untangle this type

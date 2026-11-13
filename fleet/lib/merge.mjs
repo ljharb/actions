@@ -236,8 +236,10 @@ export function assessmentDetails(pr, { failures = [], optional = [] }) {
  * @type {(error: unknown) => string | undefined}
  */
 function refusalOf(error) {
-	// a thrown value is untyped, and narrowing it to an object would stop reading this from a thrown function
-	const message = /** @type {{ response?: { data?: { message?: unknown } } } | null | undefined} */ (error)?.response?.data?.message;
+	// a thrown value is untyped
+	/** @type {{ response?: { data?: { message?: unknown } } }} */
+	const failure = Object(error);
+	const message = failure.response?.data?.message;
 	return typeof message === 'string' && message.trim() !== '' ? message.trim() : void undefined;
 }
 

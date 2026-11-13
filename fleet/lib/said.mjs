@@ -96,8 +96,9 @@ export function classify(
  * @type {(error: unknown) => Nodes}
  */
 function foundNodes(error) {
-	// Octokit's rejection is untyped, and checking its shape would change what a `null` or `undefined` one throws
-	const { errors, data } = /** @type {{ errors?: { type?: string }[], data?: Nodes }} */ (error);
+	// Octokit's rejection is untyped
+	/** @type {{ errors?: { type?: string }[], data?: Nodes }} */
+	const { errors, data } = Object(error);
 	if (!data?.nodes || !errors?.every((e) => e?.type === 'NOT_FOUND')) {
 		throw error;
 	}

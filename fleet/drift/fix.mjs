@@ -97,11 +97,17 @@ function nodeDefaults(packageJson, files) {
 	};
 }
 
-// the template for `name`, with the values recovered from its current file (if `recovered`), and defaults for any it lacks
-/** @type {(context: Context, name: string, recovered: boolean) => Promise<Resolved>} */
-async function resolve({ files, defaults }, name, recovered) {
-	const template = loadTemplate(/** @type {string} */ (templateFor(name)));
-	const guessed = recovered ? guessValues(template, normalize(/** @type {string} */ (files.get(name)))) : {};
+// the template for `name`, with the values recovered from its current file (if it has one), and defaults for any it lacks
+/** @type {(context: Context, name: string) => Promise<Resolved>} */
+async function resolve({ files, defaults }, name) {
+	const templateName = templateFor(name);
+	if (!templateName) {
+		return { name, why: 'there is no template for it' };
+	}
+	const template = loadTemplate(templateName);
+	const current = files.get(name);
+	const recovered = typeof current === 'string';
+	const guessed = recovered ? guessValues(template, normalize(current)) : {};
 	// a blank value is no value: a blank `range` would be closed to `< N`, which tests every version below N
 	const values = Object.fromEntries(Object.entries(guessed).filter(([, v]) => v.trim()));
 	const unknown = placeholders(template).filter((p) => !Object.hasOwn(values, p));
@@ -190,7 +196,7 @@ async function closeRanges(context, present, added) {
 				if (context.ignored.has(name)) {
 					resolved = { name, why: `it’s ignored by \`ljharb-actions.json\`, so it’s left as it is, though it may overlap the added \`${next.name}\`` };
 				} else if (typeof context.files.get(name) === 'string') {
-					resolved = await resolve(context, name, true);
+					resolved = await resolve(context, name);
 				} else {
 					resolved = { name, why: `it could not be read, ${unknown}` };
 				}
@@ -261,9 +267,7 @@ export async function planFixes(state, result, { files: names, categories } = {}
 	await result.missing.filter(wanted('missing')).reduce(
 		async (previous, name) => {
 			await previous;
-			const resolved = templateFor(name)
-				? await resolve(context, name, false)
-				: { name, why: 'there is no template for it' };
+			const resolved = await resolve(context, name);
 			add(context, resolved, 'missing');
 			if (!('why' in resolved)) {
 				added.add(name);
@@ -278,7 +282,7 @@ export async function planFixes(state, result, { files: names, categories } = {}
 	await result.drifted.filter((d) => wanted('drifted')(d.name) && !handled.has(d.name)).reduce(
 		async (previous, { name }) => {
 			await previous;
-			add(context, await resolve(context, name, true), 'drifted');
+			add(context, await resolve(context, name), 'drifted');
 		},
 		Promise.resolve(),
 	);

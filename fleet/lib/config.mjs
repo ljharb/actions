@@ -5,11 +5,11 @@ import { code } from './markdown.mjs';
 /**
  * @typedef {{
  *   workflows: false | Record<string, boolean>,
- *   keep: Record<string, string[]>,
+ *   keep?: Record<string, string[]>,
  * }} Config
  */
 
-/** @type {{ [K in keyof Config]: Exclude<Config[K], false> }} */
+/** @type {{ [K in keyof Config]-?: Exclude<Config[K], false | undefined> }} */
 const defaults = {
 	workflows: {},
 	keep: {},
