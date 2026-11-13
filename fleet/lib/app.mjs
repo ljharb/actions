@@ -199,6 +199,11 @@ function isRegularFile(entries, name) {
 	return !!entries?.some((e) => e.name === name && e.mode === regularMode);
 }
 
+/** @type {(entries: { name: string }[] | undefined) => boolean} */
+function isBare(entries) {
+	return !!entries && !entries.some((e) => e.name === '.github' || e.name === 'package.json');
+}
+
 /** @type {(repo: Record<string, any> | null | undefined) => RepoState['source']} */
 function forkSource(repo) {
 	let root = repo?.isFork ? repo.parent : null;
@@ -229,6 +234,10 @@ function toState(
 	const config = mergeConfig(inherited.config, own.config);
 	// an account's `.github` repository holds its defaults, and usually has no workflows of its own, so it's only checked when its own file asks for that
 	if (r.name.toLowerCase() === '.github' && !('workflows' in own.config)) {
+		config.workflows = false;
+	}
+	// the templates are for a node package: its tests and `pretest`, plus the PR helpers (`rebase.yml`, `require-allow-edits.yml`) that go with them. A repository with neither a `package.json` nor a `.github` (eg, only a README and images) isn't one, and has no workflows to drift from; an account's defaults don't opt it in, since `node-pretest.yml` is required and would fail without a `package.json` (and it has no `.github/ljharb-actions.json` of its own). One whose root couldn't be read (eg, an empty one) is still checked
+	if (isBare(repo?.root?.entries)) {
 		config.workflows = false;
 	}
 	return {

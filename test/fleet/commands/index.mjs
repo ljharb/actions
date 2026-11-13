@@ -1565,3 +1565,40 @@ test('fleet/commands: `/fix` never makes a PR that only changes the App’s book
 	});
 	t.end();
 });
+
+test('fleet/commands: `/fix` leaves alone a repository with neither a `.github` nor a `package.json`', (t) => {
+	const { status, requests } = run(t, {
+		event: { issue: report, comment: comment('/dry-run fix ljharb') },
+		github: {
+			installations: [{ id: 1, account: { login: 'ljharb' } }],
+			installationRepos: { 1: [installedRepo('ljharb', 'logos'), installedRepo('ljharb', 'missing')] },
+			repos: {
+				'ljharb/logos': {
+					data: {
+						isArchived: false,
+						isPrivate: false,
+						defaultBranchRef: { name: 'main' },
+						config: null,
+						packageJson: null,
+						root: { entries: [{ name: 'README.md', mode: 0o100644 }] },
+						workflows: null,
+					},
+				},
+				'ljharb/missing': repo({ workflows: null }),
+			},
+		},
+	});
+
+	t.equal(status, 0, 'exits successfully');
+	const [body] = replies(requests);
+	t.ok(body.includes('`ljharb/missing`'), 'plans fixing the repository that has a `.github`');
+	t.notOk(body.includes('logos'), 'but never lists the one with nothing the templates apply to');
+	t.deepEqual(
+		matching(requests, 'POST', /^\/app\/installations\/1\/access_tokens$/).filter((r) => r.body?.repositories).map((r) => r.body.repositories),
+		[['missing']],
+		'nor gets a token for it',
+	);
+	t.deepEqual(requests.filter((r) => r.path.startsWith('/repos/ljharb/logos/')), [], 'nor touches it at all');
+
+	t.end();
+});

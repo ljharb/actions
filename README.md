@@ -59,6 +59,11 @@ This repo is public, and so is everything its fleet workflows output: run logs (
 An account’s `.github` repository is skipped by the workflow drift report unless its own `.github/ljharb-actions.json`
 (that is, `.github/ljharb-actions.json` inside the `.github` repository, eg `{ "workflows": true }`)
 sets `workflows`; the account defaults in its root `ljharb-actions.json` don’t opt it in.
+So is a repository whose root has neither a `.github` nor a `package.json` (eg, only a README and images):
+the templates are for a node package (its tests and `pretest`, plus the PR helpers that go with them),
+which it isn’t, and it has no workflows to drift from, so `/fix` leaves it alone too;
+the account defaults don’t opt it in, and it has no `.github/ljharb-actions.json` that could.
+One whose root can’t be read (eg, an empty repository) is still checked.
 Archived repositories are always skipped.
 
 ### Workflow drift report

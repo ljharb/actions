@@ -1339,3 +1339,57 @@ test('discover: a source that is itself a fork, past the parents read, is droppe
 	t.deepEqual(states.map((s) => s.repository), ['allowed/root'], 'but dropped, since it is itself a fork');
 	t.deepEqual(commitRequests(requests).filter((r) => r.path.includes('/four/')), [], 'and its own parent is never checked');
 });
+
+test('discover: a repository with neither a `.github` nor a `package.json` is skipped', async (t) => {
+	setup(t, {
+		installations: [{ id: 350, account: { login: 'nvm-sh' } }],
+		installationRepos: {
+			350: [
+				installedRepo('nvm-sh', 'logos'),
+				installedRepo('nvm-sh', 'funded'),
+				installedRepo('nvm-sh', 'node'),
+				installedRepo('nvm-sh', 'unread'),
+				installedRepo('nvm-sh', 'empty'),
+			],
+		},
+		accounts: { 'nvm-sh': { text: '{ "workflows": true }' } },
+		repos: {
+			'nvm-sh/logos': {
+				data: {
+					root: {
+						entries: [
+							{ name: 'README.md', mode: 0o100644 },
+							{ name: 'logo.svg', mode: 0o100644 },
+						],
+					},
+				},
+			},
+			'nvm-sh/funded': {
+				data: {
+					root: {
+						entries: [
+							{ name: '.github', mode: 0o40000 },
+							{ name: 'README.md', mode: 0o100644 },
+						],
+					},
+				},
+			},
+			'nvm-sh/node': {
+				data: {
+					packageJson: { text: '{}' },
+					root: { entries: [{ name: 'package.json', mode: 0o100644 }] },
+				},
+			},
+			'nvm-sh/unread': { data: { root: null } },
+			'nvm-sh/empty': { data: { root: { entries: [] } } },
+		},
+	});
+
+	const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['nvm-sh']));
+	t.deepEqual(failures, [], 'no failures');
+	t.equal(find(states, 'nvm-sh/logos').config.workflows, false, 'skipped despite the account’s defaults');
+	t.equal(find(states, 'nvm-sh/empty').config.workflows, false, 'as is one whose root has nothing in it');
+	t.deepEqual(plain(find(states, 'nvm-sh/funded').config.workflows), {}, 'a `.github` (eg, with only `FUNDING.yml` in it) is checked');
+	t.deepEqual(plain(find(states, 'nvm-sh/node').config.workflows), {}, 'as is a `package.json` without a `.github`');
+	t.deepEqual(plain(find(states, 'nvm-sh/unread').config.workflows), {}, 'and one whose root couldn’t be read is checked as before');
+});
