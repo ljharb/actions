@@ -8,13 +8,12 @@ import path from 'path';
 
 import test from 'tape';
 
+import { checkRepo, checkSafely } from '../../../fleet/drift/check.mjs';
 import {
-	checkRepo,
-	checkSafely,
 	normalize,
 	placeholders,
 	templateFor,
-} from '../../../fleet/drift/check.mjs';
+} from '../../../fleet/drift/template.mjs';
 import { evalModule, moduleURL } from './helpers/child.mjs';
 import {
 	nodeWorkflow,
@@ -535,6 +534,86 @@ test('checkRepo: inputs a reusable workflow declares are a repository’s own, n
 	}));
 	t.deepEqual(summarize(ambiguous).drifted, ['node-pretest.yml'], 'two renamed calls where the template has one are drift');
 	t.equal(present(ambiguous).error, 'node-pretest.yml: the kept inputs can’t all be kept: job “a” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous; job “b” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous', 'and when they pass a kept input, which of them it’s kept from is ambiguous, which is an error');
+	t.end();
+});
+
+// `allVersions` is cached for the life of a process, so the version index is mocked in a child process of its own
+test('checkRepo: a drifted file’s diff fills what it can’t recover as fixing it would', (t) => {
+	// nvm-sh/nvmrc's, which has no aggregating job, and so no `{{label}}` to recover
+	const nvmrc = [
+		'name: \'Tests: node.js\'',
+		'',
+		'on: [pull_request, push]',
+		'',
+		'permissions:',
+		'  contents: read',
+		'',
+		'jobs:',
+		'  tests:',
+		'    uses: ljharb/actions/.github/workflows/node.yml@main',
+		'    with:',
+		'      range: \'^20 || >= 22\'',
+		'      type: minors',
+		'      command: npm run tests-only',
+		'',
+	].join('\n');
+	const states = [
+		repoState({
+			packageJson: JSON.stringify({ engines: { node: '^20 || >= 22' } }),
+			workflows: withWorkflows([{ name: 'node.yml', text: nvmrc }]),
+		}),
+		repoState({
+			packageJson: JSON.stringify({ engines: { node: '^20' } }),
+			workflows: withWorkflows([{ name: 'node.yml', text: nodeWorkflow({ range: '^20', label: '^20' }) }, { name: 'node-tens.yml', text: nodeWorkflow().replace('range: \'>= 4\'', 'range: >\n        >= 4') }]),
+			config: config({ 'node-tens.yml': true }),
+		}),
+	];
+
+	const source = `
+		import { writeFileSync } from 'fs';
+		import { checkRepo } from ${JSON.stringify(moduleURL('fleet/drift/check.mjs'))};
+
+		const states = ${JSON.stringify(states)};
+		const results = [];
+		await states.reduce(
+			async (previous, s) => {
+				await previous;
+				results.push(await checkRepo(s));
+			},
+			Promise.resolve(),
+		);
+		writeFileSync(process.env.FLEET_TEST_OUT, JSON.stringify(results));
+	`;
+	const versions = {
+		nodejs: [
+			'v26.0.0',
+			'v25.0.0',
+			'v24.0.0',
+			'v23.0.0',
+			'v22.0.0',
+			'v21.0.0',
+			'v20.0.0',
+		],
+		iojs: [],
+	};
+	const { status, stderr, output } = evalModule(source, { versions });
+	t.equal(status, 0, 'the child succeeds');
+	t.equal(stderr, '', 'with nothing on stderr');
+
+	const [labelless, unfixable] = /** @type {(Result | null)[]} */ (output); // eslint-disable-line no-extra-parens
+	t.deepEqual(summarize(labelless).drifted, ['node.yml'], 'a node test file with no aggregating job drifts');
+	t.equal(present(labelless).error, null, 'with no error');
+	const [{ diff }] = present(labelless).drifted;
+	t.match(diff, /^-name: 'Tests: node\.js'$/m, 'the actual name');
+	t.match(diff, /^\+name: 'Tests: node\.js \^20 \|\| >= 22'$/m, 'gets the label `engines.node` implies, as fixing it would write');
+	t.match(diff, /^\+ {4}name: 'node \^20 \|\| >= 22'$/m, 'in the added job too');
+	t.doesNotMatch(diff, /\{\{\w+\}\}/, 'and no placeholder is left in it');
+	t.doesNotMatch(diff, /^[-+] {6}range: /m, 'the range is unchanged');
+
+	t.deepEqual(summarize(unfixable).drifted, ['node-tens.yml'], 'a node test file `engines.node` doesn’t need, that’s checked anyway, drifts');
+	t.equal(present(unfixable).error, null, 'with no error');
+	t.match(present(unfixable).drifted[0].diff, /^\+ {6}range: '\{\{range\}\}'$/m, 'and since fixing it would skip it, a value that can’t be recovered stays a placeholder');
+
 	t.end();
 });
 

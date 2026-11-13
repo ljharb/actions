@@ -15,8 +15,8 @@ import {
 	summaryProblems,
 	thisRepository,
 } from '../lib/report.mjs';
-import { templateFor } from './check.mjs';
 import { marker } from './marker.mjs';
+import { templateFor } from './template.mjs';
 
 /** @import { Result } from './check.mjs' */
 /** @import { Failure } from '../lib/app.mjs' */

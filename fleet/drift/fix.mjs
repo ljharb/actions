@@ -1,21 +1,26 @@
 import semver from 'semver';
 
 import { allVersions } from '../../node/matrix/versions.mjs';
+import { keepInputs } from './inputs.mjs';
+import {
+	expectedShards,
+	nodeEngines,
+	nodeType,
+	shardDecade,
+} from './shards.mjs';
 import {
 	guessValues,
 	loadTemplate,
-	nodeEngines,
-	nodeType,
 	normalize,
 	placeholders,
 	render,
 	templateFor,
-} from './check.mjs';
-import { keepInputs } from './inputs.mjs';
-import { expectedShards, shardDecade } from './shards.mjs';
+} from './template.mjs';
 
 /** @import { RepoState } from '../lib/app.mjs' */
 /** @import { Result } from './check.mjs' */
+// what planning reads of a `Result`: `checkRepo` plans before it has the diffs, to diff against what it plans
+/** @typedef {Pick<Result, 'missing' | 'unexpected'> & { drifted: { name: string }[] }} Discrepancies */
 /** @typedef {'missing' | 'drifted' | 'unexpected'} Category */
 // `kept`, `ignored`, and `unignored` are only ever `/fix`'s own: for the config that keeps what its PR put back, and for `package.json`, to keep that config out of the published package, or to stop ignoring it once it's gone
 /** @typedef {{ path: string, content: string, reason: Category | 'range' | 'kept' | 'ignored' | 'unignored' }} Write */
@@ -37,8 +42,8 @@ import { expectedShards, shardDecade } from './shards.mjs';
 
 const workflowsDir = '.github/workflows';
 
-/** @type {(name: string) => string} */
-function workflowPath(name) {
+/** @type {<N extends string>(name: N) => `.github/workflows/${N}`} */
+export function workflowPath(name) {
 	return `${workflowsDir}/${name}`;
 }
 
@@ -95,8 +100,8 @@ function nodeDefaults(packageJson, files) {
 // the template for `name`, with the values recovered from its current file (if `recovered`), and defaults for any it lacks
 /** @type {(context: Context, name: string, recovered: boolean) => Promise<Resolved>} */
 async function resolve({ files, defaults }, name, recovered) {
-	const template = loadTemplate(/** @type {string} */ (templateFor(name))); // eslint-disable-line no-extra-parens
-	const guessed = recovered ? guessValues(template, normalize(/** @type {string} */ (files.get(name)))) : {}; // eslint-disable-line no-extra-parens
+	const template = loadTemplate(/** @type {string} */ (templateFor(name)));
+	const guessed = recovered ? guessValues(template, normalize(/** @type {string} */ (files.get(name)))) : {};
 	// a blank value is no value: a blank `range` would be closed to `< N`, which tests every version below N
 	const values = Object.fromEntries(Object.entries(guessed).filter(([, v]) => v.trim()));
 	const unknown = placeholders(template).filter((p) => !Object.hasOwn(values, p));
@@ -225,7 +230,7 @@ async function closeRanges(context, present, added) {
  * The changes that would make one repository's workflow files match the templates, limited to `filters.files` (workflow file names) and `filters.categories`; an empty or absent filter limits nothing.
  * A range rewrite goes with the added shard that needs it, so it's limited only by what limits that shard.
  * Only the templates are read: the released node versions are the ones `checkRepo(state)` already fetched.
- * @type {(state: RepoState, result: Result | null, filters?: Filters) => Promise<Plan>}
+ * @type {(state: RepoState, result: Discrepancies | null, filters?: Filters) => Promise<Plan>}
  */
 export async function planFixes(state, result, { files: names, categories } = {}) {
 	/** @type {Plan} */

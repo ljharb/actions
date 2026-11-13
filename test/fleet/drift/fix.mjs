@@ -1,4 +1,9 @@
-import { mkdtempSync, rmSync } from 'fs';
+import { spawnSync } from 'child_process';
+import {
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 
@@ -6,6 +11,7 @@ import test from 'tape';
 
 import { checkRepo } from '../../../fleet/drift/check.mjs';
 import { planFixes } from '../../../fleet/drift/fix.mjs';
+import { normalize } from '../../../fleet/drift/template.mjs';
 import { evalModule, moduleURL } from './helpers/child.mjs';
 import {
 	nodeWorkflow,
@@ -16,6 +22,7 @@ import {
 import { versionFixture } from './helpers/versions.mjs';
 
 /** @import { Plan, Category, Filters } from '../../../fleet/drift/fix.mjs' */
+/** @import { Result } from '../../../fleet/drift/check.mjs' */
 /** @import { RepoState } from '../../../fleet/lib/app.mjs' */
 /** @import { Config } from '../../../fleet/lib/config.mjs' */
 
@@ -464,6 +471,120 @@ test('planFixes: a rewritten file keeps the inputs the repository keeps', async 
 		deletes: [],
 		skipped: [{ path: at('node-pretest.yml'), why: 'the kept inputs can’t all be kept: job “a” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous; job “b” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous' }],
 	}, 'but when which call it’s kept from is ambiguous, the file is skipped, rather than dropping it');
+	t.end();
+});
+
+/** @type {(name: string, actual: string, expected: string) => string} */
+function diffOf(name, actual, expected) {
+	const dir = mkdtempSync(path.join(fileTemp, 'diff-'));
+	writeFileSync(path.join(dir, 'actual'), actual);
+	writeFileSync(path.join(dir, 'expected'), expected);
+	const args = [
+		'-u',
+		'--label',
+		`${name} (actual)`,
+		'--label',
+		`${name} (expected)`,
+		path.join(dir, 'actual'),
+		path.join(dir, 'expected'),
+	];
+	return spawnSync('diff', args, { encoding: 'utf8' }).stdout;
+}
+
+// `allVersions` is cached for the life of a process, so the version index is mocked in a child process of its own
+test('planFixes: a drifted file’s diff is against exactly what fixing it writes', (t) => {
+	const tensOpen = nodeWorkflow({ range: '>= 10', label: '>= 10' });
+	const keepEngines = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } };
+	/** @type {[label: string, engines: string | null, workflows: { name: string, text: string | null }[], config?: Partial<Config>][]} */
+	const cases = [
+		[
+			'no aggregating job, so no label to recover',
+			'^20',
+			[{ name: 'node.yml', text: nodeWorkflow({ range: '^20', label: '^20' }).replace('name: \'Tests: node.js ^20\'', 'name: \'Tests: node.js\'').replace(/\n {2}node:\n[^]*$/, '\n') }],
+		],
+		[
+			'an unrecoverable range, in a shard',
+			'>= 4 < 30',
+			[
+				{ name: 'node-aught.yml', text: nodeWorkflow({ range: '>= 4 < 10', label: '4 - 10' }) },
+				{ name: 'node-tens.yml', text: multilineRange },
+				{ name: 'node-twenties.yml', text: nodeWorkflow({ range: '>= 20', label: '>= 20' }) },
+			],
+		],
+		[
+			'an unrecoverable range, in the first shard, which starts where `engines.node` does',
+			'>= 12 < 30',
+			[
+				{ name: 'node-tens.yml', text: multilineRange },
+				{ name: 'node-twenties.yml', text: nodeWorkflow({ range: '>= 20', label: '>= 20' }) },
+			],
+		],
+		[
+			'a drifted open-ended shard, closed where an added one starts',
+			'>= 4 < 30',
+			[
+				{ name: 'node-aught.yml', text: nodeWorkflow({ range: '>= 4 < 10', label: '4 - 10' }) },
+				{ name: 'node-tens.yml', text: `# drifted too\n${tensOpen}` },
+			],
+		],
+		[
+			'a blank range, in the last shard',
+			'>= 4 < 30',
+			[
+				{ name: 'node-aught.yml', text: nodeWorkflow({ range: '>= 4 < 10', label: '4 - 10' }) },
+				{ name: 'node-tens.yml', text: nodeWorkflow({ range: '>= 10 < 20', label: '10 - 20' }) },
+				{ name: 'node-twenties.yml', text: `# drifted\n${nodeWorkflow({ range: '', label: '>= 20' })}` },
+			],
+		],
+		[
+			'a kept input',
+			null,
+			[{ name: 'node-pretest.yml', text: `${template('node-pretest.yml')}    with:\n      skip-engines: true\n      bogus: 1\n` }],
+			keepEngines,
+		],
+	];
+	const states = cases.map(([, engines, workflows, workflowsConfig = { workflows: {} }]) => repoState({
+		packageJson: JSON.stringify(engines ? { engines: { node: engines } } : {}),
+		workflows: withWorkflows(workflows, workflows.map((w) => w.name)),
+		config: /** @type {Config} */ (workflowsConfig), // eslint-disable-line no-extra-parens
+	}));
+
+	const source = `
+		import { writeFileSync } from 'fs';
+		import { checkRepo } from ${JSON.stringify(moduleURL('fleet/drift/check.mjs'))};
+		import { planFixes } from ${JSON.stringify(moduleURL('fleet/drift/fix.mjs'))};
+
+		const states = ${JSON.stringify(states)};
+		const out = [];
+		await states.reduce(
+			async (previous, state) => {
+				await previous;
+				const result = await checkRepo(state);
+				out.push({ result, plan: await planFixes(state, result) });
+			},
+			Promise.resolve(),
+		);
+		writeFileSync(process.env.FLEET_TEST_OUT, JSON.stringify(out));
+	`;
+	const { status, stderr, output } = evalModule(source, { versions: versionFixture() });
+	t.equal(status, 0, 'the child succeeds');
+	t.equal(stderr, '', 'with nothing on stderr');
+
+	const out = /** @type {{ result: Result | null, plan: Plan }[]} */ (output); // eslint-disable-line no-extra-parens
+	cases.forEach(([label, , workflows], i) => {
+		const { result, plan: { writes } } = out[i];
+		const drifted = result?.drifted ?? [];
+		t.notEqual(drifted.length, 0, `${label}: drifts`);
+		t.deepEqual(drifted.map((d) => d.name), workflows.map((w) => w.name).filter((name) => writes.some((w) => w.path === at(name) && w.reason !== 'missing')), `${label}: each rewritten file drifted`);
+		t.equal(result?.error ?? null, null, `${label}: with no error`);
+		drifted.forEach(({ name, diff }) => {
+			const actual = normalize(String(workflows.find((w) => w.name === name)?.text));
+			const write = writes.find((w) => w.path === at(name));
+			t.equal(diff, diffOf(name, actual, String(write?.content)), `${label}: ${name}’s diff is against what fixing it writes`);
+			t.doesNotMatch(diff, /\{\{\w+\}\}/, `${label}: ${name}’s diff has no placeholder`);
+		});
+	});
+
 	t.end();
 });
 

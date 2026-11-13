@@ -51,7 +51,7 @@ function comparatorSet(comparators) {
 /** @type {(a: string, b: string) => string} */
 function intersect(a, b) {
 	const right = new semver.Range(b).set;
-	return new semver.Range(a).set.flatMap((x) => right.map((y) => comparatorSet([...x, ...y]))).join(' || ');
+	return new semver.Range(a).set.flatMap((x) => right.map((y) => comparatorSet(x.concat(y)))).join(' || ');
 }
 
 /** @type {(from: number) => string} */
@@ -96,4 +96,35 @@ export function expectedShards(engines, type) {
 		cache.set(key, shards);
 	}
 	return shards;
+}
+
+/** @type {(packageJson: string | null) => { range: string | null, error: string | null }} */
+export function nodeEngines(packageJson) {
+	if (typeof packageJson !== 'string') {
+		return { range: null, error: null };
+	}
+	let range;
+	try {
+		range = JSON.parse(packageJson)?.engines?.node;
+	} catch (e) {
+		return { range: null, error: `\`package.json\` is not valid JSON: ${e instanceof Error ? e.message : String(e)}` };
+	}
+	if (typeof range !== 'string') {
+		return { range: null, error: null };
+	}
+	return semver.validRange(range)
+		? { range, error: null }
+		: { range: null, error: `\`engines.node\` in \`package.json\` is not a valid semver range: ${range}` };
+}
+
+// the matrix type decides how many jobs, so how many files, a range needs
+/** @type {(files: Map<string, string | null>) => Type} */
+export function nodeType(files) {
+	const types = files.entries()
+		.filter(([name, text]) => isShard(name) && typeof text === 'string')
+		.map(([, text]) => text?.match(/^\s+type:\s*['"]?(?<type>majors|minors)\b/m)?.groups?.type);
+	// there's at least one (the first), and every one is `majors`
+	return types.next()?.value === 'majors' && types.every((t) => t === 'majors')
+		? /** @type {const} */ ('majors')
+		: /** @type {const} */ ('minors');
 }

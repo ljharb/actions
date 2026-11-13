@@ -1,4 +1,4 @@
-import { loadTemplate, templateFor } from '../drift/check.mjs';
+import { loadTemplate, templateFor } from '../drift/template.mjs';
 import { calledWorkflows, declaredInputs } from '../drift/inputs.mjs';
 import { code } from './markdown.mjs';
 

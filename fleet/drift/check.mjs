@@ -1,89 +1,29 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'fs';
+import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 
-import semver from 'semver';
-
 import { exec } from '../lib/exec.mjs';
+import { planFixes, workflowPath } from './fix.mjs';
 import { keepInputs, stripKnownInputs } from './inputs.mjs';
-import { expectedShards, isShard } from './shards.mjs';
+import {
+	expectedShards,
+	isShard,
+	nodeEngines,
+	nodeType,
+} from './shards.mjs';
+import {
+	compile,
+	guessValues,
+	loadTemplate,
+	normalize,
+	render,
+	standard,
+} from './template.mjs';
 
 /** @import { RepoState } from '../lib/app.mjs' */
-/** @import { Type } from '../../node/matrix/versions.mjs' */
+/** @import { Expectation } from './template.mjs' */
 /** @typedef {{ name: string, diff: string }} Drift */
 /** @typedef {{ repository: string, missing: string[], unexpected: string[], drifted: Drift[], unreadable: string[], error: string | null }} Result */
-/** @typedef {{ template: string, required: boolean | null }} Expectation */
-
-const templateDir = path.join(import.meta.dirname, 'templates');
-
-/** @type {Record<string, Expectation>} */
-const standard = {
-	'rebase.yml': { template: 'rebase.yml', required: true },
-	'node-pretest.yml': { template: 'node-pretest.yml', required: true },
-	'require-allow-edits.yml': { template: 'require-allow-edits.yml', required: true },
-};
-
-/** @type {(name: string) => string | null} */
-export function templateFor(name) {
-	if (Object.hasOwn(standard, name)) {
-		return standard[name].template;
-	}
-	return isShard(name) ? 'node.yml' : null;
-}
-
-const placeholder = /\{\{(?<name>\w+)\}\}/g;
-const hasPlaceholder = /\{\{\w+\}\}/;
-
-/** @type {(text: string) => string[]} */
-export function placeholders(text) {
-	return [...new Set(Array.from(text.matchAll(placeholder), (m) => m[1]))];
-}
-
-/** @type {(text: string) => string} */
-export function normalize(text) {
-	return `${text.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n+$/, '')}\n`;
-}
-
-/** @type {(s: string) => string} */
-function escapeRegExp(s) {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// a placeholder matches anything on one line; a repeated placeholder must match the same text each time
-/** @type {(text: string, flags?: string) => RegExp} */
-function compile(text, flags = '') {
-	const seen = new Set();
-	const source = text.split(placeholder).map((part, i) => {
-		if (i % 2 === 0) {
-			return escapeRegExp(part);
-		}
-		if (seen.has(part)) {
-			return `\\k<${part}>`;
-		}
-		seen.add(part);
-		return `(?<${part}>[^\\n]*?)`;
-	}).join('');
-	return new RegExp(`^${source}$`, flags);
-}
-
-/** @type {(text: string, values: Record<string, string>) => string} */
-export function render(text, values) {
-	return text.replace(placeholder, (match, name) => (Object.hasOwn(values, name) ? values[name] : match));
-}
-
-// for the diff of a file that doesn't match, recover what values we can, one template line at a time
-/** @type {(text: string, actual: string) => Record<string, string>} */
-export function guessValues(text, actual) {
-	/** @type {Record<string, string>} */
-	const values = {};
-	text.split('\n').filter((l) => hasPlaceholder.test(l)).forEach((line) => {
-		const match = actual.match(compile(line, 'm'));
-		Object.entries(match?.groups ?? {}).forEach(([name, value]) => {
-			values[name] ??= value;
-		});
-	});
-	return values;
-}
 
 /** @type {(name: string, actual: string, expected: string) => string} */
 function unifiedDiff(name, actual, expected) {
@@ -95,47 +35,6 @@ function unifiedDiff(name, actual, expected) {
 	return exec('diff', [
 		'-u', '--label', `${name} (actual)`, '--label', `${name} (expected)`, a, b,
 	], { allowFailure: true }).stdout;
-}
-
-/** @type {Map<string, string>} */
-const templates = new Map();
-
-/** @type {(name: string) => string} */
-export function loadTemplate(name) {
-	let text = templates.get(name);
-	if (typeof text !== 'string') {
-		text = normalize(readFileSync(path.join(templateDir, name), 'utf8'));
-		templates.set(name, text);
-	}
-	return text;
-}
-
-/** @type {(packageJson: string | null) => { range: string | null, error: string | null }} */
-export function nodeEngines(packageJson) {
-	if (typeof packageJson !== 'string') {
-		return { range: null, error: null };
-	}
-	let range;
-	try {
-		range = JSON.parse(packageJson)?.engines?.node;
-	} catch (e) {
-		return { range: null, error: `\`package.json\` is not valid JSON: ${e instanceof Error ? e.message : String(e)}` };
-	}
-	if (typeof range !== 'string') {
-		return { range: null, error: null };
-	}
-	return semver.validRange(range)
-		? { range, error: null }
-		: { range: null, error: `\`engines.node\` in \`package.json\` is not a valid semver range: ${range}` };
-}
-
-// the matrix type decides how many jobs, so how many files, a range needs
-/** @type {(files: Map<string, string | null>) => Type} */
-export function nodeType(files) {
-	const types = [...files]
-		.filter(([name, text]) => isShard(name) && typeof text === 'string')
-		.map(([, text]) => text?.match(/^\s+type:\s*['"]?(?<type>majors|minors)\b/m)?.groups?.type);
-	return types.length > 0 && types.every((t) => t === 'majors') ? 'majors' : 'minors';
 }
 
 // without `engines.node`, which node test files a repo needs is unknown, so they're only compared when present
@@ -175,6 +74,8 @@ export async function checkRepo(state) {
 	const overrides = state.config.workflows;
 	const names = [...new Set([...Object.keys(expected), ...Object.keys(overrides)])].sort();
 
+	/** @type {{ name: string, template: string, actual: string, comparable: string }[]} */
+	const drifting = [];
 	names.forEach((name) => {
 		const entry = Object.hasOwn(expected, name) ? expected[name] : null;
 		const required = Object.hasOwn(overrides, name) ? overrides[name] : entry?.required ?? null;
@@ -193,17 +94,44 @@ export async function checkRepo(state) {
 				// the inputs a repository passes that the reusable workflow declares, but the template doesn't pass, are its own choices
 				const comparable = stripKnownInputs(actual, template);
 				if (!compile(template).test(comparable)) {
-					// what fixing it would write, so that the diff shows exactly what fixing it would change
-					const { text: rewritten, why } = keepInputs(render(template, guessValues(template, comparable)), actual, state.config.keep?.[name]);
-					result.drifted.push({ name, diff: unifiedDiff(name, actual, rewritten) });
-					// fixing it would refuse to, rather than drop what it keeps
-					result.error = [result.error, why && `${name}: ${why}`].filter(Boolean).join('; ') || null;
+					drifting.push({
+						name,
+						template,
+						actual,
+						comparable,
+					});
 				}
 			} else {
 				result.unreadable.push(name);
 			}
 		}
 	});
+
+	if (drifting.length > 0) {
+		// the diff shows exactly what fixing it would change: what `/fix`, unfiltered, would write, from the same state
+		const { writes } = await planFixes(state, {
+			missing: result.missing,
+			unexpected: result.unexpected,
+			drifted: drifting,
+		});
+		drifting.forEach(({
+			name,
+			template,
+			actual,
+			comparable,
+		}) => {
+			const write = writes.find((w) => w.path === workflowPath(name));
+			if (write) {
+				result.drifted.push({ name, diff: unifiedDiff(name, actual, write.content) });
+			} else {
+				// fixing it would skip it, so the diff shows the template, with what values could be recovered, and the inputs it keeps
+				const { text: rewritten, why } = keepInputs(render(template, guessValues(template, comparable)), actual, state.config.keep?.[name]);
+				result.drifted.push({ name, diff: unifiedDiff(name, actual, rewritten) });
+				// fixing it would refuse to, rather than drop what it keeps
+				result.error = [result.error, why && `${name}: ${why}`].filter(Boolean).join('; ') || null;
+			}
+		});
+	}
 
 	return result.missing.length > 0
 		|| result.unexpected.length > 0
