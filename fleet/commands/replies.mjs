@@ -81,7 +81,7 @@ export function repliedTo(body) {
 	}
 	// a quoted command is never padded, and has no backticks or pipes to escape, since none is valid in one
 	const quoted = (/^`(?<line>\/[^`\n]+)` \((?:a dry run, |from each repository’s )/).exec(body)?.groups;
-	const command = quoted ? parseCommand(quoted.line) : null;
+	const command = quoted ? parseCommand(quoted.line, 'any') : null;
 	return command?.type === 'fix' || command?.type === 'merge' ? { ...identify(command), marked: false } : null;
 }
 
@@ -182,7 +182,7 @@ export function aboutOnly(comments, author, repositories) {
 	/** @type {string[]} */
 	const ids = [];
 	comments.forEach((c) => {
-		const command = parseCommand(c.body ?? '');
+		const command = parseCommand(c.body ?? '', 'any');
 		if ((command.type === 'fix' || command.type === 'merge') && Array.from(repositories).some((r) => onlyAbout(command, r))) {
 			commands.push(identify(command));
 			if (c.node_id) {
@@ -410,7 +410,7 @@ export function aboutEach(comments, authors, server) {
 	/** @type {Set<string>} */
 	const repositories = new Set();
 	comments.forEach((c) => {
-		const command = parseCommand(c.body ?? '');
+		const command = parseCommand(c.body ?? '', 'any');
 		if (command.type === 'fix' || command.type === 'merge') {
 			const [repository] = command.filters.repositories;
 			if (repository && onlyAbout(command, repository)) {

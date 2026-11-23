@@ -24,7 +24,12 @@ import {
 	replyMarker,
 	unmarked,
 } from './replies.mjs';
-import { legend, parseCommand, quote } from './syntax.mjs';
+import {
+	isWorkflowCategory,
+	legend,
+	parseCommand,
+	quote,
+} from './syntax.mjs';
 
 /** @import { Octokit, RepoState } from '../lib/app.mjs' */
 /** @import { Result } from '../drift/check.mjs' */
@@ -465,7 +470,7 @@ async function perform(options) {
 				auth: options.auth,
 				identities: new Map(),
 				dryRun: command.dryRun,
-				categories: command.filters.categories,
+				categories: new Set(Array.from(command.filters.categories).filter(isWorkflowCategory)),
 				link: comment.html_url,
 			},
 			command,

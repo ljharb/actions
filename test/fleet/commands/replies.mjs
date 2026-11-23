@@ -3,6 +3,7 @@ import nock from 'nock';
 import test from 'tape';
 
 import {
+	aboutEach,
 	aboutOnly,
 	earlierReplies,
 	hideEarlierReplies,
@@ -16,6 +17,7 @@ import {
 	unmarked,
 } from '../../../fleet/commands/replies.mjs';
 import { parseCommand } from '../../../fleet/commands/syntax.mjs';
+import { readmeBranch } from '../../../fleet/lib/branches.mjs';
 
 /** @import { Test } from 'tape' */
 /** @import { Run, IssueComment } from '../../../fleet/commands/replies.mjs' */
@@ -24,9 +26,12 @@ import { parseCommand } from '../../../fleet/commands/syntax.mjs';
 const bot = 'fleet-bot[bot]';
 const runLink = 'see [the run](https://github.com/o/r/actions/runs/1)';
 
-/** @type {(line: string) => Run} */
+/**
+ * A command, read as on either report, since a reply is found by its command whichever issue it's on.
+ * @type {(line: string) => Run}
+ */
 function command(line) {
-	const parsed = parseCommand(line);
+	const parsed = parseCommand(line, 'any');
 	if (parsed.type !== 'fix' && parsed.type !== 'merge') {
 		throw new TypeError(`not a command: ${line}`);
 	}
@@ -546,5 +551,66 @@ test('hideResolved', (t) => {
 		st.notOk(stdout.includes('secret'), 'never naming it');
 	});
 
+	t.end();
+});
+
+/**
+ * A marked reply to a README drift report command, `line`, with a row for each of `rows`, as it's posted.
+ * @type {(line: string, rows: string[]) => string}
+ */
+function readmeReply(line, rows) {
+	return [
+		replyMarker(command(line)),
+		`\`${line}\` (from each repository’s \`${readmeBranch}\` branch; ${runLink}):\n`,
+		`| Repository | Outcome |\n| --- | --- |\n${rows.join('\n')}`,
+		'\nPrivate repositories matching these filters, if any, were also processed; nothing about them is shown here.',
+	].join('\n');
+}
+
+test('aboutOnly: README drift report commands', (t) => {
+	const ownerName = new Set(['owner/name']);
+	t.deepEqual(
+		aboutOnly(
+			comments(1, ['/fix owner/name links'], 'maintainer').concat(
+				comments(2, [readmeReply('/fix owner/name links', ['| `owner/name` | opened https://github.com/owner/name/pull/12 |'])]),
+				comments(3, ['/dry-run fix Owner/Name heading BADGES'], 'maintainer'),
+				comments(4, ['/fix owner/name links owner'], 'maintainer'),
+				comments(5, ['/fix owner/name links other'], 'maintainer'),
+				comments(6, ['/fix owner links'], 'maintainer'),
+				comments(7, ['/merge owner/name'], 'maintainer'),
+			),
+			bot,
+			ownerName,
+		),
+		[
+			'IC_1',
+			'IC_2',
+			'IC_3',
+			'IC_4',
+			'IC_7',
+		],
+		'a command whose only other filters are the README drift report’s kinds of discrepancy (or its own account) is only about its repository, as is the App’s reply to it; one naming another account, or only an account, isn’t',
+	);
+	t.end();
+});
+
+test('aboutEach: README drift report commands', (t) => {
+	const about = aboutEach(
+		comments(1, ['/fix owner/name links'], 'maintainer').concat(
+			comments(2, [readmeReply('/fix owner/name links', ['| `owner/name` | opened https://github.com/owner/name/pull/12 |'])]),
+			comments(3, ['/dry-run fix owner/other heading badges links'], 'maintainer'),
+			comments(4, ['/fix owner/third links other'], 'maintainer'),
+		),
+		new Set([bot]),
+		'https://github.com',
+	);
+	t.deepEqual(
+		Array.from(about),
+		[
+			['owner/name', { ids: ['IC_1', 'IC_2'], prs: [12] }],
+			['owner/other', { ids: ['IC_3'], prs: [] }],
+		],
+		'each repository that a README drift report command is only about, however many of its kinds of discrepancy it names, with the PRs the App’s replies link to; never one that names another account too',
+	);
 	t.end();
 });
