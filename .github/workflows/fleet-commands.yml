@@ -1,4 +1,4 @@
-name: 'fleet: workflow drift commands'
+name: 'fleet: report commands'
 
 on:
   issue_comment:

@@ -1,5 +1,5 @@
-name: 'fleet: workflow drift commands'
-description: 'Run the slash commands (`/fix`, `/dry-run fix`, `/merge`, `/dry-run merge`) commented on the workflow drift report issue: open or update PRs that make workflow files match the templates, or merge the fleet App’s PRs once their CI passes'
+name: 'fleet: report commands'
+description: 'Run the slash commands (`/fix`, `/dry-run fix`, `/merge`, `/dry-run merge`) commented on the workflow drift report issue or the README drift report issue: open or update PRs that make workflow files match the templates, or a README’s heading and badges match the fleet’s, or merge the fleet App’s PRs from that report’s branches once their CI passes'
 author: ljharb
 inputs:
   app-id:

@@ -32,7 +32,7 @@ const preload = pathToFileURL(path.join(import.meta.dirname, 'helpers', 'preload
 const commentURL = 'https://github.com/ljharb/actions/issues/9#issuecomment-77';
 const title = '[actions] update workflow files to match the shared templates';
 const message = '[actions] update workflow files to match ljharb/actions’ templates';
-const notReport = /^not a comment on the workflow drift report; nothing to do$/m;
+const notReport = /^not a comment on a fleet report; nothing to do$/m;
 
 const report = {
 	number: 9,

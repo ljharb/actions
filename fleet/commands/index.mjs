@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import * as core from '@actions/core';
 
 import { checkSafely } from '../drift/check.mjs';
-import { marker } from '../drift/marker.mjs';
+import { marker as workflowMarker } from '../drift/marker.mjs';
 import {
 	appAuth,
 	botLogin,
@@ -12,10 +12,13 @@ import {
 	isSkippedAccount,
 	parseAccounts,
 } from '../lib/app.mjs';
-import { fixBranch } from '../lib/branches.mjs';
 import { isReportAuthor, issueOctokit, legacyAuthor } from '../lib/issues.mjs';
 import { code, split } from '../lib/markdown.mjs';
 import { finishQueued, messageOf } from '../lib/merge.mjs';
+import { fixReadmeRepo } from '../readme/apply.mjs';
+import { checkReadmeSafely, isCovered } from '../readme/check.mjs';
+import { marker as readmeMarker } from '../readme/marker.mjs';
+import { isCategory as isReadmeCategory } from '../readme/readme.mjs';
 import { fixRepo } from './apply.mjs';
 import { runMerge } from './merge.mjs';
 import {
@@ -35,8 +38,10 @@ import {
 /** @import { Octokit, RepoState } from '../lib/app.mjs' */
 /** @import { Result } from '../drift/check.mjs' */
 /** @import { Category } from '../drift/fix.mjs' */
-/** @import { Filters } from './syntax.mjs' */
+/** @import { Filters, Report } from './syntax.mjs' */
 /** @import { Candidate, Context } from './apply.mjs' */
+/** @import { Category as ReadmeCategory } from '../readme/readme.mjs' */
+/** @import { Result as ReadmeResult } from '../readme/check.mjs' */
 /** @import { Unit } from '../lib/markdown.mjs' */
 /** @import { Run } from './replies.mjs' */
 
@@ -50,6 +55,24 @@ const {
 	GITHUB_EVENT_PATH = '',
 } = process.env;
 const runURL = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}`;
+
+// how each report's issue is marked, as its report writes it
+/** @type {Record<Report, string>} */
+const markers = {
+	workflows: workflowMarker,
+	readme: readmeMarker,
+};
+
+/**
+ * Which report `issue`'s body is marked as, if any.
+ * @type {(issue: Record<string, any> | undefined) => Report | null}
+ */
+function markedAs(issue) {
+	const body = typeof issue?.body === 'string' ? issue.body : '';
+	/** @type {Report[]} */
+	const kinds = ['workflows', 'readme'];
+	return kinds.find((kind) => body.includes(markers[kind])) ?? null;
+}
 
 /** @type {(names: string[], category: Category) => { name: string, category: Category }[]} */
 function categorized(names, category) {
@@ -92,11 +115,11 @@ function select(
 	return names.length > 0 || repositories.size > 0 ? new Set(names) : null;
 }
 
-/** @type {(context: Context, candidate: Candidate) => Promise<{ outcome: string, failed: boolean }>} */
-async function attempt(context, candidate) {
+/** @type {(state: RepoState, fix: () => Promise<string>) => Promise<{ outcome: string, failed: boolean }>} */
+async function attempt(state, fix) {
 	try {
 		return {
-			outcome: await fixRepo(context, candidate),
+			outcome: await fix(),
 			failed: false,
 		};
 	} catch (error) {
@@ -104,11 +127,11 @@ async function attempt(context, candidate) {
 		 * a private repository's error can quote its files, branches, or git output, and the run's log is as public as the reply;
 		 * even counting it, or failing the run over it, would confirm that a private repository matched, so it's only seen in that repository (eg, in its PR)
 		 */
-		if (candidate.state.private) {
+		if (state.private) {
 			return { outcome: '', failed: false };
 		}
 		const text = messageOf(error);
-		core.warning(`${candidate.state.repository}: ${text}`);
+		core.warning(`${state.repository}: ${text}`);
 		return { outcome: `failed: ${code(text)}`, failed: true };
 	}
 }
@@ -200,6 +223,91 @@ async function installed(auth) {
 	};
 }
 
+/**
+ * Fixes each candidate (or, in a dry run, says how it would), one at a time: the rows of the reply, about the public ones, and how many public ones failed.
+ * @type {<C extends { state: RepoState }>(candidates: C[], fix: (candidate: C) => Promise<string>) => Promise<{ rows: string[], failed: number }>}
+ */
+async function fixEach(candidates, fix) {
+	/** @type {string[]} */
+	const rows = [];
+	let failed = 0;
+	// one at a time, to stay clear of secondary rate limits; private repositories last, so that where one falls among the public ones' log lines, or how long one takes, says nothing about it
+	await candidates.filter((c) => !c.state.private).concat(candidates.filter((c) => c.state.private)).reduce(
+		async (previous, candidate) => {
+			await previous;
+			const { outcome, failed: didFail } = await attempt(candidate.state, () => fix(candidate));
+			failed += Number(didFail);
+			if (!candidate.state.private) {
+				rows.push(`| ${code(candidate.state.repository)} | ${outcome} |`);
+			}
+		},
+		Promise.resolve(),
+	);
+	return { rows, failed };
+}
+
+/**
+ * Which of a repository's README discrepancies the filters keep (`undefined` limits nothing, and an empty set means none matched); `null` when the repository isn't kept at all. As `select` does, a repository with no matching discrepancies is only kept when it's named.
+ * @type {(state: RepoState, result: ReadmeResult | null, filters: Filters) => Set<ReadmeCategory> | undefined | null}
+ */
+function selectReadme(
+	state,
+	result,
+	{
+		repositories,
+		accounts,
+		categories,
+	},
+) {
+	if (
+		(repositories.size > 0 && !repositories.has(state.repository.toLowerCase()))
+		|| (accounts.size > 0 && !accounts.has(state.owner.toLowerCase()))
+	) {
+		return null;
+	}
+	const wanted = new Set(Array.from(categories).filter(isReadmeCategory));
+	if (wanted.size === 0) {
+		return result || repositories.size > 0 ? undefined : null;
+	}
+	return (result?.drifted ?? []).some((c) => wanted.has(c)) || repositories.size > 0 ? wanted : null;
+}
+
+/** @type {(context: Context, command: Run) => Promise<{ bodies: string[], failed: number }>} */
+async function runReadme(context, command) {
+	const {
+		states,
+		unread,
+		waiting,
+	} = await installed(context.auth);
+	// only the repositories the App is installed on: it can't change any other
+	const candidates = states.filter((s) => !s.external && isCovered(s)).flatMap((state) => {
+		const result = checkReadmeSafely(state);
+		const categories = selectReadme(state, result, command.filters);
+		return categories === null ? [] : [{ state, categories }];
+	});
+	const { rows, failed } = await fixEach(candidates, (candidate) => fixReadmeRepo(
+		{
+			auth: context.auth,
+			identities: context.identities,
+			dryRun: context.dryRun,
+			link: context.link,
+		},
+		candidate,
+	));
+	return {
+		bodies: replyBodies({
+			command,
+			what: context.dryRun
+				? 'a dry run, so nothing was changed'
+				: `\`${reports.readme.fixBranch}\` branch`,
+			rows,
+			failures: unread,
+			waiting,
+		}),
+		failed,
+	};
+}
+
 /** @type {(context: Context, command: Run) => Promise<{ bodies: string[], failed: number }>} */
 async function run(context, command) {
 	const {
@@ -222,28 +330,14 @@ async function run(context, command) {
 		];
 	}))).flat();
 
-	/** @type {string[]} */
-	const rows = [];
-	let failed = 0;
-	// one at a time, to stay clear of secondary rate limits; private repositories last, so that where one falls among the public ones' log lines, or how long one takes, says nothing about it
-	await candidates.filter((c) => !c.state.private).concat(candidates.filter((c) => c.state.private)).reduce(
-		async (previous, candidate) => {
-			await previous;
-			const { outcome, failed: didFail } = await attempt(context, candidate);
-			failed += Number(didFail);
-			if (!candidate.state.private) {
-				rows.push(`| ${code(candidate.state.repository)} | ${outcome} |`);
-			}
-		},
-		Promise.resolve(),
-	);
+	const { rows, failed } = await fixEach(candidates, (candidate) => fixRepo(context, candidate));
 
 	return {
 		bodies: replyBodies({
 			command,
 			what: context.dryRun
 				? 'a dry run, so nothing was changed'
-				: `\`${fixBranch}\` branch`,
+				: `\`${reports.workflows.fixBranch}\` branch`,
 			rows,
 			failures: unread,
 			waiting,
@@ -286,16 +380,17 @@ function summaryOf(bodies, posted) {
 }
 
 /**
- * Whether `issue` is the workflow drift report: marked as it, and opened by the App's bot, or by GitHub Actions' bot before the App wrote the report (which the App adopted).
+ * Which report `issue` is (the workflow drift report, or the README drift report), if it's one: marked as it, and opened by the App's bot, or by GitHub Actions' bot before the App wrote the report (which the App adopted).
  * Only the App's bot needs looking up, so only an issue by anyone else costs a request.
- * @type {(issue: Record<string, any> | undefined, auth: ReturnType<typeof appAuth>) => Promise<boolean>}
+ * @type {(issue: Record<string, any> | undefined, auth: ReturnType<typeof appAuth>) => Promise<Report | null>}
  */
-async function isReport(issue, auth) {
+async function reportOf(issue, auth) {
 	const login = issue?.user?.login;
-	if (issue?.pull_request || !issue?.body?.includes(marker) || typeof login !== 'string') {
-		return false;
+	const kind = markedAs(issue);
+	if (issue?.pull_request || !kind || typeof login !== 'string') {
+		return null;
 	}
-	return login.toLowerCase() === legacyAuthor || isReportAuthor(login, await botLogin(auth));
+	return login.toLowerCase() === legacyAuthor || isReportAuthor(login, await botLogin(auth)) ? kind : null;
 }
 
 /**
@@ -307,8 +402,8 @@ function skipReason(issue, comment) {
 	if (comment?.user?.type === 'Bot') {
 		return 'a bot’s comment';
 	}
-	if (issue?.pull_request || !issue?.body?.includes(marker)) {
-		return 'not a comment on the workflow drift report';
+	if (issue?.pull_request || !markedAs(issue)) {
+		return 'not a comment on a fleet report';
 	}
 	return null;
 }
@@ -379,7 +474,7 @@ async function finish({
 	}
 }
 
-/** @typedef {{ auth: ReturnType<typeof appAuth>, comment: Record<string, any>, issueNumber: number, reply: (bodies: string[], posted?: string[]) => Promise<void>, hideEarlier: (command: Run) => Promise<void>, hideResolved: (repositories: string[]) => Promise<void>, finishOther: (commentId: number, ok: boolean) => Promise<void>, progress: { queued: boolean } }} PerformOptions */
+/** @typedef {{ auth: ReturnType<typeof appAuth>, comment: Record<string, any>, issueNumber: number, reply: (bodies: string[], posted?: string[]) => Promise<void>, hideEarlier: (command: Run) => Promise<void>, hideResolved: (repositories: string[]) => Promise<void>, finishOther: (commentId: number, ok: boolean) => Promise<void>, progress: { queued: boolean }, report: Report }} PerformOptions */
 
 /**
  * Runs `/merge` (or `/dry-run merge`): the parts of its reply, whether it went as asked, and the public repositories it merged the App's last open PR in (`resolved`).
@@ -392,6 +487,7 @@ async function merge(
 		issueNumber,
 		finishOther,
 		progress,
+		report,
 	},
 	command,
 ) {
@@ -401,6 +497,7 @@ async function merge(
 		unread,
 		waiting,
 	} = await installed(auth);
+	const { mergeBranches } = reports[report];
 	/** @type {string[]} */
 	const resolved = [];
 	const {
@@ -416,8 +513,9 @@ async function merge(
 			finishOther,
 			progress,
 			resolved,
-			branches: reports.workflows.mergeBranches,
+			branches: mergeBranches,
 		},
+		// every repository, as for the workflow report: a PR from its own branches can still be merged where the report no longer covers the repository (eg, once it's opted out)
 		states,
 		filters,
 	);
@@ -426,7 +524,7 @@ async function merge(
 			command,
 			what: dryRun
 				? 'a dry run, so nothing was changed or queued'
-				: `${reports.workflows.mergeBranches.map((b) => `\`${b}\``).join(' and ')} PRs by the App’s bot`,
+				: `${mergeBranches.map((b) => `\`${b}\``).join(' and ')} PRs by the App’s bot`,
 			rows,
 			details,
 			failures: unread,
@@ -448,13 +546,14 @@ async function perform(options) {
 		reply,
 		hideEarlier,
 		hideResolved,
+		report,
 	} = options;
 	if (command.type === 'error') {
 		await reply(split(
 			[
 				`${command.message} Nothing was done.`,
 				'',
-				legend(),
+				legend({ report }),
 			],
 			maxBodyLength,
 		));
@@ -467,7 +566,7 @@ async function perform(options) {
 	if (command.type === 'merge') {
 		result = await merge(options, command);
 	} else {
-		const { bodies, failed } = await run(
+		const { bodies, failed } = await (report === 'readme' ? runReadme : run)(
 			{
 				auth: options.auth,
 				identities: new Map(),
@@ -505,11 +604,12 @@ async function main() {
 		return;
 	}
 	const auth = appAuth(core.getInput('app-id', { required: true }), core.getInput('private-key', { required: true }));
-	if (!await isReport(issue, auth)) {
-		core.info('not a comment on the workflow drift report; nothing to do');
+	const report = await reportOf(issue, auth);
+	if (!report) {
+		core.info('not a comment on a fleet report; nothing to do');
 		return;
 	}
-	const command = parseCommand(String(comment.body));
+	const command = parseCommand(String(comment.body), report);
 	if (command.type === 'none') {
 		core.info('not a command; nothing to do');
 		return;
@@ -594,6 +694,7 @@ async function main() {
 			reply,
 			hideEarlier,
 			hideResolved,
+			report,
 			finishOther,
 			progress,
 		});
