@@ -5,11 +5,12 @@ import { code } from './markdown.mjs';
 /**
  * @typedef {{
  *   workflows: false | Record<string, boolean>,
+ *   readme: boolean,
  *   keep?: Record<string, string[]>,
  * }} Config
  */
 
-/** @type {{ [K in keyof Config]-?: Exclude<Config[K], false | undefined> }} */
+/** @type {{ [K in Exclude<keyof Config, 'readme'>]-?: Exclude<Config[K], false | undefined> }} */
 const defaults = {
 	workflows: {},
 	keep: {},
@@ -105,6 +106,14 @@ export function parseConfig(text, file, { account = false } = {}) {
 		}
 	}
 
+	if ('readme' in raw) {
+		if (typeof raw.readme === 'boolean') {
+			config.readme = raw.readme;
+		} else {
+			errors.push('`readme` must be a boolean');
+		}
+	}
+
 	if ('keep' in raw) {
 		const kept = parseKeep(raw.keep, account);
 		if (kept.keep) {
@@ -140,6 +149,8 @@ function mergeKey(account, own, fallback) {
 export function mergeConfig(account, own) {
 	return {
 		workflows: mergeKey(account.workflows, own.workflows, defaults.workflows),
+		// a repository's own setting wins, then its account's; checked unless either opts out
+		readme: own.readme ?? account.readme ?? true,
 		// only ever a repository's own
 		keep: Object.assign(Object.create(null), defaults.keep, own.keep),
 	};

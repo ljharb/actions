@@ -27,6 +27,8 @@ import { accountLogin, awaitingApproval } from './installations.mjs';
  *   packageJson: string | null,
  *   packageJsonRegular: boolean,
  *   workflows: WorkflowFile[] | null,
+ *   readme: string | null,
+ *   readmeRegular: boolean,
  *   fork: boolean,
  *   source: { repository: string, archived: boolean, private: boolean } | null,
  *   external: boolean,
@@ -57,6 +59,7 @@ fragment state on Repository {
 	defaultBranchRef { name }
 	config: object(expression: "HEAD:.github/ljharb-actions.json") { ... on Blob { text } }
 	packageJson: object(expression: "HEAD:package.json") { ... on Blob { text } }
+	readme: object(expression: "HEAD:README.md") { ... on Blob { text isTruncated } }
 	root: object(expression: "HEAD:") { ... on Tree { entries { name mode } } }
 	workflows: object(expression: "HEAD:.github/workflows") {
 		... on Tree { entries { name type object { ... on Blob { text } } } }
@@ -255,6 +258,9 @@ function toState(
 		packageJson: repo?.packageJson?.text ?? null,
 		packageJsonRegular: isRegularFile(repo?.root?.entries, 'package.json'),
 		workflows: workflowFiles(repo?.workflows?.entries),
+		// a README too big for GitHub to give all of isn't read at all, so that it's never checked by only its start
+		readme: repo?.readme?.isTruncated ? null : repo?.readme?.text ?? null,
+		readmeRegular: isRegularFile(repo?.root?.entries, 'README.md'),
 		fork: Boolean(r.fork || repo?.isFork),
 		source: forkSource(repo),
 		external,

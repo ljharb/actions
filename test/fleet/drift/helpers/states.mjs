@@ -42,7 +42,7 @@ export function repoState(overrides = {}) {
 		private: false,
 		archived: false,
 		defaultBranch: 'main',
-		config: { workflows: {} },
+		config: { workflows: {}, readme: true },
 		configError: null,
 		stateError: null,
 		packageJson: null,

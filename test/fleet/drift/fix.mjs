@@ -37,7 +37,7 @@ test('setup: RUNNER_TEMP for this file', (t) => {
 
 /** @type {(workflows: Record<string, boolean> | false) => Config} */
 function config(workflows) {
-	return { workflows, keep: {} };
+	return { workflows, readme: true, keep: {} };
 }
 
 /** @type {(extra: { name: string, text: string | null }[], without?: string[]) => RepoState['workflows']} */
@@ -454,14 +454,14 @@ test('planFixes: a rewritten file keeps the inputs the repository keeps', async 
 	const plain = await plan(repoState({ workflows }));
 	t.deepEqual(plain.writes.map((w) => [w.path, w.content]), [[at('node-pretest.yml'), template('node-pretest.yml')]], 'without `keep`, rewritten from its template');
 
-	const keepBoth = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'], 'rebase.yml': ['nothing'] } };
+	const keepBoth = { workflows: {}, readme: true, keep: { 'node-pretest.yml': ['skip-engines'], 'rebase.yml': ['nothing'] } };
 	const kept = await plan(repoState({
 		workflows,
 		config: keepBoth,
 	}));
 	t.deepEqual(kept.writes.map((w) => [w.path, w.content]), [[at('node-pretest.yml'), `${template('node-pretest.yml')}    with:\n      skip-engines: true # bin/tape requires node 8+, but the rest of tape supports 0.4+\n`]], 'with it, keeping the kept input’s value and comment, and only that');
 
-	const keepConfig = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } };
+	const keepConfig = { workflows: {}, readme: true, keep: { 'node-pretest.yml': ['skip-engines'] } };
 	const renamed = await plan(repoState({ workflows: withWorkflows([{ name: 'node-pretest.yml', text: pretest.replace('  tests:', '  pretest:') }], ['node-pretest.yml']), config: keepConfig }));
 	t.deepEqual(renamed.writes.map((w) => [w.path, w.content]), kept.writes.map((w) => [w.path, w.content]), 'from a job with another id than the template’s, too');
 
@@ -495,7 +495,7 @@ function diffOf(name, actual, expected) {
 // `allVersions` is cached for the life of a process, so the version index is mocked in a child process of its own
 test('planFixes: a drifted file’s diff is against exactly what fixing it writes', (t) => {
 	const tensOpen = nodeWorkflow({ range: '>= 10', label: '>= 10' });
-	const keepEngines = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } };
+	const keepEngines = { workflows: {}, readme: true, keep: { 'node-pretest.yml': ['skip-engines'] } };
 	/** @type {[label: string, engines: string | null, workflows: { name: string, text: string | null }[], config?: Config][]} */
 	const cases = [
 		[
@@ -544,7 +544,7 @@ test('planFixes: a drifted file’s diff is against exactly what fixing it write
 			keepEngines,
 		],
 	];
-	const states = cases.map(([, engines, workflows, workflowsConfig = { workflows: {}, keep: {} }]) => repoState({
+	const states = cases.map(([, engines, workflows, workflowsConfig = { workflows: {}, readme: true, keep: {} }]) => repoState({
 		packageJson: JSON.stringify(engines ? { engines: { node: engines } } : {}),
 		workflows: withWorkflows(workflows, workflows.map((w) => w.name)),
 		config: workflowsConfig,

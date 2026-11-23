@@ -335,3 +335,71 @@ test('mergeConfig: `keep` is only ever a repository’s own', (t) => {
 	t.notEqual(merged.keep, own.keep, 'not the repository’s object');
 	t.end();
 });
+
+test('parseConfig: `readme`', (t) => {
+	[true, false].forEach((readme) => {
+		const { config, error } = parseConfig(JSON.stringify({ readme }), file);
+		t.equal(error, null, `\`${readme}\`: no error`);
+		t.deepEqual(config, { readme }, `\`${readme}\`: sets only \`readme\`, to \`${readme}\``);
+	});
+	t.notOk('readme' in parseConfig('{}', file).config, 'left unset when the file doesn’t set it, so it can be merged');
+
+	[
+		['`null`', 'null'],
+		['a number', '0'],
+		['a string', '"false"'],
+		['an array', '[]'],
+		['an object', '{}'],
+	].forEach(([label, readme]) => {
+		const parsed = parseConfig(`{ "readme": ${readme}, "workflows": false }`, file);
+		t.equal(parsed.error, '`some/file.json`: `readme` must be a boolean', `${label}: an error`);
+		t.deepEqual(parsed.config, { workflows: false }, `${label}: leaves \`readme\` unset, but the other keys still apply`);
+	});
+
+	const both = parseConfig('{ "readme": 1, "workflows": 1 }', file);
+	t.equal(both.error, '`some/file.json`: `workflows` must be a boolean, or an object mapping workflow file names (`*.yml` or `*.yaml`) to booleans; `readme` must be a boolean', 'an invalid `readme` is reported alongside the other keys’ errors');
+	t.deepEqual(both.config, {}, 'setting neither');
+
+	[true, false].forEach((readme) => {
+		const account = parseConfig(JSON.stringify({ readme }), file, { account: true });
+		t.equal(account.error, null, `an account’s \`${readme}\`: no error, since it can be a default`);
+		t.deepEqual(account.config, { readme }, `an account’s \`${readme}\`: sets \`readme\``);
+	});
+	t.equal(parseConfig('{ "readme": "no" }', file, { account: true }).error, '`some/file.json`: `readme` must be a boolean', 'an account’s invalid `readme` is an error too');
+
+	t.end();
+});
+
+test('mergeConfig: `readme`', (t) => {
+	/** @type {[string, boolean | undefined, boolean | undefined, boolean][]} */
+	const cases = [
+		['neither set: checked', undefined, undefined, true],
+		['own unset, account `false`: the account’s opt-out', false, undefined, false],
+		['own unset, account `true`: checked', true, undefined, true],
+		['own `false`, account unset: opted out', undefined, false, false],
+		['own `false`, account `true`: the repository’s own opt-out wins', true, false, false],
+		['own `true`, account `false`: the repository’s own opt-in wins', false, true, true],
+		['own `true`, account unset: checked', undefined, true, true],
+		['own `false`, account `false`: opted out', false, false, false],
+	];
+	cases.forEach(([label, account, own, expected]) => {
+		const merged = mergeConfig(account === undefined ? {} : { readme: account }, own === undefined ? {} : { readme: own });
+		t.equal(merged.readme, expected, label);
+	});
+
+	t.equal(
+		mergeConfig(parseConfig('{ "readme": false }', 'account', { account: true }).config, parseConfig('{ "readme": 1 }', 'own').config).readme,
+		false,
+		'an invalid own `readme` falls back to the account’s',
+	);
+	t.equal(
+		mergeConfig(parseConfig('{ "readme": false }', 'account', { account: true }).config, parseConfig('{ "workflows": true }', 'own').config).readme,
+		false,
+		'an account’s `false` applies to a repository that sets only other keys',
+	);
+	const optedOut = mergeConfig({}, { readme: false, workflows: { 'rebase.yml': false } });
+	t.deepEqual(plain(optedOut.workflows), { 'rebase.yml': false }, 'opting out of the README check leaves `workflows` alone');
+	t.equal(mergeConfig({}, { workflows: false }).readme, true, 'and opting out of workflows leaves the README checked');
+
+	t.end();
+});

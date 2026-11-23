@@ -55,7 +55,7 @@ test('setup: RUNNER_TEMP for this file', (t) => {
 
 /** @type {(workflows: Record<string, boolean> | false) => Config} */
 function config(workflows) {
-	return { workflows, keep: {} };
+	return { workflows, readme: true, keep: {} };
 }
 
 /** @type {(extra: { name: string, text: string | null }[], without?: string[]) => RepoState['workflows']} */
@@ -501,7 +501,7 @@ test('checkRepo: inputs a reusable workflow declares are a repository’s own, n
 		t.deepEqual(summarize(evilResults[i]).drifted, ['node-pretest.yml'], `so is ${JSON.stringify(evil.trim())}, after a declared input`);
 	});
 
-	const keepEngines = { workflows: {}, keep: { 'node-pretest.yml': ['skip-engines'] } };
+	const keepEngines = { workflows: {}, readme: true, keep: { 'node-pretest.yml': ['skip-engines'] } };
 	const kept = await checkRepo(repoState({
 		workflows: withWorkflows([{ name: 'node-pretest.yml', text: unknown }], ['node-pretest.yml']),
 		config: keepEngines,
