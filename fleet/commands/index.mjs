@@ -12,7 +12,7 @@ import {
 	isSkippedAccount,
 	parseAccounts,
 } from '../lib/app.mjs';
-import { fixBranch, relockBranch } from '../lib/branches.mjs';
+import { fixBranch } from '../lib/branches.mjs';
 import { isReportAuthor, issueOctokit, legacyAuthor } from '../lib/issues.mjs';
 import { code, split } from '../lib/markdown.mjs';
 import { finishQueued, messageOf } from '../lib/merge.mjs';
@@ -29,6 +29,7 @@ import {
 	legend,
 	parseCommand,
 	quote,
+	reports,
 } from './syntax.mjs';
 
 /** @import { Octokit, RepoState } from '../lib/app.mjs' */
@@ -415,6 +416,7 @@ async function merge(
 			finishOther,
 			progress,
 			resolved,
+			branches: reports.workflows.mergeBranches,
 		},
 		states,
 		filters,
@@ -424,7 +426,7 @@ async function merge(
 			command,
 			what: dryRun
 				? 'a dry run, so nothing was changed or queued'
-				: `\`${fixBranch}\` and \`${relockBranch}\` PRs by the App’s bot`,
+				: `${reports.workflows.mergeBranches.map((b) => `\`${b}\``).join(' and ')} PRs by the App’s bot`,
 			rows,
 			details,
 			failures: unread,

@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 
 import { sweepReport } from '../commands/replies.mjs';
+import { reports } from '../commands/syntax.mjs';
 import {
 	appAuth,
 	discover,
@@ -73,7 +74,7 @@ async function main() {
 		found,
 		none: 'No discrepancies.',
 		// otherwise, what's stale on the report is only hidden when a command, or the merge queue, replies there
-		sweep: sweepReport,
+		sweep: (sweeping) => sweepReport({ ...sweeping, branches: reports.workflows.mergeBranches }),
 	});
 
 	core.info(`${all.length} of ${checked.length} repositories have discrepancies; ${'error' in written ? 'the full report could not be written to its gist' : `the full report is ${written.html_url}`}; ${outcome}`);

@@ -2,7 +2,7 @@ import path from 'path';
 
 import test from 'tape';
 
-import { fixBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
+import { fixBranch, readmeBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
 import { replyMarker } from '../../../fleet/commands/replies.mjs';
 import { parseCommand } from '../../../fleet/commands/syntax.mjs';
 import { marker as saidMarker } from '../../../fleet/lib/said.mjs';
@@ -682,5 +682,54 @@ test('fleet/merge: a queued PR found already merged or closed that was the App�
 	);
 	t.deepEqual(hiddenIds(merged.requests), ['IC_53 RESOLVED'], 'already merged: hiding what’s only about the public repository on the report, as once the App merges it');
 	t.deepEqual(reactions(merged.requests, 33), ['+rocket', '-704'], 'already merged: its command is 🚀');
+	t.end();
+});
+
+test('fleet/merge: whether a merged PR was the App’s last open PR in a repository counts only the PRs from its own report’s branches', (t) => {
+	/** @type {(id: number, body: string, login?: string) => Record<string, unknown>} */
+	const listed = (id, body, login = bot) => ({
+		id,
+		node_id: `IC_${id}`, // eslint-disable-line camelcase
+		body,
+		user: { login },
+	});
+	const workflowsPR = pr('ljharb/f', 1, fixBranch);
+	const readmePR = pr('ljharb/f', 2, readmeBranch);
+	/** @type {(number: number) => ReturnType<typeof runScript>} */
+	const merging = (number) => runScript(t, script, {
+		merge: {
+			queue: queue(entry('ljharb/f', number, { commentId: 33 })),
+			prs: {
+				'ljharb/f#1': workflowsPR,
+				'ljharb/f#2': readmePR,
+			},
+			// the one just merged, which GitHub can still list as open, and the other report’s
+			openPulls: { 'ljharb/f': [workflowsPR, readmePR] },
+			ci: { 'f-1': passing, 'f-2': passing },
+		},
+		commands: {
+			comments: {
+				'ljharb/actions#9': [listed(53, '/merge ljharb/f', 'maintainer')],
+				[`ljharb/f#${number}`]: [listed(number, `${saidMarker('stuck', 'abc0')}\nneeds a person`)],
+			},
+		},
+	});
+	/** @type {(requests: ReturnType<typeof runScript>['requests']) => string[]} */
+	const hiddenIds = (requests) => matching(requests, 'POST', /^\/graphql$/).filter((r) => r.body.variables.classifier).map((r) => `${r.body.variables.id} ${r.body.variables.classifier}`);
+	/** @type {(requests: ReturnType<typeof runScript>['requests']) => string[]} */
+	const listedHeads = (requests) => matching(requests, 'GET', /^\/repos\/ljharb\/f\/pulls\?/).map((r) => String(new URLSearchParams(r.path.split('?')[1]).get('head')));
+
+	const workflows = merging(1);
+	t.equal(workflows.status, 0, 'a workflow report’s PR: exits successfully');
+	t.equal(matching(workflows.requests, 'PATCH', /\/git\/refs\//).length, 1, 'a workflow report’s PR: merging it');
+	t.deepEqual(listedHeads(workflows.requests), [`ljharb:${fixBranch}`, `ljharb:${relockBranch}`], 'a workflow report’s PR: listing only the open PRs from the workflow report’s branches, not the README report’s');
+	t.deepEqual(hiddenIds(workflows.requests), ['IC_1 RESOLVED', 'IC_53 RESOLVED'], 'a workflow report’s PR: hiding what the App said on it, and what’s only about the repository on the report, though the README report’s PR is still open there');
+	t.match(workflows.stdout, /^hid 1 comment about a repository the App has no PRs left open in, as resolved$/m, 'a workflow report’s PR: logging only how many');
+
+	const readme = merging(2);
+	t.equal(readme.status, 0, 'a README report’s PR: exits successfully');
+	t.equal(matching(readme.requests, 'PATCH', /\/git\/refs\//).length, 1, 'a README report’s PR: merging it');
+	t.deepEqual(listedHeads(readme.requests), [`ljharb:${readmeBranch}`], 'a README report’s PR: listing only the open PRs from the README report’s branch, not the workflow report’s');
+	t.deepEqual(hiddenIds(readme.requests), ['IC_2 RESOLVED', 'IC_53 RESOLVED'], 'a README report’s PR: hiding what the App said on it, and what’s only about the repository on the report, though the workflow report’s PR is still open there');
 	t.end();
 });

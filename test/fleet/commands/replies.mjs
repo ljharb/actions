@@ -14,10 +14,11 @@ import {
 	repliedTo,
 	replyMarker,
 	supersedes,
+	sweepReport,
 	unmarked,
 } from '../../../fleet/commands/replies.mjs';
 import { parseCommand } from '../../../fleet/commands/syntax.mjs';
-import { readmeBranch } from '../../../fleet/lib/branches.mjs';
+import { fixBranch, readmeBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
 
 /** @import { Test } from 'tape' */
 /** @import { Run, IssueComment } from '../../../fleet/commands/replies.mjs' */
@@ -612,5 +613,123 @@ test('aboutEach: README drift report commands', (t) => {
 		],
 		'each repository that a README drift report command is only about, however many of its kinds of discrepancy it names, with the PRs the App’s replies link to; never one that names another account too',
 	);
+	t.end();
+});
+
+/**
+ * How the mocked API answers a sweep of issue 9 of `o/r`: its `comments`, each PR's state (`pulls`, keyed by `owner/name#number`; unspecified, `closed`), and the App's open PRs (`open`, keyed by `owner/name`); hiding a comment always works.
+ * @type {(t: Test, scenario: { comments: IssueComment[], pulls?: Record<string, string>, open?: Record<string, { number: number, head: { ref: string, repo: { full_name: string } }, user: { login: string } }[]> }) => Recorded[]}
+ */
+function mockSweep(t, {
+	comments: listed,
+	pulls = {},
+	open = {},
+}) {
+	nock.disableNetConnect();
+	/** @type {Recorded[]} */
+	const requests = [];
+	const scope = nock('https://api.github.com').persist();
+	/** @type {(path: string) => string} */
+	const repoOf = (path) => decodeURIComponent(path.split('/').slice(2, 4).join('/'));
+	/** @type {(handler: (path: string, body: any) => [number, unknown]) => (req: Request) => Promise<[number, unknown]>} */
+	const handle = (handler) => async (req) => {
+		const url = new URL(req.url);
+		const text = await req.text();
+		const body = text ? JSON.parse(text) : null;
+		const path = `${url.pathname}${url.search}`;
+		requests.push({
+			method: req.method,
+			path,
+			body,
+		});
+		return handler(path, body);
+	};
+	scope.get(/^\/repos\/o\/r\/issues\/9\/comments\?/).reply(handle(() => [200, listed]));
+	scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\/\d+$/).reply(handle((path) => [200, { state: pulls[`${repoOf(path)}#${path.split('/')[5]}`] ?? 'closed' }]));
+	scope.get(/^\/repos\/[^/]+\/[^/]+\/pulls\?/).reply(handle((path) => {
+		const head = new URLSearchParams(path.split('?')[1]).get('head');
+		return [200, (open[repoOf(path)] ?? []).filter((pr) => `${repoOf(path).split('/')[0]}:${pr.head.ref}` === head)];
+	}));
+	scope.post('/graphql').reply(handle((_, { query, variables }) => (query.includes('nodes(')
+		? [200, { data: { nodes: variables.ids.map((/** @type {string} */ id) => ({ id, isMinimized: false })) } }]
+		: [200, { data: { minimizeComment: { minimizedComment: { isMinimized: true } } } }])));
+	t.teardown(() => {
+		nock.cleanAll();
+		nock.enableNetConnect();
+	});
+	return requests;
+}
+
+/**
+ * Sweeps issue 9 of `o/r`, counting only the App's open PRs from `branches` as its own, returning how many it hid as each.
+ * @type {(branches?: readonly string[]) => Promise<{ outdated: number, resolved: number }>}
+ */
+async function sweepWith(branches) {
+	const { write } = process.stdout;
+	const { GITHUB_SERVER_URL } = process.env;
+	process.env.GITHUB_SERVER_URL = 'https://github.com';
+	process.stdout.write = () => true;
+	try {
+		return await sweepReport({
+			octokit: getOctokit('ghs_test'),
+			owner: 'o',
+			repo: 'r',
+			number: 9,
+			bot,
+			dryRun: false,
+			branches,
+		});
+	} finally {
+		process.stdout.write = write;
+		if (typeof GITHUB_SERVER_URL === 'string') {
+			process.env.GITHUB_SERVER_URL = GITHUB_SERVER_URL;
+		} else {
+			delete process.env.GITHUB_SERVER_URL;
+		}
+	}
+}
+
+test('sweepReport: with branches', (t) => {
+	// on the README drift report: owner/name's only README PR, #12, is closed
+	const readmeReport = comments(1, ['/fix owner/name links'], 'maintainer').concat(comments(2, [readmeReply('/fix owner/name links', ['| `owner/name` | opened https://github.com/owner/name/pull/12 |'])]));
+	/** @type {(number: number, branch: string) => { number: number, head: { ref: string, repo: { full_name: string } }, user: { login: string } }} */
+	const openPR = (number, branch) => ({
+		number,
+		head: { ref: branch, repo: { full_name: 'owner/name' } }, // eslint-disable-line camelcase
+		user: { login: bot },
+	});
+	/** @type {(requests: Recorded[]) => (string | null)[]} */
+	const listed = (requests) => requests.filter((r) => (/\/pulls\?/).test(r.path)).map((r) => new URLSearchParams(r.path.split('?')[1]).get('head'));
+
+	t.test('an open PR from another report’s branch doesn’t keep a repository from being resolved', async (st) => {
+		const requests = mockSweep(st, { comments: readmeReport, open: { 'owner/name': [openPR(13, fixBranch), openPR(14, relockBranch)] } });
+		st.deepEqual(await sweepWith([readmeBranch]), { outdated: 0, resolved: 2 }, 'hiding both comments about it as resolved');
+		st.deepEqual(hidden(requests), [['IC_1', 'RESOLVED'], ['IC_2', 'RESOLVED']], 'the command and the App’s reply to it');
+		st.deepEqual(listed(requests), [`owner:${readmeBranch}`], 'listing only the open PRs from the report’s own branch');
+	});
+
+	t.test('an open PR from the report’s own branch does', async (st) => {
+		const requests = mockSweep(st, { comments: readmeReport, open: { 'owner/name': [openPR(15, readmeBranch)] } });
+		st.deepEqual(await sweepWith([readmeBranch]), { outdated: 0, resolved: 0 }, 'hiding nothing as resolved');
+		st.deepEqual(hidden(requests), [], 'nothing at all');
+	});
+
+	t.test('nor is one resolved on the workflow drift report while one of its own branches’ PRs is open, whatever the README’s', async (st) => {
+		const requests = mockSweep(st, { comments: readmeReport, open: { 'owner/name': [openPR(13, fixBranch)] } });
+		st.deepEqual(await sweepWith([fixBranch, relockBranch]), { outdated: 0, resolved: 0 }, 'hiding nothing as resolved');
+		st.deepEqual(listed(requests), [`owner:${fixBranch}`, `owner:${relockBranch}`], 'listing only that report’s branches’ open PRs');
+
+		nock.cleanAll();
+		const other = mockSweep(st, { comments: readmeReport, open: { 'owner/name': [openPR(15, readmeBranch)] } });
+		st.deepEqual(await sweepWith([fixBranch, relockBranch]), { outdated: 0, resolved: 2 }, 'but an open README PR doesn’t keep it from being resolved there');
+		st.deepEqual(hidden(other).map(([id]) => id), ['IC_1', 'IC_2'], 'hiding both');
+	});
+
+	t.test('without branches, an open PR from any of the bot’s branches keeps it from being resolved', async (st) => {
+		const requests = mockSweep(st, { comments: readmeReport, open: { 'owner/name': [openPR(15, readmeBranch)] } });
+		st.deepEqual(await sweepWith(), { outdated: 0, resolved: 0 }, 'hiding nothing as resolved');
+		st.deepEqual(listed(requests), [fixBranch, relockBranch, readmeBranch].map((branch) => `owner:${branch}`), 'listing every one of the bot’s branches’ open PRs');
+	});
+
 	t.end();
 });

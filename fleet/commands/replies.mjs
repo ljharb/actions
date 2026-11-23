@@ -442,10 +442,11 @@ export function aboutEach(comments, authors, server) {
 }
 
 /**
- * Whether every one of `prs`, in `repository` (`owner/name`), is closed (or merged), and the App's bot (`bot`) has no open PRs left there (see `candidatePRs`).
- * @type {(octokit: Octokit, about: { repository: string, prs: number[] }, bot: string) => Promise<boolean>}
+ * Whether every one of `prs`, in `repository` (`owner/name`), is closed (or merged), and the App's bot (`bot`) has no open PRs left there from `branches` (see `candidatePRs`).
+ * @type {(octokit: Octokit, about: { repository: string, prs: number[] }, bot: string, branches?: readonly string[]) => Promise<boolean>}
  */
-async function allClosed(octokit, { repository, prs }, bot) {
+// eslint-disable-next-line max-params
+async function allClosed(octokit, { repository, prs }, bot, branches) {
 	const [owner, name] = repository.split('/');
 	const states = await Promise.all(prs.map(async (number) => {
 		const { data } = await octokit.rest.pulls.get({
@@ -466,6 +467,7 @@ async function allClosed(octokit, { repository, prs }, bot) {
 			repository,
 		},
 		bot,
+		branches,
 	);
 	return open.length === 0;
 }
@@ -473,9 +475,13 @@ async function allClosed(octokit, { repository, prs }, bot) {
 /**
  * The node IDs of the comments, among `comments` (in the order they were posted), only about a repository (see `aboutEach`) whose PRs that the replies of `authors` link to are all closed or merged, when there's at least one, and where the App's bot (`bot`) has no open PRs left (see `allClosed`).
  * A repository that can't be checked is left as it is, and only warned about, never saying which.
- * @type {(octokit: Octokit, comments: IssueComment[], app: { authors: ReadonlySet<string>, bot: string }) => Promise<Set<string>>}
+ * @type {(octokit: Octokit, comments: IssueComment[], app: { authors: ReadonlySet<string>, bot: string, branches?: readonly string[] }) => Promise<Set<string>>}
  */
-async function resolvedOn(octokit, comments, { authors, bot }) {
+async function resolvedOn(octokit, comments, {
+	authors,
+	bot,
+	branches,
+}) {
 	/** @type {Set<string>} */
 	const resolved = new Set();
 	/** @type {unknown[]} */
@@ -486,7 +492,7 @@ async function resolvedOn(octokit, comments, { authors, bot }) {
 			await previous;
 			if (prs.length > 0) {
 				try {
-					if (await allClosed(octokit, { repository, prs }, bot)) {
+					if (await allClosed(octokit, { repository, prs }, bot, branches)) {
 						ids.forEach((id) => resolved.add(id));
 					}
 				} catch (error) {
@@ -521,8 +527,9 @@ function logHidden({ outdated, resolved }, done) {
  * - as `OUTDATED`, every part of each of the App's replies that a later one makes outdated (see `outdatedReplies`), but those hidden as resolved
  * The App's replies are those of its bot, or of GitHub Actions' bot, which replied before the App did.
  * Those already hidden (or since deleted) are left alone; in a dry run, nothing is hidden, but how many would be is still logged.
+ * With `branches`, only the App's PRs from those are its PRs (see `candidatePRs`): the report's own.
  * Returns how many it hid (or would have) as each. Hiding is never worth failing anything over, so a failure only warns, never saying which repository, or which comment; only how many are hidden is logged.
- * @type {(options: Sweeping) => Promise<{ outdated: number, resolved: number }>}
+ * @type {(options: Sweeping & { branches?: readonly string[] }) => Promise<{ outdated: number, resolved: number }>}
  */
 export async function sweepReport({
 	octokit,
@@ -531,6 +538,7 @@ export async function sweepReport({
 	number,
 	bot,
 	dryRun,
+	branches,
 }) {
 	const none = { outdated: 0, resolved: 0 };
 	const authors = new Set([bot, legacyAuthor].map((a) => a.toLowerCase()));
@@ -549,7 +557,11 @@ export async function sweepReport({
 		return none;
 	}
 
-	const resolved = await resolvedOn(octokit, comments, { authors, bot });
+	const resolved = await resolvedOn(octokit, comments, {
+		authors,
+		bot,
+		branches,
+	});
 	const outdated = outdatedReplies(comments, authors).filter((id) => !resolved.has(id));
 
 	/** @type {Set<string>} */

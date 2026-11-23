@@ -9,7 +9,7 @@ import {
 	sweepReport,
 } from '../../../fleet/commands/replies.mjs';
 import { parseCommand } from '../../../fleet/commands/syntax.mjs';
-import { fixBranch } from '../../../fleet/lib/branches.mjs';
+import { fixBranch, readmeBranch } from '../../../fleet/lib/branches.mjs';
 import { repoOf } from '../drift/helpers/report.mjs';
 
 /** @import { Test } from 'tape' */
@@ -454,6 +454,7 @@ test('sweepReport', (t) => {
 				'/repos/tape-testing/tape/pulls/625',
 				`/repos/tape-testing/tape/pulls?head=tape-testing%3A${encodeURIComponent(fixBranch)}&state=open&per_page=100`,
 				'/repos/tape-testing/tape/pulls?head=tape-testing%3Aactions-lock%2Frelock&state=open&per_page=100',
+				`/repos/tape-testing/tape/pulls?head=tape-testing%3A${encodeURIComponent(readmeBranch)}&state=open&per_page=100`,
 				'/repos/ljharb/qs/pulls/3',
 			],
 			'reading only the PRs named, and the App’s open PRs only where every one named is closed',

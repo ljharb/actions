@@ -354,7 +354,7 @@ test('maintain: the installed repositories are found in batches, by how many PRs
 	const { requests, stdout } = await run(t, { server, github: installed(names), merge: {} });
 	const queries = requests.filter((r) => r.path === '/graphql');
 	t.equal(queries.length, 2, 'twenty at a time');
-	t.deepEqual(Object.keys(queries[1].body.variables), ['o0', 'n0', 'b0', 'b1'], 'each with the App’s branches');
+	t.deepEqual(Object.keys(queries[1].body.variables), ['o0', 'n0', 'b0', 'b1', 'b2'], 'each with the App’s branches');
 	t.deepEqual([queries[1].body.variables.b0, queries[1].body.variables.b1], [fixBranch, relockBranch], 'named');
 	t.match(queries[0].body.query, /p0: pullRequests\(states: OPEN, headRefName: \$b0\) \{ totalCount \}/, 'counting the open PRs from each');
 	t.equal(requests.find((r) => r.path.endsWith('/access_tokens'))?.body.permissions.pull_requests, 'read', 'with a token that can read PRs');

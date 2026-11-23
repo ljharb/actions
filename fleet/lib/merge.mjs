@@ -122,9 +122,10 @@ export async function installationFor(auth, owner, name) {
 }
 
 /**
- * The open PRs the App's bot opened in `owner/name` from one of its own branches there: never from a fork, nor by anyone else.
- * @type {(octokit: Octokit, repo: { owner: string, name: string, repository: string }, bot: string) => Promise<PR[]>}
+ * The open PRs the App's bot opened in `owner/name` from one of its own branches there (or, with `branches`, only from those): never from a fork, nor by anyone else.
+ * @type {(octokit: Octokit, repo: { owner: string, name: string, repository: string }, bot: string, branches?: readonly string[]) => Promise<PR[]>}
  */
+// eslint-disable-next-line max-params
 export async function candidatePRs(
 	octokit,
 	{
@@ -133,10 +134,11 @@ export async function candidatePRs(
 		repository,
 	},
 	bot,
+	branches = botBranches,
 ) {
 	/** @type {PR[]} */
 	const found = [];
-	await botBranches.reduce(
+	await branches.filter((branch) => botBranches.includes(branch)).reduce(
 		async (previous, branch) => {
 			await previous;
 			// `head` only narrows by the head repository's owner and branch, so a fork of anything else the owner has can still match
@@ -308,12 +310,16 @@ export async function hideSaidOnMerged(
 }
 
 /**
- * Whether the App's bot (`bot`) has no open PRs left in `owner/name` (see `candidatePRs`) but those it just merged, or found already merged or closed (`merged`, which GitHub can still list as open for a moment). Since that only decides what's hidden, a failure only warns (for a private repository, not even that), never saying where, and is `false`.
- * @type {(read: Octokit, repo: { owner: string, name: string, repository: string, private: boolean }, app: { bot: string, merged: Set<number> }) => Promise<boolean>}
+ * Whether the App's bot (`bot`) has no open PRs left in `owner/name` (see `candidatePRs`; with `branches`, only from those, the report's own) but those it just merged, or found already merged or closed (`merged`, which GitHub can still list as open for a moment). Since that only decides what's hidden, a failure only warns (for a private repository, not even that), never saying where, and is `false`.
+ * @type {(read: Octokit, repo: { owner: string, name: string, repository: string, private: boolean }, app: { bot: string, merged: Set<number>, branches?: readonly string[] }) => Promise<boolean>}
  */
-export async function noneLeft(read, repo, { bot, merged }) {
+export async function noneLeft(read, repo, {
+	bot,
+	merged,
+	branches,
+}) {
 	try {
-		return (await candidatePRs(read, repo, bot)).every((pr) => merged.has(pr.number));
+		return (await candidatePRs(read, repo, bot, branches)).every((pr) => merged.has(pr.number));
 	} catch (error) {
 		if (!repo.private) {
 			core.warning(`could not list the App’s open PRs in a repository where one of its PRs was just merged or closed, to tell whether that was its last${httpStatus(error)}`);

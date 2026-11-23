@@ -27,6 +27,7 @@ import {
 /**
  * `progress.queued` becomes whether the queue holds a public PR this command queued as soon as the queue is written, so that even if what follows (eg, replying) fails, the command's 👀 stays until the queue resolves that PR.
  * `resolved`, if given, gets each public repository that every open PR of the App's in was merged.
+ * `branches`, if given, are the only branches of the App's whose PRs it takes (see `candidatePRs`): the report's own.
  * @typedef {{
  *   auth: ReturnType<typeof appAuth>,
  *   dryRun: boolean,
@@ -35,6 +36,7 @@ import {
  *   finishOther: (commentId: number, ok: boolean) => Promise<void>,
  *   progress: { queued: boolean },
  *   resolved?: string[],
+ *   branches?: readonly string[],
  * }} MergeContext
  */
 /**
@@ -176,7 +178,7 @@ async function mergeRepo(context, state, bot) {
 			writer ??= repoOctokit(context.auth, state, writePermissions);
 			return writer;
 		};
-		await (await candidatePRs(read, state, bot)).reduce(
+		await (await candidatePRs(read, state, bot, context.branches)).reduce(
 			async (previous, pr) => {
 				await previous;
 				const outcome = await mergePR(context, {

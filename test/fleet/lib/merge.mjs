@@ -7,6 +7,7 @@ import {
 	botBranches,
 	fixBranch,
 	isBotBranch,
+	readmeBranch,
 	relockBranch,
 } from '../../../fleet/lib/branches.mjs';
 import {
@@ -140,10 +141,11 @@ async function classify(t, ci) {
 test('branches', (t) => {
 	t.equal(fixBranch, 'fleet/workflows', '`/fix`’s branch');
 	t.equal(relockBranch, 'actions-lock/relock', 'the relock’s branch');
-	t.deepEqual(botBranches, [fixBranch, relockBranch], 'the bot’s branches are both');
+	t.equal(readmeBranch, 'fleet/readme', 'the README `/fix`’s branch');
+	t.deepEqual(botBranches, [fixBranch, relockBranch, readmeBranch], 'the bot’s branches are all three');
 	t.ok(Object.isFrozen(botBranches), 'and can’t be changed');
-	t.ok(isBotBranch(fixBranch) && isBotBranch(relockBranch), 'each is one of the bot’s branches');
-	t.notOk(isBotBranch('main') || isBotBranch('fleet/workflows/x'), 'and nothing else is');
+	t.ok(isBotBranch(fixBranch) && isBotBranch(relockBranch) && isBotBranch(readmeBranch), 'each is one of the bot’s branches');
+	t.notOk(isBotBranch('main') || isBotBranch('fleet/workflows/x') || isBotBranch('fleet/readme/x'), 'and nothing else is');
 	t.end();
 });
 
@@ -1048,6 +1050,41 @@ test('candidatePRs', async (t) => {
 	t.deepEqual(await candidatePRs(octokit, { owner: 'o', name: 'r', repository: 'o/r' }, bot), [], 'not one whose head repository is gone');
 });
 
+test('candidatePRs: only from the given branches', async (t) => {
+	const bot = 'fleet-bot[bot]';
+	/** @type {(number: number, branch: string) => Record<string, unknown>} */
+	const pr = (number, branch) => ({
+		number,
+		head: { ref: branch, sha: `s${number}`, repo: { full_name: 'o/r', owner: { login: 'o' } } }, // eslint-disable-line camelcase
+		base: { ref: 'main' },
+		user: { login: bot },
+	});
+	const repo = { owner: 'o', name: 'r', repository: 'o/r' };
+	const pulls = { 'o/r': [pr(3, fixBranch), pr(4, readmeBranch), pr(5, relockBranch), pr(6, 'other')] };
+	/** @type {(requests: Recorded[]) => string[]} */
+	const heads = (requests) => requests.map((r) => String(new URLSearchParams(r.path.split('?')[1]).get('head')));
+
+	let requests = setup(t, { openPulls: pulls });
+	t.deepEqual((await candidatePRs(octokit, repo, bot, [readmeBranch])).map((p) => p.number), [4], 'only the README report’s PR, from its own branch');
+	t.deepEqual(heads(requests), [`o:${readmeBranch}`], 'listing only that branch’s open PRs');
+
+	requests = setup(t, { openPulls: pulls });
+	t.deepEqual((await candidatePRs(octokit, repo, bot, [fixBranch, relockBranch])).map((p) => p.number), [3, 5], 'only the workflow report’s PRs, from its two branches, in order');
+	t.deepEqual(heads(requests), [`o:${fixBranch}`, `o:${relockBranch}`], 'listing only those branches’ open PRs');
+
+	requests = setup(t, { openPulls: pulls });
+	t.deepEqual((await candidatePRs(octokit, repo, bot, ['other', readmeBranch])).map((p) => p.number), [4], 'a branch that isn’t one of the bot’s is ignored, even though a PR of the bot’s is open from it');
+	t.deepEqual(heads(requests), [`o:${readmeBranch}`], 'and never even listed');
+
+	requests = setup(t, { openPulls: pulls });
+	t.deepEqual(await candidatePRs(octokit, repo, bot, ['other']), [], 'given only branches that aren’t the bot’s, none');
+	t.deepEqual(requests, [], 'without listing anything');
+
+	requests = setup(t, { openPulls: pulls });
+	t.deepEqual((await candidatePRs(octokit, repo, bot)).map((p) => p.number), [3, 4, 5], 'without branches, from every one of the bot’s branches, the README report’s included');
+	t.deepEqual(heads(requests), botBranches.map((branch) => `o:${branch}`), 'listing each of them');
+});
+
 test('noneLeft', async (t) => {
 	const bot = 'fleet-bot[bot]';
 	/** @type {(number: number, branch: string) => Record<string, unknown>} */
@@ -1093,6 +1130,44 @@ test('noneLeft', async (t) => {
 	t.match(pub.stdout, /^::warning::could not list the App’s open PRs in a repository .+, to tell whether that was its last \(HTTP 502\)\n$/, 'and only warns, never saying where');
 	const priv = await failing(true);
 	t.deepEqual(priv, { left: false, stdout: '' }, 'for a private repository, not even that');
+});
+
+test('noneLeft: only from the given branches', async (t) => {
+	const bot = 'fleet-bot[bot]';
+	/** @type {(number: number, branch: string) => Record<string, unknown>} */
+	const pr = (number, branch) => ({
+		number,
+		head: { ref: branch, sha: `s${number}`, repo: { full_name: 'o/r', owner: { login: 'o' } } }, // eslint-disable-line camelcase
+		base: { ref: 'main' },
+		user: { login: bot },
+	});
+	const repo = {
+		owner: 'o',
+		name: 'r',
+		repository: 'o/r',
+		private: false,
+	};
+	const pulls = { 'o/r': [pr(3, fixBranch), pr(4, readmeBranch), pr(5, relockBranch)] };
+	/** @type {(requests: Recorded[]) => string[]} */
+	const heads = (requests) => requests.map((r) => String(new URLSearchParams(r.path.split('?')[1]).get('head')));
+
+	let requests = setup(t, { openPulls: pulls });
+	t.equal(await noneLeft(octokit, repo, { bot, merged: new Set([3, 5]), branches: [fixBranch, relockBranch] }), true, 'the workflow report’s PRs all merged: none left from its branches, though the README report’s PR is open');
+	t.deepEqual(heads(requests), [`o:${fixBranch}`, `o:${relockBranch}`], 'listing only those branches’ open PRs');
+
+	requests = setup(t, { openPulls: pulls });
+	t.equal(await noneLeft(octokit, repo, { bot, merged: new Set([3]), branches: [fixBranch, relockBranch] }), false, 'one of the workflow report’s PRs left: not none');
+
+	requests = setup(t, { openPulls: pulls });
+	t.equal(await noneLeft(octokit, repo, { bot, merged: new Set([4]), branches: [readmeBranch] }), true, 'the README report’s PR merged: none left from its branch, though the workflow report’s PRs are open');
+	t.deepEqual(heads(requests), [`o:${readmeBranch}`], 'listing only that branch’s open PRs');
+
+	requests = setup(t, { openPulls: pulls });
+	t.equal(await noneLeft(octokit, repo, { bot, merged: new Set([4]) }), false, 'without branches, the other report’s open PRs count');
+	t.deepEqual(heads(requests), botBranches.map((branch) => `o:${branch}`), 'listing every one of the bot’s branches');
+
+	requests = setup(t, { openPulls: pulls });
+	t.equal(await noneLeft(octokit, repo, { bot, merged: new Set([3, 4, 5]) }), true, 'without branches, none left once every one merged');
 });
 
 test('repoOctokit and queueOctokit', async (t) => {

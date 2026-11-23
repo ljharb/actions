@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 
 import { hideResolved } from '../commands/replies.mjs';
+import { reportBranches } from '../commands/syntax.mjs';
 import { appAuth, botLogin, parseAccounts } from '../lib/app.mjs';
 import { issueOctokit } from '../lib/issues.mjs';
 import { code, split } from '../lib/markdown.mjs';
@@ -86,13 +87,17 @@ function keep(entry, error = false) {
 }
 
 /**
- * Once the queued PR `entry` (whose repository `read` can read) is no longer open (the App merged it, or it was found already merged or closed), notes that, and returns whether it was the App's last open PR in its repository (see `noneLeft`), which is only looked at for a public one (`shown`), since hiding what's on the report about a private one would confirm what happened in it.
- * @type {(app: QueueRun, entry: Entry, repo: { read: Octokit, shown: boolean }) => Promise<boolean>}
+ * Once the queued PR `entry` (whose repository `read` can read, and whose head branch is `head`) is no longer open (the App merged it, or it was found already merged or closed), notes that, and returns whether it was the App's last open PR in its repository (see `noneLeft`) from the branches of the report it was queued from (see `reportBranches`), which is only looked at for a public one (`shown`), since hiding what's on the report about a private one would confirm what happened in it.
+ * @type {(app: QueueRun, entry: Entry, repo: { read: Octokit, shown: boolean, head: string }) => Promise<boolean>}
  */
 async function wasLast(
 	{ bot, merged },
 	entry,
-	{ read, shown },
+	{
+		read,
+		shown,
+		head,
+	},
 ) {
 	const [owner, name] = entry.repository.split('/');
 	const repository = entry.repository.toLowerCase();
@@ -106,13 +111,17 @@ async function wasLast(
 			repository: entry.repository,
 			private: false,
 		},
-		{ bot: await bot(), merged: inRepository },
+		{
+			bot: await bot(),
+			merged: inRepository,
+			branches: reportBranches(head),
+		},
 	);
 }
 
 /**
  * Once the App has merged the queued PR `entry` (whose repository `read` can read, with installation `installationId`), hides what it said on that PR as resolved (see `hideSaidOnMerged`); returns whether it was the App's last open PR in its public repository (see `wasLast`).
- * @type {(app: QueueRun, entry: Entry, merge: { read: Octokit, installationId: number, shown: boolean }) => Promise<boolean>}
+ * @type {(app: QueueRun, entry: Entry, merge: { read: Octokit, installationId: number, shown: boolean, head: string }) => Promise<boolean>}
  */
 async function afterMerge(
 	app,
@@ -121,6 +130,7 @@ async function afterMerge(
 		read,
 		installationId,
 		shown,
+		head,
 	},
 ) {
 	const { auth, bot } = app;
@@ -139,7 +149,11 @@ async function afterMerge(
 			bot: await bot(),
 		},
 	);
-	return wasLast(app, entry, { read, shown });
+	return wasLast(app, entry, {
+		read,
+		shown,
+		head,
+	});
 }
 
 /**
@@ -185,7 +199,13 @@ async function recheck(app, entry, visibility) {
 		return done(
 			Boolean(pr.merged_at),
 			pr.merged_at ? `already merged ${url}` : `not merged ${url}: it was closed`,
-			{ resolved: await wasLast(app, entry, { read, shown: visibility.shown }) },
+			{
+				resolved: await wasLast(app, entry, {
+					read,
+					shown: visibility.shown,
+					head: pr.head.ref,
+				}),
+			},
 		);
 	}
 	// only what `/merge` was asked to merge is ever merged, and only into the branch it was asked to
@@ -230,6 +250,7 @@ async function recheck(app, entry, visibility) {
 				read,
 				installationId,
 				shown: visibility.shown,
+				head: pr.head.ref,
 			}),
 		},
 	);
