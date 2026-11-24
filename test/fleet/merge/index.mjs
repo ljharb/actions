@@ -442,6 +442,17 @@ test('fleet/merge: the App’s open PRs are kept up to date in every run, and th
 	t.end();
 });
 
+test('fleet/merge: GitHub failing to read an installation, even when read again, only warns, and doesn’t fail the run', (t) => {
+	const unread = runScript(t, script, {
+		merge: {},
+		github: { installations: [{ id: 1, account: { login: 'ljharb' } }], installationRepos: { 1: { status: 500, body: { message: 'nope' } } } },
+	});
+	t.equal(unread.status, 0, 'the run doesn’t fail');
+	t.ok(unread.stdout.split('\n').includes('::warning::installation 1 could not be read (HTTP 500), even when read again; GitHub failing doesn’t fail the run, and the next run tries it again'), 'warning about it');
+	t.notOk(unread.stdout.includes('::error::'), 'with no error');
+	t.end();
+});
+
 test('fleet/merge: a PR whose base branch changed after `/merge` is dropped, unmerged', (t) => {
 	const { status, requests } = run(t, {
 		queue: queue(entry('ljharb/d', 1, { commentId: 66, base: 'main' })),

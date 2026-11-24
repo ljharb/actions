@@ -6,6 +6,7 @@ import {
 	appOctokit,
 	discover,
 	installationToken,
+	isTransient,
 	parseAccounts,
 } from '../../../fleet/lib/app.mjs';
 import { missingPermissions } from '../../../fleet/lib/installations.mjs';
@@ -73,6 +74,21 @@ test('parseAccounts', (t) => {
 	t.deepEqual([...parseAccounts('a a A', 'x')], ['a'], 'deduplicates');
 	t.deepEqual([...parseAccounts('', '')], [], 'empty when both the list and the fallback are empty');
 	t.deepEqual([...parseAccounts(' , ', '')], [], 'empty when the list is only separators and the fallback is empty');
+
+	t.end();
+});
+
+test('isTransient', (t) => {
+	t.equal(isTransient(Object.assign(new Error('Server Error'), { status: 500 })), true, 'an HTTP 500, which is also not reaching GitHub at all');
+	t.equal(isTransient(Object.assign(new Error('Bad Gateway'), { status: 502 })), true, 'any other HTTP 5xx');
+	t.equal(isTransient({ status: 503 }), true, 'a non-Error with a 5xx status');
+	t.equal(isTransient(Object.assign(new Error('Not Found'), { status: 404 })), false, 'a client error is GitHub’s answer');
+	t.equal(isTransient(Object.assign(new Error('Unprocessable'), { status: 422 })), false, 'as is a refused token');
+	t.equal(isTransient(Object.assign(new Error('x'), { status: '500' })), false, 'a status that isn’t a number');
+	t.equal(isTransient(new Error('something went wrong')), false, 'no status: it can’t be told from a bug');
+	t.equal(isTransient('Server Error'), false, 'a string');
+	t.equal(isTransient(null), false, 'null');
+	t.equal(isTransient(undefined), false, 'undefined');
 
 	t.end();
 });

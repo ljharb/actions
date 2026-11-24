@@ -10,7 +10,11 @@ import {
 	declaredInputs,
 	removedInputs,
 } from '../drift/inputs.mjs';
-import { installationToken, octokitFor } from '../lib/app.mjs';
+import {
+	installationToken,
+	isTransient,
+	octokitFor,
+} from '../lib/app.mjs';
 import { fixBranch } from '../lib/branches.mjs';
 import { blame, ciFailures } from '../lib/ci.mjs';
 import { configFile, keptConfig } from '../lib/kept.mjs';
@@ -679,7 +683,7 @@ export async function maintainPR(
 
 /**
  * Keeps every open PR of the App's up to date (see `maintainPR`): each public one's outcome is logged, and nothing about a private one.
- * A repository's failure stops its other PRs until the next run. Returns how many public repositories (or installations) failed.
+ * A repository's failure stops its other PRs until the next run. Returns how many public repositories (or installations) failed, but for those GitHub failed (see `isTransient`), which are only warned about, since the next run tries them again.
  * @type {(auth: Auth, accounts: Set<string>, options: { bot: () => Promise<string>, serverURL: string }) => Promise<number>}
  */
 export async function maintain(auth, accounts, { bot, serverURL }) {
@@ -720,8 +724,10 @@ export async function maintain(auth, accounts, { bot, serverURL }) {
 					Promise.resolve(),
 				);
 			} catch (error) {
-			// a private repository's failure is never shown, and never fails the run
-				if (!repo.private) {
+			// a private repository's failure is never shown, and never fails the run; nor does GitHub failing a public one, since the next run tries it again: keeping its PRs up to date writes (comments, pushes), so it's never tried again in this one
+				if (!repo.private && isTransient(error)) {
+					core.warning(`${repo.repository}: ${messageOf(error)}; GitHub failing doesn’t fail the run, and the next run tries it again`);
+				} else if (!repo.private) {
 					errors += 1;
 					core.warning(`${repo.repository}: ${messageOf(error)}`);
 				}

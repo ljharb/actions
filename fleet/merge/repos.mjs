@@ -4,6 +4,7 @@ import {
 	appOctokit,
 	failureMessage,
 	installationToken,
+	isTransient,
 	octokitFor,
 } from '../lib/app.mjs';
 import { botBranches } from '../lib/branches.mjs';
@@ -75,8 +76,34 @@ function getReader(token) {
 /** @type {Record<string, string>} */
 const readPermissions = { metadata: 'read', pull_requests: 'read' }; // eslint-disable-line camelcase
 
+// reading an installation only reads, so when GitHub fails it (see `isTransient`), even once each request was retried (see `retry` in `../lib/app.mjs`), it's read again, twice at most: each read's own retries wait seconds, so a failure that outlasts them is often over by the next read, but one that outlasts three reads would only hold up the run, and the next run (in 10 minutes) reads it again anyway
+const installationReads = 3;
+
 /**
- * Every repository the App is installed on, in `accounts`, that isn't archived, ignored, or a fork, and has an open PR from one of the App's branches; and how many installations couldn't be read.
+ * The repositories of the installation `installationId` that have an open PR from one of the App's branches (see `withAppPRs`), read again while GitHub fails it (see `installationReads`).
+ * @type {(auth: Auth, installationId: number, reads?: number) => Promise<Repo[]>}
+ */
+async function readInstallation(auth, installationId, reads = 1) {
+	try {
+		const octokit = getReader(await installationToken(auth, installationId, { permissions: readPermissions }));
+		const installed = (await octokit.paginate('GET /installation/repositories', { per_page: 100 })).filter((r) => !isIgnored(r.full_name)); // eslint-disable-line camelcase
+		return (await withAppPRs(octokit, installed)).map((r) => ({
+			owner: r.owner.login,
+			name: r.name,
+			repository: r.full_name,
+			private: r.private,
+			installationId,
+		}));
+	} catch (error) {
+		if (reads < installationReads && isTransient(error)) {
+			return readInstallation(auth, installationId, reads + 1);
+		}
+		throw error;
+	}
+}
+
+/**
+ * Every repository the App is installed on, in `accounts`, that isn't archived, ignored, or a fork, and has an open PR from one of the App's branches; and how many installations couldn't be read, but for those GitHub failed (see `installationReads`), which are only warned about.
  * An installation that's waiting on its account to approve the permissions finding them needs, or `needs` (what's then done with them), is skipped, and isn't a failure; one lacking any the App itself doesn't have is (see `awaitingApproval`).
  * @type {(auth: Auth, accounts: Set<string>, needs: Record<string, string>) => Promise<{ repos: Repo[], failures: number }>}
  */
@@ -97,19 +124,19 @@ export async function reposWithAppPRs(auth, accounts, needs) {
 	return ready.reduce(async (previous, installation) => {
 		const { repos, failures } = await previous;
 		try {
-			const octokit = getReader(await installationToken(auth, installation.id, { permissions: readPermissions }));
-			const installed = (await octokit.paginate('GET /installation/repositories', { per_page: 100 })).filter((r) => !isIgnored(r.full_name)); // eslint-disable-line camelcase
 			return {
-				repos: repos.concat((await withAppPRs(octokit, installed)).map((r) => ({
-					owner: r.owner.login,
-					name: r.name,
-					repository: r.full_name,
-					private: r.private,
-					installationId: installation.id,
-				}))),
+				repos: repos.concat(await readInstallation(auth, installation.id)),
 				failures,
 			};
 		} catch (error) {
+			// GitHub failing it, even when read again, isn't the run's failure, since the next run reads it again
+			if (isTransient(error)) {
+				core.warning(`installation ${installation.id} ${failureMessage(error)}, even when read again; GitHub failing doesn’t fail the run, and the next run tries it again`);
+				return {
+					repos,
+					failures,
+				};
+			}
 			core.warning(`installation ${installation.id} ${failureMessage(error)}`);
 			return {
 				repos,

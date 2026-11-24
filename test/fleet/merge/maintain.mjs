@@ -379,6 +379,73 @@ test('maintain: an installation that can’t be read fails, without naming what 
 	t.end();
 });
 
+test('maintain: an installation GitHub fails is read again, and its PRs are still kept up to date', async (t) => {
+	const server = setup(t);
+	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
+	const mainTip = server.commit('main', { 'README.md': 'moved\n' });
+	let listed = 0;
+	const { errors, stdout, requests } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }], {
+			installationRepos: {
+				get 1() {
+					listed += 1;
+					return listed === 1 ? { status: 502, body: { message: 'ljharb/secret is broken' } } : [installedRepo('ljharb', 'r')];
+				},
+			},
+		}),
+		merge: shown(server, [[1, fixBranch, head]]),
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.equal(requests.filter((r) => r.path.startsWith('/installation/repositories')).length, 2, 'its repositories are listed again');
+	t.equal(requests.filter((r) => r.path === '/app/installations/1/access_tokens' && !r.body.repositories).length, 2, 'with a new token');
+	t.notOk(stdout.includes('::warning::'), 'with no warning');
+	t.equal(server.tip(`refs/heads/${fixBranch}^`), mainTip, 'and its PR is rebased');
+	t.end();
+});
+
+test('maintain: an installation GitHub keeps failing is read three times in all, then only warned about', async (t) => {
+	const server = setup(t);
+	const listing = await run(t, {
+		server,
+		github: { ...installed([]), installationRepos: { 1: { status: 500, body: { message: 'ljharb/secret is broken' } } } },
+		merge: {},
+	});
+	t.equal(listing.errors, 0, 'it doesn’t fail');
+	t.equal(listing.requests.filter((r) => r.path.startsWith('/installation/repositories')).length, 3, 'its repositories are listed three times');
+	t.ok(listing.stdout.split('\n').includes('::warning::installation 1 could not be read (HTTP 500), even when read again; GitHub failing doesn’t fail the run, and the next run tries it again'), 'warning with only its status, and that the next run tries it again');
+	t.notOk(listing.stdout.includes('secret'), 'never its message');
+
+	const query = await run(t, { server, github: installed([{ name: 'r' }], { repos: { 'ljharb/r': { failAlways: true } } }), merge: {} });
+	t.equal(query.errors, 0, 'nor does one whose query GitHub keeps failing');
+	t.equal(query.requests.filter((r) => r.path === '/graphql').length, 3, 'which is queried three times');
+	t.ok(query.stdout.split('\n').includes('::warning::installation 1 could not be read (HTTP 502), even when read again; GitHub failing doesn’t fail the run, and the next run tries it again'), 'and warned about');
+
+	const token = await run(t, { server, github: installed([{ name: 'r' }], { tokens: { 1: { status: 503 } } }), merge: {} });
+	t.equal(token.errors, 0, 'nor does one GitHub keeps failing to make a token for');
+	t.equal(token.requests.filter((r) => r.path === '/app/installations/1/access_tokens').length, 3, 'which is asked for three times');
+	t.ok(token.stdout.split('\n').includes('::warning::installation 1 could not be read (HTTP 503), even when read again; GitHub failing doesn’t fail the run, and the next run tries it again'), 'and warned about');
+	t.end();
+});
+
+test('maintain: an installation that fails otherwise is read only once', async (t) => {
+	const server = setup(t);
+	const refused = await run(t, {
+		server,
+		github: { ...installed([]), installationRepos: { 1: { status: 403, body: { message: 'ljharb/secret is forbidden' } } } },
+		merge: {},
+	});
+	t.equal(refused.errors, 1, 'a client error fails');
+	t.equal(refused.requests.filter((r) => r.path.startsWith('/installation/repositories')).length, 1, 'without listing its repositories again');
+	t.ok(refused.stdout.split('\n').includes('::warning::installation 1 could not be read (HTTP 403)'), 'warning with only its status');
+
+	const statusless = await run(t, { server, github: installed([{ name: 'r' }], { graphqlNullData: ['ljharb/r'] }), merge: {} });
+	t.equal(statusless.errors, 1, 'as does one without a status, which can’t be told from a bug');
+	t.equal(statusless.requests.filter((r) => r.path === '/graphql').length, 1, 'without querying it again');
+	t.ok(statusless.stdout.split('\n').includes('::warning::installation 1 could not be read'), 'warning about it');
+	t.end();
+});
+
 test('maintain: a repository whose part of the query GitHub fails with its own error is skipped, and the rest of its installation is still found', async (t) => {
 	const server = setup(t);
 	const github = installed([{ name: 'broken' }, { name: 'r' }]);
@@ -1310,6 +1377,39 @@ test('maintain: failures', async (t) => {
 	t.ok(raced.stdout.includes('::warning::ljharb/r: `fleet/workflows` changed after it was read, so it was not overwritten (its push was rejected); the next run rebuilds it from what it is now'), 'a rejected lease is reported');
 	t.equal(raced.errors, 1, 'a rejected lease is a failure');
 	t.equal(server.tip(`refs/heads/${fixBranch}`), fixtureGit(work, ['rev-parse', 'HEAD']), 'and what was pushed meanwhile survives');
+	t.end();
+});
+
+test('maintain: a public repository GitHub fails is only warned about, and isn’t tried again in the run', async (t) => {
+	const server = setup(t);
+	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
+	server.commit('main', { 'README.md': 'moved\n' });
+
+	const failing = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { refs: { [repository]: { status: 502, body: { message: 'Server Error' } } } }),
+	});
+	t.equal(failing.errors, 0, 'it doesn’t count');
+	t.ok(failing.stdout.split('\n').includes('::warning::ljharb/r: Server Error; GitHub failing doesn’t fail the run, and the next run tries it again'), 'and is warned about, saying the next run tries it again');
+	t.equal(failing.requests.filter((r) => r.path.endsWith('/access_tokens') && r.body.repositories).length, 1, 'once');
+	t.equal(server.tip(`refs/heads/${fixBranch}`), head, 'pushing nothing');
+
+	const refused = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { refs: { [repository]: { status: 403, body: { message: 'Forbidden' } } } }),
+	});
+	t.equal(refused.errors, 1, 'one that fails otherwise counts');
+	t.ok(refused.stdout.split('\n').includes('::warning::ljharb/r: Forbidden'), 'and is warned about');
+
+	const hidden = await run(t, {
+		server,
+		github: installed([{ name: 'r', private: true }]),
+		merge: shown(server, [[1, fixBranch, head]], { refs: { [repository]: { status: 502, body: { message: 'Server Error' } } } }),
+	});
+	t.equal(hidden.errors, 0, 'a private one GitHub fails doesn’t count either');
+	t.notOk(hidden.stdout.includes('ljharb/r'), 'nor is it shown');
 	t.end();
 });
 
