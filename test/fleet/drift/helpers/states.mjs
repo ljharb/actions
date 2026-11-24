@@ -46,6 +46,8 @@ export function repoState(overrides = {}) {
 		configError: null,
 		stateError: null,
 		packageJson: null,
+		readmeName: 'README.md',
+		readmeAmbiguous: [],
 		workflows: standardWorkflows(),
 		...overrides,
 	});
