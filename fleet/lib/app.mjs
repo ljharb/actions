@@ -115,7 +115,9 @@ export function failureDetails(error) {
 			details.push(`HTTP ${error.status}`);
 		}
 		if ('errors' in error && Array.isArray(error.errors)) {
-			details.push(...new Set(error.errors.map((e) => e?.type).filter((type) => typeof type === 'string' && (/^[A-Z_]+$/).test(type))));
+			new Set(error.errors.map((e) => e?.type).filter((type) => typeof type === 'string' && (/^[A-Z_]+$/).test(type))).forEach((type) => {
+				details.push(type);
+			});
 		}
 	}
 	return details;

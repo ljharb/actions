@@ -46,18 +46,20 @@ async function withAppPRs(octokit, repos) {
 			...Object.fromEntries(batch.flatMap((r, j) => [[`o${j}`, r.owner.login], [`n${j}`, r.name]])),
 			...Object.fromEntries(botBranches.map((branch, k) => [`b${k}`, branch])),
 		};
-		const repoIndices = [...batch.keys()];
-		const branchIndices = [...botBranches.keys()];
+		const repoIndices = Array.from(batch.keys());
+		const branchIndices = Array.from(botBranches.keys());
 		const counts = branchIndices.map((k) => `p${k}: pullRequests(states: OPEN, headRefName: $b${k}) { totalCount }`).join(' ');
-		const text = `query(${[...repoIndices.map((j) => `$o${j}: String!, $n${j}: String!`), ...branchIndices.map((k) => `$b${k}: String!`)].join(', ')}) {
+		const text = `query(${repoIndices.map((j) => `$o${j}: String!, $n${j}: String!`).concat(branchIndices.map((k) => `$b${k}: String!`)).join(', ')}) {
 			${repoIndices.map((j) => `r${j}: repository(owner: $o${j}, name: $n${j}) { isArchived isFork ${counts} }`).join('\n')}
 		}`;
 		// a repository that can't be read is in the partial data as `null`, and only it is skipped
 		const data = await octokit.graphql(text, variables).catch(partialData); // eslint-disable-line no-await-in-loop
-		found.push(...repoIndices.filter((j) => {
+		repoIndices.filter((j) => {
 			const repo = data[`r${j}`];
 			return repo && !repo.isArchived && !repo.isFork && branchIndices.some((k) => repo[`p${k}`]?.totalCount > 0);
-		}).map((j) => batch[j]));
+		}).forEach((j) => {
+			found.push(batch[j]);
+		});
 	}
 	return found;
 }
