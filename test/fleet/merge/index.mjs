@@ -430,10 +430,10 @@ test('fleet/merge: a thrown non-Error', (t) => {
 test('fleet/merge: the App’s open PRs are kept up to date in every run, and that failing fails the run', (t) => {
 	const unreadable = runScript(t, script, {
 		merge: {},
-		github: { installations: [{ id: 1, account: { login: 'ljharb' } }], installationRepos: { 1: { status: 500, body: { message: 'nope' } } } },
+		github: { installations: [{ id: 1, account: { login: 'ljharb' } }], installationRepos: { 1: { status: 404, body: { message: 'nope' } } } },
 	});
 	t.equal(unreadable.status, 1, 'an installation that can’t be read fails the run');
-	t.ok(unreadable.stdout.split('\n').includes('::warning::installation 1 could not be read (HTTP 500)'), 'warning about it');
+	t.ok(unreadable.stdout.split('\n').includes('::warning::installation 1 could not be read (HTTP 404)'), 'warning about it');
 	t.ok(unreadable.stdout.split('\n').includes('::error::the App’s open PRs could not all be kept up to date (failures: 1)'), 'and saying how many failed');
 
 	const unlisted = runScript(t, script, { merge: {}, github: { installations: { status: 500, body: { message: 'no installations' } } } });

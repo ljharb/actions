@@ -366,11 +366,11 @@ test('maintain: an installation that can’t be read fails, without naming what 
 	const server = setup(t);
 	const { errors, stdout } = await run(t, {
 		server,
-		github: { ...installed([]), installationRepos: { 1: { status: 500, body: { message: 'ljharb/secret is broken' } } } },
+		github: { ...installed([]), installationRepos: { 1: { status: 404, body: { message: 'ljharb/secret is broken' } } } },
 		merge: {},
 	});
 	t.equal(errors, 1, 'one failure');
-	t.ok(stdout.includes('::warning::installation 1 could not be read (HTTP 500)'), 'warning with only its status');
+	t.ok(stdout.includes('::warning::installation 1 could not be read (HTTP 404)'), 'warning with only its status');
 	t.notOk(stdout.includes('secret'), 'never its message');
 
 	const failedQuery = await run(t, { server, github: installed([{ name: 'r' }], { graphqlNullData: ['ljharb/r'] }), merge: {} });
