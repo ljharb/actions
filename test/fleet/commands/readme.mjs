@@ -90,6 +90,14 @@ function canonical(name, repository) {
 }
 
 /**
+ * `text`, as `/fix` writes it whenever it changes anything: with its `[package-url]` definition on `npmjs.com`, though one on `npmjs.org`, as `canonical` has it, already matches.
+ * @type {(text: string) => string}
+ */
+function onNpmjsCom(text) {
+	return text.replace('[package-url]: https://npmjs.org/package/', '[package-url]: https://npmjs.com/package/');
+}
+
+/**
  * The ways a README in these tests drifts from the fleet's, each from `canonical`:
  * - `heading`: only the heading, which has no version badge
  * - `links`: only a link definition, which points somewhere else
@@ -505,7 +513,7 @@ test('fleet/commands: `/fix` on the README drift report fixes each repository in
 		const repository = `ljharb/${n}`;
 		t.deepEqual(remotes.log(repository, `main..${readmeBranch}`), [`${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${title}`], `${repository}: one commit, by the bot, on \`main\``);
 		t.deepEqual(changedFiles(remotes, repository, `main..${readmeBranch}`), ['README.md'], `${repository}: changing only \`README.md\``);
-		t.equal(remotes.show(repository, readmeBranch, 'README.md'), canonical(n, repository), `${repository}: to match the fleet’s`);
+		t.equal(remotes.show(repository, readmeBranch, 'README.md'), onNpmjsCom(canonical(n, repository)), `${repository}: to match the fleet’s`);
 	});
 	const [updated] = matching(requests, 'PATCH', /^\/repos\/ljharb\/existing\/pulls\/4$/);
 	t.equal(updated.body.title, title, 'the existing PR is retitled');
@@ -548,7 +556,7 @@ test('fleet/commands: a kind of discrepancy filters what `/fix` fixes on the REA
 		'fixing only the repository whose links have drifted, case-insensitively',
 	);
 	t.deepEqual(changes(requests), ['POST /repos/ljharb/both/pulls'], 'in one PR');
-	t.equal(remotes.show('ljharb/both', readmeBranch, 'README.md'), drifted.heading('both', 'ljharb/both'), 'whose README’s links are fixed, but not its heading');
+	t.equal(remotes.show('ljharb/both', readmeBranch, 'README.md'), onNpmjsCom(drifted.heading('both', 'ljharb/both')), 'whose README’s links are fixed, but not its heading');
 	t.deepEqual(changedFiles(remotes, 'ljharb/both', `main..${readmeBranch}`), ['README.md'], 'changing only `README.md`');
 	const [created] = matching(requests, 'POST', /^\/repos\/ljharb\/both\/pulls$/);
 	t.ok(created.body.body.endsWith(':\n\n- the link definitions they use'), 'and its body says it fixes only the links');
@@ -645,7 +653,7 @@ test('fleet/commands: on the README drift report, a private repository’s outco
 		'every public repository is fixed before any private one',
 	);
 	t.deepEqual(changes(requests), ['POST /repos/ljharb/alpha/pulls', 'POST /repos/ljharb/zulu/pulls', 'POST /repos/ljharb/gamma-secret/pulls'], 'a private repository is still fixed');
-	t.equal(remotes.show('ljharb/gamma-secret', readmeBranch, 'README.md'), canonical('gamma-secret', 'ljharb/gamma-secret'), 'to match the fleet’s');
+	t.equal(remotes.show('ljharb/gamma-secret', readmeBranch, 'README.md'), onNpmjsCom(canonical('gamma-secret', 'ljharb/gamma-secret')), 'to match the fleet’s');
 
 	const [reply] = replies(requests);
 	const secrets = ['secret', 'acquisition', 'git clone', 'does not exist', 'someone else', 'private repositor', 'Mallory'];
@@ -810,7 +818,7 @@ test('fleet/commands: on the README drift report, `/fix` says what it can’t fi
 	);
 	t.equal(
 		remotes.show(repository, readmeBranch, 'README.md'),
-		canonical('headless', repository).replace(/^# .*\n\n/, ''),
+		onNpmjsCom(canonical('headless', repository).replace(/^# .*\n\n/, '')),
 		'fixing its links, but adding neither a heading nor badges',
 	);
 
@@ -923,7 +931,7 @@ test('fleet/commands: on the README drift report, `/fix` fails a repository whos
 		)],
 		'saying why one failed, fixing the next, and leaving one whose `package.json` isn’t valid JSON as it is, saying why',
 	);
-	t.equal(remotes.show('ljharb/heading', readmeBranch, 'README.md'), canonical('heading', 'ljharb/heading'), 'and pushed');
+	t.equal(remotes.show('ljharb/heading', readmeBranch, 'README.md'), onNpmjsCom(canonical('heading', 'ljharb/heading')), 'and pushed');
 	t.equal(remotes.tip('ljharb/invalid', `refs/heads/${readmeBranch}`), '', 'pushing nothing for the one it left as it is');
 
 	t.end();

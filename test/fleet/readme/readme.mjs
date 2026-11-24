@@ -97,7 +97,7 @@ test('readme: categories are heading, badges, and links, and only those are cate
 
 test('readme: definitions for a plain package name', (t) => {
 	t.deepEqual(definitions(identity), [
-		['package-url', 'https://npmjs.org/package/foo'],
+		['package-url', 'https://npmjs.com/package/foo'],
 		['npm-version-svg', 'https://versionbadg.es/ljharb/foo.svg'],
 		['npm-badge-png', 'https://nodei.co/npm/foo.png?downloads=true&stars=true'],
 		['license-image', 'https://img.shields.io/npm/l/foo.svg'],
@@ -114,7 +114,7 @@ test('readme: definitions for a plain package name', (t) => {
 
 test('readme: definitions for a scoped package name use the name for npm URLs and the repository and branch for GitHub URLs', (t) => {
 	t.deepEqual(definitions(scoped), [
-		['package-url', 'https://npmjs.org/package/@scope/name'],
+		['package-url', 'https://npmjs.com/package/@scope/name'],
 		['npm-version-svg', 'https://versionbadg.es/scope/name.svg'],
 		['npm-badge-png', 'https://nodei.co/npm/@scope/name.png?downloads=true&stars=true'],
 		['license-image', 'https://img.shields.io/npm/l/@scope/name.svg'],
@@ -286,7 +286,7 @@ test('readme: only the links drift', (t) => {
 	t.deepEqual(drift(missingWithOther, identity), ['links'], 'many missing definitions are only link drift');
 	t.equal(
 		fixReadme(missingWithOther, identity).text,
-		canonical({ defs: ['[package-url]: https://npmjs.org/package/foo', ...otherAfter, ...defs.slice(1)], body: ['A description of foo, with [a link][other].'] }),
+		canonical({ defs: ['[package-url]: https://npmjs.com/package/foo', ...otherAfter, ...defs.slice(1)], body: ['A description of foo, with [a link][other].'] }),
 		'fixing it appends the missing definitions, in order, after the last kept one',
 	);
 
@@ -345,7 +345,7 @@ const obsoleteFixedDefs = [
 	'[license-url]: LICENSE',
 	'[downloads-image]: https://img.shields.io/npm/dm/foo.svg',
 	'[downloads-url]: https://npm-stat.com/charts.html?package=foo',
-	'[package-url]: https://npmjs.org/package/foo',
+	'[package-url]: https://npmjs.com/package/foo',
 	'[npm-version-svg]: https://versionbadg.es/ljharb/foo.svg',
 	'[npm-badge-png]: https://nodei.co/npm/foo.png?downloads=true&stars=true',
 	'[codecov-image]: https://codecov.io/gh/ljharb/foo/branch/main/graphs/badge.svg',
@@ -1032,6 +1032,104 @@ test('readme: missing definitions go before a fence left open at the end, idempo
 	t.end();
 });
 
+const orgLine = '[package-url]: https://npmjs.org/package/foo';
+const comLine = '[package-url]: https://npmjs.com/package/foo';
+
+test('readme: the npm link is on npmjs.com, but one on npmjs.org is not drift', (t) => {
+	t.ok(definitionLines().includes(comLine), 'the `[package-url]` definition is on npmjs.com');
+
+	const com = canonical();
+	t.ok(com.includes(`\n${comLine}\n`), 'a canonical README has it on npmjs.com');
+	t.deepEqual(drift(com, identity), [], 'which is not drift');
+
+	const org = fixture('npm link on npmjs.org', canonical().replace(comLine, orgLine));
+	t.deepEqual(drift(org, identity), [], 'one on npmjs.org is not drift either');
+	t.deepEqual(fixReadme(org, identity), { text: org, skipped: [] }, 'and with nothing else to fix, fixing it leaves it on npmjs.org');
+	categories.forEach((c) => {
+		t.deepEqual(fixReadme(org, identity, only(c)), { text: org, skipped: [] }, `as does fixing only \`${c}\``);
+	});
+
+	const orgTrailing = fixture('npm link on npmjs.org, with trailing whitespace', canonical().replace(comLine, `${orgLine}  `));
+	t.deepEqual(drift(orgTrailing, identity), [], 'one on npmjs.org with trailing whitespace is not drift');
+	t.equal(fixReadme(orgTrailing, identity).text, orgTrailing, 'and fixing it changes nothing');
+
+	const scopedOrg = fixture('npm link on npmjs.org, scoped', canonical({ id: scoped }).replace('https://npmjs.com/package/@scope/name\n', 'https://npmjs.org/package/@scope/name\n'), scoped);
+	t.deepEqual(drift(scopedOrg, scoped), [], 'nor is a scoped package’s on npmjs.org');
+	t.equal(fixReadme(scopedOrg, scoped).text, scopedOrg, 'and fixing it changes nothing');
+
+	const crlfOrg = fixture('npm link on npmjs.org, CRLF', canonical({ eol: '\r\n' }).replace(comLine, orgLine));
+	t.deepEqual(drift(crlfOrg, identity), [], 'nor is one on npmjs.org in a CRLF README');
+	t.equal(fixReadme(crlfOrg, identity).text, crlfOrg, 'and fixing it changes nothing');
+	t.end();
+});
+
+test('readme: any other npm link is drift, and fixing it writes npmjs.com', (t) => {
+	[
+		['http://npmjs.org/package/foo', 'over http'],
+		['https://www.npmjs.org/package/foo', 'on www.npmjs.org'],
+		['https://www.npmjs.com/package/foo', 'on www.npmjs.com'],
+		['https://npmjs.org/package/bar', 'of another package, on npmjs.org'],
+		['https://npmjs.org/package/foo/', 'on npmjs.org, with a trailing slash'],
+		['<https://npmjs.org/package/foo>', 'on npmjs.org, in angle brackets'],
+		['https://npmjs.org/package/foo "foo on npm"', 'on npmjs.org, with a title'],
+	].forEach(([url, what]) => {
+		const text = fixture(`npm link ${what}`, canonical().replace(comLine, `[package-url]: ${url}`));
+		t.deepEqual(drift(text, identity), ['links'], `one ${what} is link drift`);
+		t.equal(fixReadme(text, identity).text, canonical(), `and fixing it writes it on npmjs.com, ${what}`);
+	});
+
+	const caps = fixture('npm link on npmjs.org, with a differently cased label', canonical().replace(comLine, '[Package-URL]: https://npmjs.org/package/foo'));
+	t.deepEqual(drift(caps, identity), ['links'], 'one on npmjs.org with a differently cased label is link drift');
+	t.equal(fixReadme(caps, identity).text, canonical(), 'and fixing it writes it on npmjs.com');
+
+	const titled = fixture('npm link on npmjs.org, with a title on the next line', canonical().replace(comLine, `${orgLine}\n  "foo on npm"`));
+	t.deepEqual(drift(titled, identity), ['links'], 'one on npmjs.org with a title on the next line is link drift');
+	t.equal(fixReadme(titled, identity).text, canonical(), 'and fixing it removes the title, and writes it on npmjs.com');
+
+	const missing = fixture('npm link missing', canonical({ defs: definitionLines().slice(1) }));
+	t.deepEqual(drift(missing, identity), ['links'], 'a missing one is link drift');
+	t.equal(fixReadme(missing, identity).text, canonical({ defs: definitionLines().slice(1).concat(comLine) }), 'and fixing it adds it on npmjs.com');
+	t.end();
+});
+
+test('readme: fixing anything else writes an npm link on npmjs.org on npmjs.com', (t) => {
+	const org = canonical().replace(comLine, orgLine);
+
+	const heading = fixture('npm link on npmjs.org, heading drifted', org.replace(headingFor('foo'), '# foo'));
+	t.deepEqual(drift(heading, identity), ['heading'], 'with the heading drifted, only the heading drifts');
+	t.equal(fixReadme(heading, identity).text, canonical(), 'fixing it writes the npm link on npmjs.com');
+	t.equal(fixReadme(heading, identity, only('heading')).text, canonical(), 'as does fixing only the heading');
+	t.equal(fixReadme(heading, identity, only('badges')).text, heading, 'but fixing only the badges, which changes nothing, leaves it on npmjs.org');
+
+	const badges = fixture('npm link on npmjs.org, badges drifted', org.replace(`${standardBadges[1]}\n`, ''));
+	t.deepEqual(drift(badges, identity), ['badges'], 'with a badge missing, only the badges drift');
+	t.equal(fixReadme(badges, identity, only('badges')).text, canonical(), 'fixing only the badges writes the npm link on npmjs.com');
+	t.equal(fixReadme(badges, identity, only('links')).text, badges, 'but fixing only the links, which changes nothing, leaves it on npmjs.org');
+
+	const links = fixture('npm link on npmjs.org, another definition drifted', org.replace('[license-url]: LICENSE', '[license-url]: LICENSE.md'));
+	t.deepEqual(drift(links, identity), ['links'], 'with another definition wrong, only the links drift');
+	t.equal(fixReadme(links, identity, only('links')).text, canonical(), 'fixing the links writes the npm link on npmjs.com too');
+	t.equal(fixReadme(links, identity, only('heading')).text, links, 'but fixing only the heading, which changes nothing, leaves it on npmjs.org');
+
+	const crlf = fixture('npm link on npmjs.org, heading drifted, CRLF', canonical({ eol: '\r\n' }).replace(comLine, orgLine).replace(headingFor('foo'), '# foo'));
+	t.equal(fixReadme(crlf, identity, only('heading')).text, canonical({ eol: '\r\n' }), 'in a CRLF README, keeping its line endings');
+
+	const bom = '\uFEFF';
+	const bomText = fixture('npm link on npmjs.org, heading drifted, with a byte order mark', `${bom}${heading}`);
+	t.equal(fixReadme(bomText, identity, only('heading')).text, `${bom}${canonical()}`, 'and with a byte order mark, keeping it');
+
+	const shadowed = fixture('npm link on npmjs.org, twice, heading drifted', heading.concat(`${orgLine}\n`));
+	t.equal(fixReadme(shadowed, identity, only('heading')).text, canonical().concat(`${orgLine}\n`), 'only the first definition, the one that counts, is written on npmjs.com');
+
+	const fencedOrg = fixture('npm link on npmjs.org only in a fence, heading drifted', canonical({ defs: definitionLines().slice(1).concat('```', orgLine, '```') }).replace(headingFor('foo'), '# foo'));
+	t.equal(fixReadme(fencedOrg, identity, only('heading')).text, canonical({ defs: definitionLines().slice(1).concat('```', orgLine, '```') }), 'one in fenced code isn’t a definition, and is left as it is');
+
+	const leftover = fixture('npm link on npmjs.org, and a leftover one under another label', org.concat('[npm-url]: https://npmjs.org/package/foo\n'));
+	t.deepEqual(drift(leftover, identity), ['links'], 'an unused definition of the package’s npmjs.org page under another label is still a badge’s leftover, and link drift');
+	t.equal(fixReadme(leftover, identity).text, canonical(), 'fixing it removes that, and writes the npm link on npmjs.com');
+	t.end();
+});
+
 // a README with every category drifted: an old heading, david-dm badges, and a wrong definition
 const allDrifted = [
 	'# foo',
@@ -1323,7 +1421,7 @@ test('readme: the realistic READMEs’ fixes keep what they should', (t) => {
 	t.doesNotMatch(scopedFixed, /node-pretest\.yml/, 'the inline workflow badge is replaced');
 
 	const crlfFixed = fixReadme(crlf.text, crlf.id).text;
-	t.ok(crlfFixed.endsWith('[actions-url]: https://github.com/inspect-js/is-callable/actions\r\n[package-url]: https://npmjs.org/package/is-callable\r\n[npm-version-svg]: https://versionbadg.es/inspect-js/is-callable.svg\r\n[npm-badge-png]: https://nodei.co/npm/is-callable.png?downloads=true&stars=true\r\n'), 'the missing definitions are appended after the last kept one, with CRLF, ending the file with a newline');
+	t.ok(crlfFixed.endsWith('[actions-url]: https://github.com/inspect-js/is-callable/actions\r\n[package-url]: https://npmjs.com/package/is-callable\r\n[npm-version-svg]: https://versionbadg.es/inspect-js/is-callable.svg\r\n[npm-badge-png]: https://nodei.co/npm/is-callable.png?downloads=true&stars=true\r\n'), 'the missing definitions are appended after the last kept one, with CRLF, ending the file with a newline');
 	t.ok(crlfFixed.includes('[actions-image]: https://img.shields.io/github/check-suites/inspect-js/is-callable/main\r\n'), 'the old actions-image definition is rewritten in place');
 
 	const proseFixed = fixReadme(prose.text, prose.id).text;
@@ -1348,6 +1446,19 @@ test('readme: fixing every fixture is idempotent', (t) => {
 			const partial = fixReadme(text, id, only(c)).text;
 			t.equal(fixReadme(partial, id, only(c)).text, partial, `${name}: fixing only \`${c}\` is idempotent`);
 		});
+	});
+	t.end();
+});
+
+test('readme: fixing a README that drifts always changes it, and, with its npm link on npmjs.org or npmjs.com, fixing one that doesn’t never does', (t) => {
+	fixtures.forEach(({ text, id }, name) => {
+		const unchanged = fixReadme(text, id).text === text;
+		if (drift(text, id).length > 0) {
+			t.notOk(unchanged, `${name}: it drifts, and fixing it changes it`);
+		} else if (name.startsWith('npm link')) {
+			// fixing also rewrites some of what isn't drift (eg, trailing whitespace, or mixed line endings), which is never fixed on its own, since nothing is fixed without drift; so only these are held to this
+			t.ok(unchanged, `${name}: it doesn’t drift, and fixing it changes nothing`);
+		}
 	});
 	t.end();
 });

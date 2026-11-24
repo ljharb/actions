@@ -24,6 +24,11 @@ export function isCategory(word) {
 
 export const readmePath = 'README.md';
 
+/** @type {(name: string) => string} */
+function packageURL(name) {
+	return `https://npmjs.com/package/${name}`;
+}
+
 /**
  * The link reference definitions a README's heading and badges use, in the order they're added when missing.
  * @type {(identity: Identity) => [label: string, url: string][]}
@@ -34,7 +39,7 @@ export function definitions({
 	branch,
 }) {
 	return [
-		['package-url', `https://npmjs.org/package/${name}`],
+		['package-url', packageURL(name)],
 		['npm-version-svg', `https://versionbadg.es/${repository}.svg`],
 		['npm-badge-png', `https://nodei.co/npm/${name}.png?downloads=true&stars=true`],
 		['license-image', `https://img.shields.io/npm/l/${name}.svg`],
@@ -46,6 +51,14 @@ export function definitions({
 		['actions-image', `https://img.shields.io/github/check-suites/${repository}/${branch}`],
 		['actions-url', `https://github.com/${repository}/actions`],
 	];
+}
+
+/**
+ * A `[package-url]` definition written as it long was, on `npmjs.org`, rather than on `npmjs.com` (as `definitions` has it): it's not drift, but whenever a README is fixed at all, it's written as `definitions` has it (see `withPackageURL`).
+ * @type {(name: string) => string}
+ */
+function orgPackageLine(name) {
+	return `[package-url]: https://npmjs.org/package/${name}`;
 }
 
 /** @type {(name: string) => string} */
@@ -424,7 +437,8 @@ function definitionChanges(parsed, identity, used) {
 		const found = parsed.definitions.get(label);
 		if (!found) {
 			add.push(line);
-		} else if (parsed.lines[found.index].trimEnd() !== line) {
+			// one on `npmjs.org` is accepted as it is, until something else is fixed (see `fixReadme`)
+		} else if (parsed.lines[found.index].trimEnd() !== line && (label !== 'package-url' || parsed.lines[found.index].trimEnd() !== orgPackageLine(identity.name))) {
 			replace.set(found.index, line);
 		}
 		// its title, on the next line, is part of what's replaced
@@ -548,8 +562,23 @@ function withLinks(parsed, identity, used) {
 }
 
 /**
+ * `text`, with its `[package-url]` definition, when it's on `npmjs.org` (see `orgPackageLine`), written as `definitions` has it.
+ * @type {(text: string, identity: Identity) => string}
+ */
+function withPackageURL(text, identity) {
+	const parsed = parse(text);
+	const found = parsed.definitions.get('package-url');
+	if (!found || parsed.lines[found.index].trimEnd() !== orgPackageLine(identity.name)) {
+		return text;
+	}
+	const lines = parsed.lines.slice();
+	lines[found.index] = `[package-url]: ${packageURL(identity.name)}`;
+	return serialize({ ...parsed, lines });
+}
+
+/**
  * `text`, with what's in `only` (every category, when it's unspecified) made to match `identity`'s, and what couldn't be (`skipped`).
- * Each step works on what the one before it left: so the definitions that the heading and badges used before (and that nothing uses after) are removed only when those were fixed too; but a badge's leftover definition nothing uses is removed whenever the links are fixed.
+ * Each step works on what the one before it left: so the definitions that the heading and badges used before (and that nothing uses after) are removed only when those were fixed too; but a badge's leftover definition nothing uses is removed whenever the links are fixed. Whenever anything is fixed at all, whatever `only` has, a `[package-url]` definition on `npmjs.org` is written on `npmjs.com` too (see `withPackageURL`); when nothing else is, it's left as it is, since it's not drift.
  * @type {(text: string, identity: Identity, only?: Set<Category>) => Fixed}
  */
 export function fixReadme(text, identity, only) {
@@ -569,7 +598,8 @@ export function fixReadme(text, identity, only) {
 	if (wants('links')) {
 		parsed = withLinks(parsed, identity, headerLabels(original));
 	}
-	return { text: serialize(parsed), skipped };
+	const fixed = serialize(parsed);
+	return { text: fixed === text ? text : withPackageURL(fixed, identity), skipped };
 }
 
 /**
