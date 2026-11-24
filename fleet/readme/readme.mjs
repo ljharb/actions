@@ -483,11 +483,19 @@ function withHeading(parsed, identity) {
 	return parse(serialize({ ...parsed, lines }));
 }
 
+/**
+ * Whether what comes after the badges under the heading starts right after them, with no blank line between: Markdown then renders it as part of their paragraph.
+ * @type {(parsed: Pick<Parsed, 'lines' | 'blockEnd'>) => boolean}
+ */
+function runsOn({ lines, blockEnd }) {
+	return blockEnd < lines.length && lines[blockEnd].trim() !== '';
+}
+
 /** @type {(parsed: Parsed) => Parsed} */
 function withBadges(parsed) {
 	const lines = parsed.lines.slice();
 	const after = lines.slice(parsed.blockEnd);
-	lines.splice(parsed.headingEnd + 1, lines.length, ...expectedBlock(parsed), ...after.length > 0 && after[0].trim() !== '' ? [''] : [], ...after);
+	lines.splice(parsed.headingEnd + 1, lines.length, ...expectedBlock(parsed), ...runsOn(parsed) ? [''] : [], ...after);
 	return parse(serialize({ ...parsed, lines }));
 }
 
@@ -575,7 +583,7 @@ export function drift(text, identity) {
 	if (parsed.heading < 0 || parsed.headingEnd !== parsed.heading || parsed.lines[parsed.heading].trimEnd() !== headingFor(identity.name)) {
 		found.push('heading');
 	}
-	if (parsed.heading < 0 || !sameLines(parsed.lines.slice(parsed.headingEnd + 1, parsed.blockEnd), expectedBlock(parsed))) {
+	if (parsed.heading < 0 || !sameLines(parsed.lines.slice(parsed.headingEnd + 1, parsed.blockEnd), expectedBlock(parsed)) || runsOn(parsed)) {
 		found.push('badges');
 	}
 	// the definitions the heading and badges use only once those are fixed, which is when what they no longer use can be told

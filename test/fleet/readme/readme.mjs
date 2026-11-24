@@ -525,6 +525,16 @@ test('readme: text right after the heading or the badges, with no blank line, is
 	t.end();
 });
 
+test('readme: text right after the badges, with no blank line, is badge drift', (t) => {
+	const afterBadges = fixture('text right after the badges', canonical().replace(`${npmBadge}\n\n`, `${npmBadge}\n`));
+	t.deepEqual(drift(afterBadges, identity), ['badges'], 'Markdown renders it as part of the badges’ paragraph, so it is badge drift');
+	t.equal(fixReadme(afterBadges, identity, new Set(drift(afterBadges, identity))).text, canonical(), 'fixing what drifted adds a blank line before the text');
+
+	const atEnd = fixture('nothing after the badges', `${[headingFor('foo'), ''].concat(standardBadges, ['', npmBadge, '']).join('\n')}\n`);
+	t.deepEqual(drift(atEnd, identity), ['links'], 'with nothing after them, there is no blank line to want');
+	t.end();
+});
+
 test('readme: inline-URL badges are classified by their image URL', (t) => {
 	const travis = '[![Build Status](https://travis-ci.org/ljharb/foo.svg?branch=main)](https://travis-ci.org/ljharb/foo)';
 	const david = '[![dependencies](<https://david-dm.org/ljharb/foo.svg> "deps")](https://david-dm.org/ljharb/foo)';
