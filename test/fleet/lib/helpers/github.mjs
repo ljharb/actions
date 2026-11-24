@@ -30,6 +30,7 @@ Object.assign(requestDefaults, { retries: 0 });
  *   defaultBranchRef?: { name: string } | null,
  *   config?: { text?: string } | null,
  *   packageJson?: { text?: string } | null,
+ *   readme?: { text?: string, isTruncated?: boolean } | null,
  *   root?: { entries?: { name: string, mode: number }[] } | null,
  *   workflows?: { entries?: { name: string, type: string, object?: { text?: string } | null }[] } | null,
  * }} RepositoryData

@@ -108,15 +108,25 @@ function prBody(fixing, skipped, link) {
 }
 
 /**
- * What `/fix` would change in `state`'s README, limited to `categories` (unspecified: all of them), as it is in `state`: the kinds of discrepancy it fixes, its new text, and what it can't fix. A README that can't be fixed at all (see `identityOf` and `unreadable`) is left as it is, saying why, as the drift report already does: like a workflow file `/fix` can't plan, it's nothing to fix, not a failure.
- * @type {(state: RepoState, categories: Set<Category> | undefined) => { fixing: Category[], text: string | null, skipped: Skip[] }}
+ * What `/fix` would change in `state`'s README, limited to `categories` (unspecified: all of them), as it is in `state`: the kinds of discrepancy it fixes, its new text (with the default branch it's for), and what it can't fix. A README that can't be fixed at all (see `identityOf` and `unreadable`) is left as it is, saying why, as the drift report already does: like a workflow file `/fix` can't plan, it's nothing to fix, not a failure.
+ * @type {(state: RepoState, categories: Set<Category> | undefined) => { fixing: Category[], text: null, skipped: Skip[] } | { fixing: Category[], text: string, skipped: Skip[], base: string }}
  */
 export function planReadme(state, categories) {
 	const known = identityOf(state);
-	const why = 'error' in known ? known.error : unreadable(state);
-	if ('error' in known || why !== null || state.readme === null) {
+	if ('error' in known) {
 		return {
-			fixing: [], text: null, skipped: [{ why: why ?? `there is no \`${readmePath}\`` }],
+			fixing: [],
+			text: null,
+			skipped: [{ why: known.error }],
+		};
+	}
+	const why = unreadable(state);
+	if (why !== null || state.readme === null) {
+		// `unreadable` always says why when there's no README
+		return {
+			fixing: [],
+			text: null,
+			skipped: [why].filter((w) => w !== null).map((w) => ({ why: w })),
 		};
 	}
 	const found = drift(state.readme, known.identity).filter((c) => !categories || categories.size === 0 || categories.has(c));
@@ -126,10 +136,18 @@ export function planReadme(state, categories) {
 		};
 	}
 	const { text, skipped } = fixReadme(state.readme, known.identity, new Set(found));
+	if (text === state.readme) {
+		return {
+			fixing: found,
+			text: null,
+			skipped,
+		};
+	}
 	return {
 		fixing: found,
-		text: text === state.readme ? null : text,
+		text,
 		skipped,
+		base: known.identity.branch,
 	};
 }
 
@@ -358,10 +376,7 @@ export async function fixReadmeRepo(
 	if (plan.text === null) {
 		return ['nothing to fix', ...skips(plan.skipped)].join('<br>');
 	}
-	const base = state.defaultBranch;
-	if (!base) {
-		throw new Error('the repository has no default branch');
-	}
+	const { base } = plan;
 	const job = {
 		context,
 		state,

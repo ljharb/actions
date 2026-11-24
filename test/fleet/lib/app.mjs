@@ -1340,6 +1340,33 @@ test('discover: a source that is itself a fork, past the parents read, is droppe
 	t.deepEqual(commitRequests(requests).filter((r) => r.path.includes('/four/')), [], 'and its own parent is never checked');
 });
 
+test('discover: a README is read only when GitHub gives all of it', async (t) => {
+	setup(t, {
+		installations: [{ id: 20, account: { login: 'ljharb' } }],
+		installationRepos: {
+			20: [
+				installedRepo('ljharb', 'whole'),
+				installedRepo('ljharb', 'truncated'),
+				installedRepo('ljharb', 'binary'),
+				installedRepo('ljharb', 'none'),
+			],
+		},
+		repos: {
+			'ljharb/whole': { data: { readme: { text: '# whole\n', isTruncated: false } } },
+			'ljharb/truncated': { data: { readme: { text: '# the start of a big README', isTruncated: true } } },
+			'ljharb/binary': { data: { readme: {} } },
+			'ljharb/none': { data: { readme: null } },
+		},
+	});
+
+	const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb']));
+	t.deepEqual(failures, [], 'no failures');
+	t.equal(find(states, 'ljharb/whole').readme, '# whole\n', 'a README given in full is its text');
+	t.equal(find(states, 'ljharb/truncated').readme, null, 'one GitHub truncated isn’t read at all');
+	t.equal(find(states, 'ljharb/binary').readme, null, 'one with no text (eg, binary) has none');
+	t.equal(find(states, 'ljharb/none').readme, null, 'and no README has none');
+});
+
 test('discover: a repository with neither a `.github` nor a `package.json` is skipped', async (t) => {
 	setup(t, {
 		installations: [{ id: 350, account: { login: 'nvm-sh' } }],

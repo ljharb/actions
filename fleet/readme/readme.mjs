@@ -168,7 +168,7 @@ function blockEndAfter(lines, inFence, headingEnd) {
 /** @typedef {{ index: number, label: string, url: string, rest: string }} Definition */
 
 /**
- * The README, as lines, with what this module reads of it. `titled` are the definitions whose title is on the next line, which is part of them.
+ * The README, as lines, with what this module reads of it. `definitionLines` are every definition's line, with its label; `titled` are the definitions whose title is on the next line, which is part of them.
  * @typedef {{
  *   lines: string[],
  *   eol: string,
@@ -180,7 +180,7 @@ function blockEndAfter(lines, inFence, headingEnd) {
  *   headingEnd: number,
  *   blockEnd: number,
  *   definitions: Map<string, Definition>,
- *   definitionLines: Set<number>,
+ *   definitionLines: Map<number, string>,
  *   titled: Set<number>,
  * }} Parsed
  */
@@ -200,18 +200,18 @@ function parse(text) {
 	const { heading, headingEnd } = findTitle(lines, inFence);
 	/** @type {Map<string, Definition>} */
 	const defs = new Map();
-	/** @type {Set<number>} */
-	const definitionLines = new Set();
+	/** @type {Map<number, string>} */
+	const definitionLines = new Map();
 	/** @type {Set<number>} */
 	const titled = new Set();
 	lines.forEach((line, index) => {
 		const groups = inFence[index] || titled.has(index - 1) ? null : definitionPattern.exec(line)?.groups;
 		if (groups) {
-			definitionLines.add(index);
+			const label = normalizeLabel(groups.label);
+			definitionLines.set(index, label);
 			if (groups.rest.trim() === '' && index + 1 < lines.length && !inFence[index + 1] && titlePattern.test(lines[index + 1])) {
 				titled.add(index);
 			}
-			const label = normalizeLabel(groups.label);
 			// as Markdown does, the first definition of a label is the one that counts
 			if (!defs.has(label)) {
 				defs.set(label, {
@@ -304,11 +304,15 @@ const standardKinds = new Map([...standardBadges, npmBadge].map((badge, i) => [
  * @type {(badge: string) => { alt: string, image: string, link: string }}
  */
 function badgeParts(badge) {
-	const {
-		alt = '',
-		image = '',
-		link = '',
-	} = (/^\[!\[(?<alt>[^\]\n]*)\](?<image>\[[^\]\n]*\]|\([^)\n]*\))?\](?<link>\[[^\]\n]*\]|\([^)\n]*\))$/).exec(badge)?.groups ?? {};
+	// `badge` is always what `badgePattern` matched, so this, the same pattern anchored, always matches it
+	const [
+		[
+			,
+			alt,
+			image = '',
+			link,
+		],
+	] = badge.matchAll(/^\[!\[(?<alt>[^\]\n]*)\](?<image>\[[^\]\n]*\]|\([^)\n]*\))?\](?<link>\[[^\]\n]*\]|\([^)\n]*\))$/g);
 	return {
 		alt, image, link,
 	};
@@ -397,7 +401,7 @@ function headerLabels({
 	if (heading < 0) {
 		return new Set();
 	}
-	return new Set(lines.slice(heading, blockEnd).flatMap((line) => Array.from(line.matchAll(/\]\[(?<label>[^\]\n]*)\]/g), (m) => m.groups?.label ?? '').concat((line.match(badgePattern) ?? []).flatMap((badge) => {
+	return new Set(lines.slice(heading, blockEnd).flatMap((line) => Array.from(line.matchAll(/\]\[(?<label>[^\]\n]*)\]/g), ([, label]) => label).concat((line.match(badgePattern) ?? []).flatMap((badge) => {
 		const { alt, image } = badgeParts(badge);
 		return image === '[]' || image === '' ? [alt] : [];
 	}))).map(normalizeLabel).filter(Boolean));
@@ -435,8 +439,8 @@ function definitionChanges(parsed, identity, used) {
 	unused.forEach((label) => {
 		if (parsed.definitions.has(label) && !kept.has(label) && !referenced(parsed.lines, skip, label)) {
 			// every definition of it, not just the first, with its title
-			parsed.definitionLines.forEach((i) => {
-				if (normalizeLabel(definitionPattern.exec(parsed.lines[i])?.groups?.label ?? '') === label) {
+			parsed.definitionLines.forEach((defined, i) => {
+				if (defined === label) {
 					remove.add(i);
 					if (parsed.titled.has(i)) {
 						remove.add(i + 1);
@@ -504,7 +508,7 @@ function withLinks(parsed, identity, used) {
 		add,
 		remove,
 	} = definitionChanges(parsed, identity, used);
-	const last = Math.max(-1, ...Array.from(parsed.definitionLines).filter((i) => !remove.has(i)));
+	const last = Math.max(-1, ...Array.from(parsed.definitionLines.keys()).filter((i) => !remove.has(i)));
 	const insertAfter = parsed.titled.has(last) ? last + 1 : last;
 	/** @type {string[]} */
 	const lines = [];

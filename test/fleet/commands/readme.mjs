@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from 'fs';
 import path from 'path';
 
 import test from 'tape';
@@ -5,9 +6,15 @@ import test from 'tape';
 import { legend } from '../../../fleet/commands/syntax.mjs';
 import { marker as workflowMarker } from '../../../fleet/drift/marker.mjs';
 import { fixBranch, readmeBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
+import { marker as saidMarker } from '../../../fleet/lib/said.mjs';
 import { marker } from '../../../fleet/readme/marker.mjs';
 import { standardWorkflows } from '../drift/helpers/states.mjs';
-import { bot, git, mallory } from '../lib/helpers/git.mjs';
+import {
+	bot,
+	git,
+	mallory,
+	tempDir,
+} from '../lib/helpers/git.mjs';
 import { installedRepo } from '../lib/helpers/github.mjs';
 import {
 	comment,
@@ -88,6 +95,7 @@ function canonical(name, repository) {
  * - `links`: only a link definition, which points somewhere else
  * - `travis`: an obsolete Travis CI badge under the heading, with the definitions only it uses: so its badges, and its links
  * - `both`: the heading, and a link definition
+ * - `headless`: no heading at all, so nothing for its badges to be under, and a link definition
  * @type {Record<string, (name: string, repository: string) => string>}
  */
 const drifted = {
@@ -98,6 +106,7 @@ const drifted = {
 		'[![Downloads][downloads-image]][downloads-url]\n[![Build Status][travis-svg]][travis-url]\n',
 	).concat(`[travis-svg]: https://travis-ci.org/${repository}.svg\n[travis-url]: https://travis-ci.org/${repository}\n`),
 	both: (name, repository) => drifted.links(name, repository).replace(/^# .*$/m, `# ${name}`),
+	headless: (name, repository) => drifted.links(name, repository).replace(/^# .*\n\n/, ''),
 };
 
 /** @type {(name: string, extra?: Record<string, unknown>) => string} */
@@ -192,13 +201,14 @@ function remotesFor(t, all) {
 }
 
 /**
- * Runs `line` as a comment on the README drift report's issue (or `issue`), against the mocked API.
+ * Runs `line` as a comment on the README drift report's issue (or `issue`), against the mocked API, with `env` added to its environment.
  * @type {(t: Test, line: string, options?: {
  *   github?: GitHubScenario,
  *   commands?: CommandsScenario,
  *   merge?: MergeScenario,
  *   remotes?: Remotes,
  *   issue?: Record<string, unknown>,
+ *   env?: Record<string, string>,
  * }) => ChildResult}
  */
 function command(t, line, {
@@ -207,6 +217,7 @@ function command(t, line, {
 	merge = {},
 	remotes,
 	issue = report,
+	env = {},
 } = {}) {
 	return runScript(t, script, {
 		event: { issue, comment: comment(line) },
@@ -217,13 +228,22 @@ function command(t, line, {
 			...commands,
 		},
 		merge,
-		env: remotes ? { GITHUB_SERVER_URL: remotes.serverURL } : {},
+		env: {
+			...remotes ? { GITHUB_SERVER_URL: remotes.serverURL } : {},
+			...env,
+		},
 	});
 }
 
 /** @type {(requests: Recorded[]) => string[]} */
 function changes(requests) {
 	return requests.filter((r) => r.method !== 'GET' && (/\/(?:pulls|issues)\b/).test(r.path) && !(/\/ljharb\/actions\//).test(r.path)).map((r) => `${r.method} ${r.path}`);
+}
+
+// the table rows of the one reply
+/** @type {(requests: Recorded[]) => string[]} */
+function outcomeRows(requests) {
+	return replies(requests)[0].split('\n').filter((l) => l.startsWith('| `'));
 }
 
 /** @type {(requests: Recorded[]) => Recorded[]} */
@@ -537,6 +557,32 @@ test('fleet/commands: a kind of discrepancy filters what `/fix` fixes on the REA
 	t.end();
 });
 
+test('fleet/commands: on the README drift report, a kind of discrepancy without a named repository leaves out one whose README matches', (t) => {
+	const all = {
+		...specs(['clean'], 'clean'),
+		...specs(['both'], 'both'),
+	};
+
+	const {
+		status,
+		requests,
+	} = command(t, '/dry-run fix ljharb links', { github: githubFor(all) });
+	t.equal(status, 0, 'exits successfully');
+	t.deepEqual(
+		replies(requests),
+		[expectedReply('/dry-run fix ljharb links', ['| `ljharb/both` | would create a PR: the link definitions they use |'], { dryRun: true })],
+		'listing only the repository whose links have drifted',
+	);
+	t.deepEqual(
+		repoTokens(requests).map((r) => r.body),
+		[{ repositories: ['both'], permissions: { pull_requests: 'read' } }], // eslint-disable-line camelcase
+		'with no token for the one whose README matches',
+	);
+	t.deepEqual(changes(requests), [], 'changes nothing');
+
+	t.end();
+});
+
 test('fleet/commands: on the README drift report, a repository that doesn’t publish a package, or opted out, is never touched, even when named', (t) => {
 	const all = {
 		...specs(['unpublished'], 'heading', { pkg: packageJson('unpublished', { private: true }) }),
@@ -721,6 +767,193 @@ test('fleet/commands: on the README drift report, `/fix` leaves an open PR as it
 		t.equal(remotes.tip(repository, `refs/heads/${readmeBranch}`), earlier, `${n}: and pushes nothing`);
 		t.deepEqual(reactions(requests), ['+eyes', '+rocket', '-501'], `${n}: and swaps its 👀 for 🚀`);
 	});
+
+	t.end();
+});
+
+test('fleet/commands: on the README drift report, `/fix` says what it can’t fix in a README, both in its PR and in its row', (t) => {
+	const all = specs(['headless'], 'headless');
+	const repository = 'ljharb/headless';
+
+	const badges = command(t, `/fix ${repository} badges`, { github: githubFor(all), remotes: remotesFor(t, all) });
+	t.equal(badges.status, 0, 'only what it can’t fix: exits successfully');
+	t.deepEqual(
+		outcomeRows(badges.requests),
+		['| `ljharb/headless` | nothing to fix<br>left as it is: there’s no heading to put the badges under |'],
+		'only what it can’t fix: has nothing to fix, saying why it was left as it is',
+	);
+	t.deepEqual(changes(badges.requests), [], 'only what it can’t fix: opens no PR');
+
+	const remotes = remotesFor(t, all);
+	const line = `/fix ${repository} badges links`;
+	const { status, requests } = command(t, line, { github: githubFor(all), remotes });
+	t.equal(status, 0, 'exits successfully');
+	t.deepEqual(
+		replies(requests),
+		[expectedReply(line, [`| \`${repository}\` | created ${remotes.serverURL}/${repository}/pull/1<br>left as it is: there’s no heading to put the badges under |`], { serverURL: remotes.serverURL })],
+		'saying it created a PR, and what it left as it is',
+	);
+	const [created] = matching(requests, 'POST', /^\/repos\/ljharb\/headless\/pulls$/);
+	t.equal(
+		created.body.body,
+		[
+			`This makes \`README.md\`’s heading, the badges under it, and the link definitions they use match the fleet’s (see [\`ljharb/actions\`’s README drift report](${remotes.serverURL}/ljharb/actions/tree/HEAD/fleet/readme)), as asked in [this comment](${commentURL}):`,
+			'',
+			'- the badges under it',
+			'- the link definitions they use',
+			'',
+			'These are left as they are:',
+			'',
+			'- there’s no heading to put the badges under',
+		].join('\n'),
+		'whose body lists what it fixes, then what it left as it is',
+	);
+	t.equal(
+		remotes.show(repository, readmeBranch, 'README.md'),
+		canonical('headless', repository).replace(/^# .*\n\n/, ''),
+		'fixing its links, but adding neither a heading nor badges',
+	);
+
+	t.end();
+});
+
+test('fleet/commands: on the README drift report, `/fix` closes the App’s PR when the default branch’s README already matches, unless filters limited what it planned', (t) => {
+	const names = [
+		'filtered',
+		'foreign',
+		'none',
+		'open',
+	];
+	const all = specs(names, 'heading');
+	const remotes = remotesFor(t, all);
+	/** @type {Record<string, string>} */
+	const heads = {};
+	names.forEach((n) => {
+		const repository = `ljharb/${n}`;
+		// since it was read, the default branch was fixed by hand
+		remotes.commit(repository, 'main', { 'README.md': canonical(n, repository) });
+		if (n !== 'none') {
+			// an earlier `/fix` opened a PR from its branch, before then
+			heads[n] = remotes.commit(repository, readmeBranch, { 'README.md': canonical(n, repository) }, { who: bot, from: 'main~1' });
+		}
+	});
+	heads.foreign = remotes.commit('ljharb/foreign', readmeBranch, { 'notes.md': 'theirs\n' }, { who: mallory });
+	const why = '`main`’s `README.md` already matches';
+	const pulls = Object.fromEntries(Object.entries(heads).map(([n, sha]) => [
+		`ljharb/${n}`,
+		[{
+			number: 4,
+			state: 'open',
+			merged_at: null, // eslint-disable-line camelcase
+			head: { sha },
+		}],
+	]));
+	const filtered = command(t, '/fix ljharb/filtered heading', { github: githubFor(all), commands: { pulls }, remotes });
+	t.equal(filtered.status, 0, 'filtered: exits successfully');
+	t.deepEqual(outcomeRows(filtered.requests), [`| \`ljharb/filtered\` | nothing to fix: ${why} |`], 'filtered: has nothing to fix, since its base matches');
+	t.deepEqual(changes(filtered.requests), [], 'filtered: but never closes the PR, since what it didn’t plan may not match');
+	t.equal(remotes.tip('ljharb/filtered', `refs/heads/${readmeBranch}`), heads.filtered, 'filtered: pushing nothing');
+
+	const line = '/fix ljharb/foreign ljharb/none ljharb/open';
+	const {
+		status,
+		stdout,
+		requests,
+	} = command(t, line, { github: githubFor(all), commands: { pulls }, remotes });
+	t.equal(status, 1, 'fails, since one PR has someone else’s commits');
+	t.match(stdout, /^::warning::ljharb\/foreign: `fleet\/readme` has 1 commit\(s\) by someone else, so it is never overwritten/m, 'which is never closed');
+	const outcomes = outcomeRows(requests);
+	t.match(outcomes[0], /^\| `ljharb\/foreign` \| failed: `.*has 1 commit\(s\) by someone else, so it is never overwritten.*` \|$/, 'saying why it failed');
+	t.deepEqual(
+		outcomes.slice(1),
+		[
+			`| \`ljharb/none\` | nothing to fix: ${why} |`,
+			`| \`ljharb/open\` | closed ${remotes.serverURL}/ljharb/open/pull/4: ${why} |`,
+		],
+		'with no PR, makes none; with the App’s own, closes it',
+	);
+	t.deepEqual(changes(requests), ['POST /repos/ljharb/open/issues/4/comments', 'PATCH /repos/ljharb/open/pulls/4'], 'saying why, then closing it; nothing else');
+	t.deepEqual(
+		matching(requests, 'POST', /^\/repos\/ljharb\/open\/issues\/4\/comments$/).map((r) => r.body.body),
+		[`${saidMarker('matches', heads.open)}\n${why} what this PR would make it, so the App closes it.`],
+		'once for its head commit',
+	);
+	t.deepEqual(matching(requests, 'PATCH', /^\/repos\/ljharb\/open\/pulls\/4$/).map((r) => r.body), [{ state: 'closed' }], 'closing it');
+	names.forEach((n) => {
+		t.equal(remotes.tip(`ljharb/${n}`, `refs/heads/${readmeBranch}`), heads[n] ?? '', `nothing is pushed to \`ljharb/${n}\``);
+	});
+
+	t.end();
+});
+
+test('fleet/commands: on the README drift report, `/fix` fails a repository whose state it couldn’t read, and carries on, cloning into the system’s temp directory without `RUNNER_TEMP`', (t) => {
+	const all = {
+		...specs(['heading'], 'heading'),
+		...specs(['invalid'], 'heading', { pkg: '{\n' }),
+	};
+	const remotes = remotesFor(t, all);
+	const github = {
+		...githubFor(all),
+		// `ljharb/gone` is installed, but its state can't be read
+		installationRepos: { 1: ['gone'].concat(Object.keys(all).sort()).map((n) => installedRepo('ljharb', n)) },
+	};
+	const line = '/fix ljharb';
+
+	const {
+		status,
+		stdout,
+		requests,
+	} = command(t, line, {
+		github,
+		remotes,
+		env: { RUNNER_TEMP: '' },
+	});
+	t.equal(status, 1, 'fails');
+	t.match(stdout, /^::error::1 repository could not be fixed$/m, 'saying how many');
+	t.deepEqual(
+		replies(requests),
+		[expectedReply(
+			line,
+			[
+				'| `ljharb/gone` | failed: `could not read the repository’s state` |',
+				`| \`ljharb/heading\` | created ${remotes.serverURL}/ljharb/heading/pull/1 |`,
+				'| `ljharb/invalid` | nothing to fix<br>left as it is: `package.json` is not valid JSON |',
+			],
+			{ serverURL: remotes.serverURL },
+		)],
+		'saying why one failed, fixing the next, and leaving one whose `package.json` isn’t valid JSON as it is, saying why',
+	);
+	t.equal(remotes.show('ljharb/heading', readmeBranch, 'README.md'), canonical('heading', 'ljharb/heading'), 'and pushed');
+	t.equal(remotes.tip('ljharb/invalid', `refs/heads/${readmeBranch}`), '', 'pushing nothing for the one it left as it is');
+
+	t.end();
+});
+
+test('fleet/commands: on the README drift report, `/fix` never writes through a `README.md` that is a symbolic link in its clone', (t) => {
+	const all = specs(['heading'], 'heading');
+	const remotes = remotesFor(t, all);
+	// git, configured to run a hook that, as soon as the clone is checked out, makes its `README.md` a symbolic link, though the commit still has it as a regular file
+	const dir = tempDir(t, 'fleet-commands-hooks');
+	const hooks = path.join(dir, 'hooks');
+	mkdirSync(hooks);
+	writeFileSync(path.join(hooks, 'post-checkout'), '#!/bin/sh\nrm -f README.md\nln -s package.json README.md\n', { mode: 0o755 });
+	const config = path.join(dir, 'gitconfig');
+	writeFileSync(config, `[core]\n\thooksPath = ${hooks}\n`);
+
+	const {
+		status,
+		stdout,
+		requests,
+	} = command(t, '/fix ljharb/heading', {
+		github: githubFor(all),
+		remotes,
+		env: { GIT_CONFIG_GLOBAL: config },
+	});
+	t.equal(status, 1, 'fails');
+	t.match(stdout, /^::warning::ljharb\/heading: `README\.md` is a symbolic link, so nothing is written through it$/m, 'refusing to write through it');
+	t.ok(replies(requests)[0].includes('| `ljharb/heading` | failed: `` `README.md` is a symbolic link, so nothing is written through it `` |'), 'saying why it failed');
+	t.deepEqual(changes(requests), [], 'opening no PR');
+	t.equal(remotes.tip('ljharb/heading', `refs/heads/${readmeBranch}`), '', 'and pushing nothing');
 
 	t.end();
 });

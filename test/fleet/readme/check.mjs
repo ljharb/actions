@@ -230,6 +230,50 @@ test('checkReadme: diffs are written under RUNNER_TEMP', (t) => {
 	t.end();
 });
 
+/** @type {(names: string[]) => () => void} */
+function overrideEnv(names) {
+	/** @type {Map<string, string | undefined>} */
+	const originals = new Map(names.map((name) => [name, process.env[name]]));
+	return () => {
+		originals.forEach((value, name) => {
+			if (typeof value === 'string') {
+				process.env[name] = value;
+			} else {
+				delete process.env[name];
+			}
+		});
+	};
+}
+
+test('checkReadme: diffs are written under the OS temp dir when RUNNER_TEMP is unset', (t) => {
+	const osTemp = mkdtempSync(path.join(fileTemp, 'os-temp-'));
+	// `os.tmpdir()` reads these on every call
+	const restore = overrideEnv([
+		'RUNNER_TEMP',
+		'TMPDIR',
+		'TEMP',
+		'TMP',
+	]);
+	delete process.env.RUNNER_TEMP;
+	process.env.TMPDIR = osTemp;
+	process.env.TEMP = osTemp;
+	process.env.TMP = osTemp;
+	t.teardown(() => {
+		restore();
+		rmSync(osTemp, { recursive: true, force: true });
+	});
+	t.equal(tmpdir(), osTemp, 'precondition: the OS temp dir is redirected');
+
+	const result = present(checkReadme(state({ readme: canonical.replace('# pkg <sup>', '# old-name <sup>') })));
+	t.deepEqual(result.drifted, ['heading'], 'drifted');
+	t.match(result.diff, /^-# old-name <sup>/m, 'with a diff');
+	const dirs = readdirSync(osTemp);
+	t.equal(dirs.length, 1, 'one temp dir for the diff');
+	t.match(dirs[0], /^readme-drift-/, 'named for the README drift report');
+
+	t.end();
+});
+
 test('checkReadme: a configuration error is surfaced', (t) => {
 	const configError = '`.github/ljharb-actions.json` is not valid JSON';
 	t.deepEqual(checkReadme(state({ configError })), {

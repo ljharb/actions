@@ -499,6 +499,32 @@ test('readme: a standard badge whose definition is missing is not kept as an ext
 	t.end();
 });
 
+test('readme: a badge whose definitions are missing, with a label no badge kind has, is kept as an extra badge', (t) => {
+	const sponsor = '[![Sponsor][sponsor-image]][sponsor-url]';
+	const kept = fixture('undefined extra badge', canonical({ extra: [sponsor] }));
+	t.deepEqual(drift(kept, identity), [], 'after the standard ones, it is not drift');
+	t.equal(fixReadme(kept, identity).text, kept, 'fixing it changes nothing');
+
+	const before = fixture('undefined extra badge first', canonical().replace(`${standardBadges[0]}\n`, `${sponsor}\n${standardBadges[0]}\n`));
+	t.deepEqual(drift(before, identity), ['badges'], 'before the standard ones, it is badge drift');
+	t.equal(fixReadme(before, identity).text, kept, 'fixing it moves it after the standard ones, rather than removing it');
+	t.end();
+});
+
+test('readme: text right after the heading or the badges, with no blank line, is kept after a blank line', (t) => {
+	const afterHeading = fixture('text right after the heading', [
+		headingFor('foo'),
+		'A description of foo.',
+		'',
+	].concat(definitionLines()).join('\n').concat('\n'));
+	t.deepEqual(drift(afterHeading, identity), ['badges'], 'the missing badges are badge drift');
+	t.equal(fixReadme(afterHeading, identity).text, canonical(), 'fixing it adds the badges, then a blank line before the text');
+
+	const afterBadges = fixture('text right after the badges', canonical().replace(`${npmBadge}\n\n`, `${npmBadge}\n`));
+	t.equal(fixReadme(afterBadges, identity, only('badges')).text, canonical(), 'fixing the badges adds a blank line before the text');
+	t.end();
+});
+
 test('readme: inline-URL badges are classified by their image URL', (t) => {
 	const travis = '[![Build Status](https://travis-ci.org/ljharb/foo.svg?branch=main)](https://travis-ci.org/ljharb/foo)';
 	const david = '[![dependencies](<https://david-dm.org/ljharb/foo.svg> "deps")](https://david-dm.org/ljharb/foo)';
