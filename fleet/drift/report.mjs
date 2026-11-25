@@ -18,7 +18,7 @@ import {
 import { marker } from './marker.mjs';
 import { templateFor } from './template.mjs';
 
-/** @import { Result } from './check.mjs' */
+/** @import { Drift, Result } from './check.mjs' */
 /** @import { Failure } from '../lib/app.mjs' */
 /** @typedef {{ installed: number, external: number }} Checked */
 /** @import { Unit } from '../lib/markdown.mjs' */
@@ -27,8 +27,13 @@ import { templateFor } from './template.mjs';
 export { maxPartLength, maxSummaryLength } from '../lib/report.mjs';
 
 /** @type {(repository: string, name: string) => string} */
+function workflowURL(repository, name) {
+	return `${serverURL}/${repository}/blob/HEAD/.github/workflows/${encodeURIComponent(name)}`;
+}
+
+/** @type {(repository: string, name: string) => string} */
 function workflowLink(repository, name) {
-	return fileLink(`${serverURL}/${repository}/blob/HEAD/.github/workflows/${encodeURIComponent(name)}`, name);
+	return fileLink(workflowURL(repository, name), name);
 }
 
 // a missing file has nothing to link to, so it links to the template it should match, if there is one
@@ -38,9 +43,48 @@ function templateLink(name) {
 	return template ? fileLink(`${serverURL}/${thisRepository}/blob/HEAD/fleet/drift/templates/${template}`, name) : `<code>${inline(name)}</code>`;
 }
 
+/** @typedef {{ number: number, name: string, diff: string, repositories: string[] }} Shared */
+
+/** @type {(drift: Drift) => string} */
+function sharedKey({ name, diff }) {
+	return JSON.stringify([name, diff]);
+}
+
+/**
+ * Each drifted file whose diff is exactly the same (hunk headers and all) in more than one repository, numbered, by how many repositories it's in (most first), then by name, then by diff, each with every one of those repositories, in the order the report has them, keyed by `sharedKey`.
+ * Hundreds of repositories can have the same diff (eg, when a template changes), and it's shown once instead of in each of their rows.
+ * @type {(results: Result[]) => Map<string, Shared>}
+ */
+function sharedDiffs(results) {
+	/** @type {Map<string, Omit<Shared, 'number'>>} */
+	const all = new Map();
+	results.forEach(({ repository, drifted }) => {
+		drifted.forEach((drift) => {
+			const key = sharedKey(drift);
+			const found = all.get(key) ?? {
+				name: drift.name,
+				diff: drift.diff,
+				repositories: [],
+			};
+			found.repositories.push(repository);
+			all.set(key, found);
+		});
+	});
+	/** @type {(a: string, b: string) => number} */
+	const compare = (a, b) => (a < b ? -1 : Number(a > b));
+	const sorted = Array.from(all, ([key, shared]) => ({ key, shared }))
+		.filter(({ shared }) => shared.repositories.length > 1)
+		.sort((a, b) => b.shared.repositories.length - a.shared.repositories.length || compare(a.shared.name, b.shared.name) || compare(a.shared.diff, b.shared.diff));
+	return new Map(sorted.map(({ key, shared }, i) => [key, { number: i + 1, ...shared }]));
+}
+
 // GitHub renders a fenced block inside HTML only with blank lines around it
-/** @type {(repository: string, drift: Result['drifted'][number]) => string} */
-function diffSection(repository, { name, diff }) {
+/** @type {(repository: string, drift: Drift, shared: Map<string, Shared>) => string} */
+function diffSection(repository, { name, diff }, shared) {
+	const sharedDiff = shared.get(sharedKey({ name, diff }));
+	if (sharedDiff) {
+		return `${workflowLink(repository, name)} (shared diff ${sharedDiff.number})`;
+	}
 	return [
 		`<details><summary>${workflowLink(repository, name)}</summary>`,
 		'',
@@ -50,7 +94,7 @@ function diffSection(repository, { name, diff }) {
 	].join('\n');
 }
 
-/** @type {(result: Result) => string} */
+/** @type {(result: Result, shared: Map<string, Shared>) => string} */
 function row({
 	repository,
 	missing,
@@ -58,7 +102,7 @@ function row({
 	drifted,
 	unreadable,
 	error,
-}) {
+}, shared) {
 	const repo = fileLink(`${serverURL}/${repository}/tree/HEAD/.github/workflows`, repository);
 	const other = [
 		...error ? [`<code>${inline(error)}</code>`] : [],
@@ -68,7 +112,7 @@ function row({
 		`<tr><td>${repo}</td>`,
 		`<td>\n${list(missing.map(templateLink))}\n</td>`,
 		`<td>\n${list(unexpected.map((name) => workflowLink(repository, name)))}\n</td>`,
-		`<td>\n${list(drifted.map((d) => diffSection(repository, d)))}\n</td>`,
+		`<td>\n${list(drifted.map((d) => diffSection(repository, d, shared)))}\n</td>`,
 		`<td>\n${other}\n</td></tr>`,
 	].join('');
 }
@@ -80,9 +124,10 @@ const tableHeader = '<tr><th>Repository</th><th>Missing</th><th>Unexpected</th><
 /**
  * One collapsed table per account, with every one of its repositories, and every diff, as units of the full report:
  * a file of it that starts partway through the table opens it again, and one that ends partway through it closes it.
- * @type {(account: Account) => Unit[]}
+ * A drifted file with a shared diff names it, rather than showing it.
+ * @type {(account: Account, shared: Map<string, Shared>) => Unit[]}
  */
-function accountTable({ owner, results }) {
+function accountTable({ owner, results }, shared) {
 	const label = `<b>${inline(owner)}</b>: ${results.length} ${results.length === 1 ? 'repository' : 'repositories'}`;
 	const group = {
 		open: [
@@ -103,9 +148,46 @@ function accountTable({ owner, results }) {
 			].join('\n'),
 			group,
 		},
-		...results.map((result) => ({ text: row(result), group })),
+		...results.map((result) => ({ text: row(result, shared), group })),
 		{ text: group.close, group },
 	];
+}
+
+/**
+ * A shared diff, once, and every repository it's in, each linking to its file, as units of the full report: like an account's table, a file of it that starts partway through its list of repositories opens it again.
+ * @type {(shared: Shared) => Unit[]}
+ */
+function sharedSection({
+	number,
+	name,
+	diff,
+	repositories,
+}) {
+	const label = `<b>Shared diff ${number}</b>: <code>${inline(name)}</code>, in ${repositories.length} repositories`;
+	const group = {
+		open: [
+			`<details><summary>${label} (continued)</summary>`,
+			'',
+			'<ul>',
+		].join('\n'),
+		close: '</ul>\n\n</details>',
+	};
+	/** @type {Unit[]} */
+	const noUnits = [];
+	return noUnits.concat(
+		{
+			text: [
+				`<details><summary>${label}</summary>`,
+				'',
+				fence(diff, 'diff'),
+				'',
+				'<ul>',
+			].join('\n'),
+			group,
+		},
+		repositories.map((repository) => ({ text: `<li>${fileLink(workflowURL(repository, name), repository)}</li>`, group })),
+		{ text: group.close, group },
+	);
 }
 
 /** @type {(results: Result[], key: 'missing' | 'unexpected' | 'drifted') => number} */
@@ -137,6 +219,8 @@ export function report(results, privateCount, failures, checked, waiting = []) {
 		...updated ? [updated] : [],
 	].join(' ');
 	const accounts = byAccount(results);
+	// in the order the tables have them, so each shared diff lists its repositories in that order
+	const shared = sharedDiffs(accounts.flatMap((account) => account.results));
 	const title = `Workflow drift: ${total} of ${count} repositories`;
 
 	/** @type {(string | Unit)[]} */
@@ -148,7 +232,16 @@ export function report(results, privateCount, failures, checked, waiting = []) {
 			'',
 			intro('This report is updated in place on every run.'),
 			problems(failures, waiting),
-			accounts.flatMap((account) => noUnits.concat('', accountTable(account))),
+			accounts.flatMap((account) => noUnits.concat('', accountTable(account, shared))),
+			shared.size > 0
+				? noUnits.concat(
+					'',
+					'## Shared diffs',
+					'',
+					'Each of these diffs is exactly the same in every repository listed with it, so it’s shown here once, rather than in each of their rows; each of those rows names it by its number.',
+					Array.from(shared.values()).flatMap((sharedDiff) => noUnits.concat('', sharedSection(sharedDiff))),
+				)
+				: [],
 			'',
 			legend(),
 		),
