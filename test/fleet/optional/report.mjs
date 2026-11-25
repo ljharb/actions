@@ -5,7 +5,7 @@ import { marker, report } from '../../../fleet/optional/report.mjs';
 
 /** @import { Result } from '../../../fleet/optional/report.mjs' */
 
-const gist = { html_url: 'https://gist.github.com/g', files: [{ name: 'optional-failures.md', raw_url: 'https://gist.githubusercontent.com/u/g/raw/1/optional-failures.md' }] }; // eslint-disable-line camelcase
+const gist = { html_url: 'https://gist.github.com/g', pages: 1, files: [{ name: 'optional-failures.md', html_url: 'https://gist.github.com/g#file-optional-failures-md' }] }; // eslint-disable-line camelcase
 
 /** @type {(accounts: number, repos: number, jobs: number) => Result[]} */
 function results(accounts, repos, jobs) {
@@ -71,16 +71,16 @@ test('optional report: the summary lists every job when it fits, then each accou
 	t.ok(accounts.includes('5000 accounts have repositories with such failures; [the full report](https://gist.github.com/g) lists them all.'), 'too many accounts for their counts: only how many');
 
 	const many = report(results(5000, 1, 1), 0, failures(5000), { installed: 5000, external: 0 });
-	const files = Array.from({ length: 3000 }, (_, i) => ({ name: `optional-failures-${i}.md`, raw_url: `https://gist.githubusercontent.com/u/g/raw/1/optional-failures-${i}.md` })); // eslint-disable-line camelcase
-	const terse = many.summary({ html_url: 'https://gist.github.com/g', files }, true); // eslint-disable-line camelcase
+	const files = Array.from({ length: 3000 }, (_, i) => ({ name: `optional-failures-${i}.md`, html_url: `https://gist.github.com/g#file-optional-failures-${i}-md` })); // eslint-disable-line camelcase
+	const terse = many.summary({ html_url: 'https://gist.github.com/g', pages: 1, files }, true); // eslint-disable-line camelcase
 	t.ok(terse.length <= maxSummaryLength, 'with too many files to link too, it still fits');
-	t.ok(terse.includes('It’s in 3000 files, each small enough (under 1 MB) for GitHub to show in full; read them in order.'), 'counting the files, without linking each');
+	t.ok(terse.includes('It’s in 3000 files, so that GitHub shows each in full; read them in order.'), 'counting the files, without linking each');
 	t.ok(terse.includes('⚠️ 5000 repositories or installations could not be checked, so this report is incomplete; [the full report](https://gist.github.com/g) lists them all.'), 'and the failures');
 
 	const privates = report(results(5000, 1, 1), 0, failures(2), { installed: 5007, external: 0 }, [], 5);
 	const privateFull = privates.parts.join('\n');
 	t.ok(privateFull.includes('- 5 private repositories: `could not be checked`'), 'private repositories that couldn’t be checked are counted in the full report, not named');
-	const privateTerse = privates.summary({ html_url: 'https://gist.github.com/g', files }, true); // eslint-disable-line camelcase
+	const privateTerse = privates.summary({ html_url: 'https://gist.github.com/g', pages: 1, files }, true); // eslint-disable-line camelcase
 	t.ok(privateTerse.includes('⚠️ 7 repositories or installations could not be checked, so this report is incomplete'), 'and, when only counted in the summary, each of them is counted');
 
 	const unwritten = small.summary({ error: 'HttpError: nope' }, false);

@@ -83,7 +83,7 @@ Object.assign(requestDefaults, { retries: 0 });
  *   createError?: ErrorReply,
  *   commentErrorAfter?: number,
  *   gists?: Gist[],
- *   gistNoRawURL?: boolean,
+ *   gistNoHistory?: boolean,
  *   gistError?: ErrorReply,
  *   minimized?: string[],
  *   nodesError?: ErrorReply,
@@ -92,7 +92,7 @@ Object.assign(requestDefaults, { retries: 0 });
  */
 /**
  * The token user's gists, listed 100 to a page (as `per_page` asks), most recently updated first, with the names of their `files`;
- * `gistError` fails creating or updating one, and with `gistNoRawURL`, a reply to that has no `raw_url` for its files.
+ * `gistError` fails creating or updating one; each write of one makes a revision, numbered in order (`rev1`, `rev2`, and so on), which a reply to it has as the first of its `history` (but with `gistNoHistory`, has no `history`).
  * @typedef {{ id: string, description: string | null, public: boolean, files?: Record<string, unknown> }} Gist
  */
 /*
@@ -363,11 +363,13 @@ export function mockGitHub(scenario, record) {
 			headers,
 		];
 	}));
+	let revisions = 0;
 	/** @type {(id: string, body: any) => [number, unknown]} */
 	const gistReply = (id, body) => {
 		if (scenario.gistError) {
 			return [scenario.gistError.status, scenario.gistError.body ?? { message: 'error' }];
 		}
+		revisions += 1;
 		return [
 			200,
 			{
@@ -376,8 +378,9 @@ export function mockGitHub(scenario, record) {
 				// a file set to `null` is deleted
 				files: Object.fromEntries(Object.keys(body.files).filter((name) => body.files[name] !== null).map((name) => [
 					name,
-					{ filename: name, ...scenario.gistNoRawURL ? {} : { raw_url: `https://gist.githubusercontent.com/fleet-user/${id}/raw/0123abc/${name}` } }, // eslint-disable-line camelcase
+					{ filename: name, raw_url: `https://gist.githubusercontent.com/fleet-user/${id}/raw/0123abc/${name}` }, // eslint-disable-line camelcase
 				])),
+				...scenario.gistNoHistory ? {} : { history: [{ version: `rev${revisions}` }] },
 			},
 		];
 	};

@@ -10,7 +10,7 @@ import { marker as workflowMarker } from '../../../fleet/drift/marker.mjs';
 
 const collapsedLegend = ['<details><summary><b>Commands</b></summary>', '', legend({ heading: false, report: 'readme' }), '', '</details>'].join('\n');
 
-const gist = { html_url: 'https://gist.github.com/g', files: [{ name: 'readme-drift.md', raw_url: 'https://gist.githubusercontent.com/u/g/raw/1/readme-drift.md' }] }; // eslint-disable-line camelcase
+const gist = { html_url: 'https://gist.github.com/g', pages: 1, files: [{ name: 'readme-drift.md', html_url: 'https://gist.github.com/g#file-readme-drift-md' }] }; // eslint-disable-line camelcase
 
 /** @type {(n: number) => Result[]} */
 function accounts(n) {
@@ -212,11 +212,12 @@ test('report: the summary always fits, and the full report always has everything
 
 	const manyFiles = {
 		html_url: 'https://gist.github.com/g', // eslint-disable-line camelcase
-		files: Array.from({ length: 1000 }, (_, i) => ({ name: `readme-drift-${i}.md`, raw_url: `https://gist.githubusercontent.com/u/g/raw/${'0'.repeat(40)}/readme-drift-${i}.md` })), // eslint-disable-line camelcase
+		pages: 1,
+		files: Array.from({ length: 1000 }, (_, i) => ({ name: `readme-drift-${i}.md`, html_url: `https://gist.github.com/${'0'.repeat(32)}#file-readme-drift-${i}-md` })), // eslint-disable-line camelcase
 	};
 	const tooMany = report(accounts(2000), 0, failures(5000), { installed: 2000, external: 0 }).summary(manyFiles, true);
 	t.ok(tooMany.length <= maxSummaryLength, 'with too many files to link too, it still fits');
-	t.ok(tooMany.includes('**[The full report](https://gist.github.com/g)** has every repository, every discrepancy, and every diff; it’s a secret gist, updated in place on every run. It’s in 1000 files, each small enough (under 1 MB) for GitHub to show in full; read them in order.'), 'saying how many files, linking the gist');
+	t.ok(tooMany.includes('**[The full report](https://gist.github.com/g)** has every repository, every discrepancy, and every diff; it’s a secret gist, updated in place on every run. It’s in 1000 files, so that GitHub shows each in full; read them in order.'), 'saying how many files, linking the gist');
 
 	const failed = report(accounts(1), 0, [], { installed: 1, external: 0 }).summary({ error: 'Resource not accessible by personal access token' }, true);
 	t.match(failed, /\n⚠️ \*\*The full report could not be written to its gist\*\* \(`Resource not accessible by personal access token`\), so this run failed/, 'a gist that couldn’t be written is said so, with the error');

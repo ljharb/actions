@@ -22,8 +22,8 @@ import { code, html } from './markdown.mjs';
 // GitHub's limit for an issue's body is 65536 characters; a run summary's is 1 MiB, so this fits in both
 export const maxSummaryLength = 60000;
 /*
- * a gist's API (and its page) cut a file short past 1 MB, so a full report is in files of at most this many characters:
- * each is at most 3 bytes in UTF-8 (a surrogate pair is 2 characters, and 4 bytes), with room left for saying which part it is
+ * a gist's API (and its page) cut a file short past 1 MB, and a gist past 900 KiB (see `maxGistBytes`), so a full report is in files of at most this many characters:
+ * each is at most 3 bytes in UTF-8 (a surrogate pair is 2 characters, and 4 bytes), with room left for saying which part it is, so even one that's all of that fits on a page of its own
  */
 export const maxPartLength = 300000;
 
@@ -122,8 +122,9 @@ export function reportLink(written, has, detailed) {
 	if ('error' in written) {
 		return `⚠️ **The full report could not be written to its gist**${detailed ? ` (${code(written.error)})` : ''}, so this run failed, and [its log](${runURL}) has the error; the next run will try again.`;
 	}
+	const onPages = written.pages > 1 ? `, on ${written.pages} pages (GitHub shows only a gist’s first 900 KiB, so each page after the first is an earlier revision of the gist, which the page before it links to)` : '';
 	const inFiles = written.files.length > 1
-		? ` It’s in ${written.files.length} files, each small enough (under 1 MB) for GitHub to show in full; read them in order${detailed ? `: ${written.files.map((f, i) => `[${i + 1}](${f.raw_url})`).join(' · ')}` : ''}.`
+		? ` It’s in ${written.files.length} files${onPages}, so that GitHub shows each in full; read them in order${detailed ? `: ${written.files.map((f, i) => `[${i + 1}](${f.html_url})`).join(' · ')}` : ''}.`
 		: '';
 	return `**[The full report](${written.html_url})** has ${has}; it’s a secret gist, updated in place on every run.${inFiles}`;
 }

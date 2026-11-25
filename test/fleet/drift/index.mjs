@@ -467,12 +467,12 @@ test('fleet/drift: updates the gist found by its description, through every page
 	t.equal(status, 0, 'exits successfully');
 	t.match(stdout, /^1 of 1 repositories have discrepancies; the full report is https:\/\/gist\.github\.com\/the-gist; updated https:\/\/github\.com\/x\/5$/m, 'logs the outcome');
 	t.deepEqual(matching(requests, 'GET', /^\/gists\?/).map((r) => r.path), ['/gists?per_page=100', '/gists?per_page=100&page=2'], 'lists every page of gists');
-	const [gistWrite, cleanup] = gistWrites(requests);
+	const [gistWrite] = gistWrites(requests);
 	t.equal(`${gistWrite.method} ${gistWrite.path}`, 'PATCH /gists/the-gist', 'updates the secret gist whose description is exactly the marker, and that has only the report’s files, never a public one, a dry run’s, or one that only mentions the marker');
 	t.equal(gistWrite.body.description, gistMarker, 'keeping its description');
-	t.deepEqual(Object.keys(gistWrite.body.files), ['workflow-drift.md'], 'writing the report, which fits in one file now');
-	t.deepEqual(cleanup && [`${cleanup.method} ${cleanup.path}`, cleanup.body], ['PATCH /gists/the-gist', { files: { 'workflow-drift-001.md': null, 'workflow-drift-002.md': null } }], 'then deleting the files it no longer needs');
-	t.equal(gistWrites(requests).length, 2, 'and writing nothing else');
+	t.deepEqual(Object.keys(gistWrite.body.files), ['workflow-drift-001.md', 'workflow-drift-002.md', 'workflow-drift.md'], 'writing the report, which fits in one file now, and deleting the files it no longer needs');
+	t.deepEqual([gistWrite.body.files['workflow-drift-001.md'], gistWrite.body.files['workflow-drift-002.md']], [null, null], 'by setting them to `null`');
+	t.equal(gistWrites(requests).length, 1, 'and writing nothing else');
 	t.ok(String(gistWrite.body.files['workflow-drift.md'].content).includes('<tr><td><a href="https://github.com/LJHarb/drifted/tree/HEAD/.github/workflows"><code>LJHarb/drifted</code></a></td>'), 'with the new full report, linking to github.com by default');
 	t.equal(matching(requests, 'GET', /^\/repos\/ljharb\/reports\/issues\?/).length, 2, 'lists issues in `issue-repository`, by each of the report’s authors');
 	t.deepEqual(matching(requests, 'GET', /\/installation$/).map((r) => r.path), ['/repos/ljharb/reports/installation'], 'with a token from the App’s installation on it');
@@ -674,29 +674,69 @@ test('fleet/drift: groups repositories by account, case-insensitively, in result
 	t.end();
 });
 
-test('fleet/drift: every row and every diff is in the gist, however many there are, in files each small enough to show in full', (t) => {
+/**
+ * What the gist held after each of `writes`, in order: each makes a revision of it.
+ * @type {(present: string[], writes: Recorded[]) => Map<string, string>[]}
+ */
+function revisions(present, writes) {
+	/** @type {Map<string, string>} */
+	const before = new Map(present.map((name) => [name, '']));
+	/** @type {Map<string, string>[]} */
+	const after = [];
+	writes.reduce((held, w) => {
+		const next = new Map(held);
+		Object.entries(w.body.files).forEach(([name, file]) => {
+			if (file === null) {
+				next.delete(name);
+			} else {
+				next.set(name, String(file.content));
+			}
+		});
+		after.push(next);
+		return next;
+	}, before);
+	return after;
+}
+
+test('fleet/drift: every row and every diff is in the full report, however many there are, in files, and pages, each small enough to show in full', (t) => {
 	const names = Array.from({ length: 300 }, (_, i) => `a-repository-with-a-rather-long-name-for-testing-${String(i).padStart(3, '0')}`);
+	const previous = Array.from({ length: 12 }, (_, i) => `workflow-drift-${String(i + 1).padStart(3, '0')}.md`);
 	const { status, stdout, requests, summary } = run({
 		installations: [{ id: 1, account: { login: 'ljharb' } }],
 		installationRepos: { 1: names.map((n) => installedRepo('ljharb', n)) },
 		repos: Object.fromEntries(names.map((n) => [`ljharb/${n}`, repo({ workflows: replacing('rebase.yml', `${n}\n${'y'.repeat(7000)}\n`) })])),
 		issues: [],
-		// a previous, bigger report's files, and one that's no longer needed
-		gists: [{ id: 'the-gist', description: gistMarker, public: false, files: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`workflow-drift-${String(i + 1).padStart(3, '0')}.md`, {}])) }],
-		gistNoRawURL: true,
+		// a previous, bigger report's files
+		gists: [{ id: 'the-gist', description: gistMarker, public: false, files: Object.fromEntries(previous.map((name) => [name, {}])) }],
 	});
 
 	t.equal(status, 0, 'exits successfully');
-	t.match(stdout, /^300 of 300 repositories have discrepancies; /m, 'logs the outcome');
+	t.match(stdout, /^300 of 300 repositories have discrepancies; the full report is https:\/\/gist\.github\.com\/the-gist; /m, 'logs the outcome');
 
-	const files = gistFiles(requests);
-	t.ok(files.length > 2, `the full report is in several files (${files.length})`);
-	t.deepEqual(files.map(([name]) => name), files.map((_, i) => `workflow-drift-${String(i + 1).padStart(3, '0')}.md`), 'named in order');
-	t.ok(files.every(([, content]) => Buffer.byteLength(content) < 1000000), 'each under 1 MB');
 	const writes = gistWrites(requests);
 	t.ok(writes.every((w) => `${w.method} ${w.path}` === 'PATCH /gists/the-gist'), 'each written to the gist it was in');
-	t.ok(writes.slice(0, files.length).every((w) => Object.keys(w.body.files).length === 1), 'one file to a request');
-	t.deepEqual(writes.slice(files.length).map((w) => w.body), [{ files: Object.fromEntries(Array.from({ length: 12 - files.length }, (_, i) => [`workflow-drift-${String(files.length + i + 1).padStart(3, '0')}.md`, null])) }], 'then the files no longer needed are deleted');
+	t.ok(writes.every((w) => Object.values(w.body.files).filter((file) => file !== null).length === 1), 'one file to a request');
+	const held = revisions(previous, writes);
+
+	// from what the gist holds, following each page's link to the next: the mock's revisions are numbered in order
+	/** @type {(revision: Map<string, string>, pages: Map<string, string>[]) => Map<string, string>[]} */
+	const follow = (revision, pages) => {
+		const last = String(Array.from(revision.values()).at(-1));
+		const link = (/\*\*\[This report continues on its next page\]\(https:\/\/gist\.github\.com\/the-gist\/rev(?<n>\d+)\)\*\*, an earlier revision of this gist, since GitHub shows only a gist’s first 900 KiB\.\n$/).exec(last)?.groups;
+		return link ? follow(held[Number(link.n) - 1], pages.concat(revision)) : pages.concat(revision);
+	};
+	const pages = follow(held.at(-1) ?? new Map(), []);
+	t.ok(pages.length > 1, `the full report is on several pages (${pages.length})`);
+	const files = pages.flatMap((page) => Array.from(page));
+	t.ok(files.length > pages.length, `in several files (${files.length})`);
+	t.deepEqual(files.map(([name]) => name), files.map((_, i) => `workflow-drift-${String(i + 1).padStart(3, '0')}.md`), 'named in order, from the first page to the last');
+	t.ok(files.every(([, content]) => Buffer.byteLength(content) < 1000000), 'each under 1 MB');
+	const bytes = pages.map((page) => Array.from(page.values()).reduce((sum, content) => sum + Buffer.byteLength(content), 0));
+	t.ok(bytes.every((b) => b <= 900 * 1024), `each page holding at most 900 KiB (${bytes.join(', ')})`);
+	t.ok(pages.slice(0, -1).every((_, i) => bytes[i] + Buffer.byteLength(String(Array.from(pages[i + 1].values())[0])) > (900 * 1024) - 1024), 'and as many files, in order, as fit, with room for its link');
+	t.ok(writes[0].body.files[previous[0]] === null && Object.keys(writes[0].body.files).length === previous.length - Array.from(pages.at(-1) ?? []).filter(([name]) => previous.includes(name)).length + 1, 'the first write deletes the files the last page, written first, doesn’t have');
+	t.deepEqual(Array.from(held.at(-1)?.keys() ?? []), Array.from(pages[0].keys()), 'and, at the end, the gist holds only the first page');
+
 	const full = files.map(([, content]) => content).join('\n');
 	t.ok(Buffer.byteLength(full) > 2000000, 'the full report is over 2 MB');
 	t.equal(count(full, /<tr><td><a href="https:\/\/github\.com\/ljharb\/a-repository-/g), 300, 'with every row');
@@ -706,13 +746,31 @@ test('fleet/drift: every row and every diff is in the gist, however many there a
 
 	const [create] = issueWrites(requests);
 	const { body } = create.body;
-	const links = files.map(([name], i) => `[${i + 1}](https://gist.github.com/the-gist/raw/${name})`).join(' · ');
-	const note = `${gistLink('the-gist')} It’s in ${files.length} files, each small enough (under 1 MB) for GitHub to show in full; read them in order: ${links}.`;
-	t.ok(body.includes(`\n\n${note}\n\n`), 'the issue says how many files, linking each (by the gist’s own link, when a reply has no raw link)');
+	const pageURLs = pages.map((page, i) => (i === 0 ? 'https://gist.github.com/the-gist' : `https://gist.github.com/the-gist/rev${held.indexOf(page) + 1}`));
+	const links = pages.flatMap((page, i) => Array.from(page.keys()).map((name) => `${pageURLs[i]}#file-${name.replace('.', '-')}`)).map((url, i) => `[${i + 1}](${url})`).join(' · ');
+	const note = `${gistLink('the-gist')} It’s in ${files.length} files, on ${pages.length} pages (GitHub shows only a gist’s first 900 KiB, so each page after the first is an earlier revision of the gist, which the page before it links to), so that GitHub shows each in full; read them in order: ${links}.`;
+	t.ok(body.includes(`\n\n${note}\n\n`), 'the issue says how many files, and pages, linking each file where GitHub shows it');
 	t.ok(summary.includes(`\n\n${note}\n\n`), 'and so does the run summary');
 	t.ok(body.length < 5000, `the issue (${body.length} characters) is short`);
 	t.ok(body.includes('| `ljharb` | 300 | 0 | 0 | 300 | 0 |'), 'counting the account’s drifted files');
 	neverOmits(body);
+
+	t.end();
+});
+
+test('fleet/drift: a full report on several pages can’t be written when GitHub doesn’t say which revision a page is', (t) => {
+	const names = Array.from({ length: 300 }, (_, i) => `a-repository-with-a-rather-long-name-for-testing-${String(i).padStart(3, '0')}`);
+	const { status, stdout, requests } = run({
+		installations: [{ id: 1, account: { login: 'ljharb' } }],
+		installationRepos: { 1: names.map((n) => installedRepo('ljharb', n)) },
+		repos: Object.fromEntries(names.map((n) => [`ljharb/${n}`, repo({ workflows: replacing('rebase.yml', `${n}\n${'y'.repeat(7000)}\n`) })])),
+		issues: [],
+		gistNoHistory: true,
+	});
+
+	t.equal(status, 1, 'fails');
+	t.match(stdout, /the full report could not be written to its gist: Error: GitHub didn’t say which revision of the gist it made, so the page before it can’t link to it/, 'saying why');
+	t.ok(issueWrites(requests)[0].body.body.includes('⚠️ **The full report could not be written to its gist** (`Error: GitHub didn’t say which revision of the gist it made, so the page before it can’t link to it`)'), 'and the issue says so');
 
 	t.end();
 });
