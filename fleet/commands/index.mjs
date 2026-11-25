@@ -16,8 +16,9 @@ import { isReportAuthor, issueOctokit, legacyAuthor } from '../lib/issues.mjs';
 import { code, split } from '../lib/markdown.mjs';
 import { finishQueued, messageOf } from '../lib/merge.mjs';
 import { fixReadmeRepo } from '../readme/apply.mjs';
-import { checkReadmeSafely, isCovered } from '../readme/check.mjs';
+import { checkReadmeSafely } from '../readme/check.mjs';
 import { marker as readmeMarker } from '../readme/marker.mjs';
+import { coveredStates } from '../readme/npm.mjs';
 import { isCategory as isReadmeCategory } from '../readme/readme.mjs';
 import { fixRepo } from './apply.mjs';
 import { runMerge } from './merge.mjs';
@@ -280,7 +281,7 @@ async function runReadme(context, command) {
 		waiting,
 	} = await installed(context.auth);
 	// only the repositories the App is installed on: it can't change any other
-	const candidates = states.filter((s) => !s.external && isCovered(s)).flatMap((state) => {
+	const candidates = (await coveredStates(states.filter((s) => !s.external))).flatMap((state) => {
 		const result = checkReadmeSafely(state);
 		const categories = selectReadme(state, result, command.filters);
 		return categories === null ? [] : [{ state, categories }];

@@ -35,6 +35,7 @@ import { makeRemotes } from './helpers/remotes.mjs';
 /** @import { CommandsScenario } from './helpers/preload.mjs' */
 /** @import { MergeScenario } from './helpers/merge.mjs' */
 /** @import { ChildResult } from '../drift/helpers/child.mjs' */
+/** @import { ChildScenario } from '../drift/helpers/preload.mjs' */
 /** @import { Remotes } from './helpers/remotes.mjs' */
 /** @import { Test } from 'tape' */
 
@@ -230,6 +231,7 @@ function remotesFor(t, all) {
  *   remotes?: Remotes,
  *   issue?: Record<string, unknown>,
  *   env?: Record<string, string>,
+ *   npm?: ChildScenario['npm'],
  * }) => ChildResult}
  */
 function command(t, line, {
@@ -239,10 +241,12 @@ function command(t, line, {
 	remotes,
 	issue = report,
 	env = {},
+	npm,
 } = {}) {
 	return runScript(t, script, {
 		event: { issue, comment: comment(line) },
 		github,
+		npm,
 		commands: {
 			permissions: { maintainer: 'write' },
 			...remotes ? { serverURL: remotes.serverURL } : {},
@@ -636,6 +640,38 @@ test('fleet/commands: on the README drift report, a repository that doesn’t pu
 	t.end();
 });
 
+test('fleet/commands: on the README drift report, a repository whose package isn’t on npm is never touched, even when named', (t) => {
+	const all = {
+		...specs(['heading'], 'heading'),
+		...specs(['unpublished'], 'heading'),
+		...specs(['empty'], 'heading'),
+	};
+	const npm = { unpublished: 404, empty: { versions: {} } };
+	const remotes = remotesFor(t, all);
+	const line = '/fix ljharb/unpublished ljharb/empty';
+	const { status, requests } = command(t, line, {
+		github: githubFor(all),
+		remotes,
+		npm,
+	});
+	t.equal(status, 0, 'exits successfully');
+	t.deepEqual(replies(requests), [expectedReply(line, [], { serverURL: remotes.serverURL })], 'saying that no repository matches: neither one whose package the registry doesn’t know, nor one with no versions');
+	t.deepEqual(repoTokens(requests), [], 'without even a token for either');
+	['unpublished', 'empty'].forEach((n) => {
+		t.equal(remotes.tip(`ljharb/${n}`, `refs/heads/${readmeBranch}`), '', `ljharb/${n}: nothing is pushed`);
+	});
+
+	const dryRun = command(t, '/dry-run fix ljharb', { github: githubFor(all), npm });
+	t.equal(dryRun.status, 0, 'exits successfully');
+	t.deepEqual(
+		replies(dryRun.requests),
+		[expectedReply('/dry-run fix ljharb', ['| `ljharb/heading` | would create a PR: the heading |'], { dryRun: true })],
+		'an account’s fix leaves them out too',
+	);
+
+	t.end();
+});
+
 test('fleet/commands: on the README drift report, a private repository’s outcome is never output', (t) => {
 	const all = {
 		...specs(['alpha'], 'heading'),
@@ -946,6 +982,40 @@ test('fleet/commands: on the README drift report, `/fix` fails a repository whos
 	);
 	t.equal(remotes.show('ljharb/heading', readmeBranch, 'README.md'), onNpmjsCom(canonical('heading', 'ljharb/heading')), 'and pushed');
 	t.equal(remotes.tip('ljharb/invalid', `refs/heads/${readmeBranch}`), '', 'pushing nothing for the one it left as it is');
+
+	t.end();
+});
+
+test('fleet/commands: on the README drift report, `/fix` fails a repository whose package couldn’t be looked up on npm, without the registry’s error, and carries on', (t) => {
+	const all = {
+		...specs(['failing'], 'heading'),
+		...specs(['heading'], 'heading'),
+	};
+	const remotes = remotesFor(t, all);
+	const line = '/fix ljharb';
+	const { status, stdout, requests } = command(t, line, {
+		github: githubFor(all),
+		remotes,
+		npm: { failing: 403 },
+	});
+	t.equal(status, 1, 'fails');
+	t.match(stdout, /^::error::1 repository could not be fixed$/m, 'saying how many');
+	t.ok(stdout.split('\n').includes('::warning::ljharb/failing: whether its package is on npm could not be told'), 'warning about it, without what the registry said');
+	t.notOk(stdout.includes('registry error') || stdout.includes('403'), 'which is never output');
+	t.deepEqual(
+		replies(requests),
+		[expectedReply(
+			line,
+			[
+				'| `ljharb/failing` | failed: `whether its package is on npm could not be told` |',
+				`| \`ljharb/heading\` | created ${remotes.serverURL}/ljharb/heading/pull/1 |`,
+			],
+			{ serverURL: remotes.serverURL },
+		)],
+		'saying why it failed, and fixing the next',
+	);
+	t.equal(remotes.tip('ljharb/failing', `refs/heads/${readmeBranch}`), '', 'pushing nothing for the one that failed');
+	t.equal(remotes.show('ljharb/heading', readmeBranch, 'README.md'), onNpmjsCom(canonical('heading', 'ljharb/heading')), 'and pushing the other');
 
 	t.end();
 });

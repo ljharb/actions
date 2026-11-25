@@ -12,12 +12,14 @@ import { mockVersions } from './versions.mjs';
 /** @import { Scenario } from '../../lib/helpers/github.mjs' */
 
 /**
+ * `npm` is what the npm registry replies about each package, by its name: an HTTP status, or the packument (unspecified, one with a version, so that every package is on npm).
  * @typedef {{
  *   versions?: VersionFixture,
  *   github?: Scenario,
  *   report?: ReportScenario,
  *   log?: string,
  *   throwStringOnSplit?: string,
+ *   npm?: Record<string, number | { versions?: Record<string, unknown> }>,
  * }} ChildScenario
  */
 
@@ -28,6 +30,11 @@ if (FLEET_TEST_SCENARIO) {
 	const scenario = JSON.parse(readFileSync(FLEET_TEST_SCENARIO, 'utf8'));
 
 	nock.disableNetConnect();
+
+	nock('https://registry.npmjs.org').persist().get(/^\/[^/]+$/).reply((/** @type {Request} */ req) => {
+		const reply = scenario.npm?.[decodeURIComponent(new URL(req.url).pathname.slice(1))] ?? { versions: { '1.0.0': {} } };
+		return typeof reply === 'number' ? [reply, { error: 'registry error' }] : [200, reply];
+	});
 
 	if (scenario.versions) {
 		mockVersions(scenario.versions);

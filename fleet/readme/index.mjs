@@ -8,8 +8,9 @@ import {
 	parseAccounts,
 } from '../lib/app.mjs';
 import { gistToken, publish } from '../lib/report.mjs';
-import { checkReadmeSafely, isCovered } from './check.mjs';
+import { checkReadmeSafely } from './check.mjs';
 import { marker } from './marker.mjs';
+import { coveredStates } from './npm.mjs';
 import { report } from './report.mjs';
 
 // how the full report's gist is found again on the next run; a dry run has its own, so it never changes what the issue links to
@@ -36,7 +37,7 @@ async function main() {
 		core.warning(`${scope}: ${message}`);
 	});
 
-	const checked = states.filter(isCovered);
+	const checked = await coveredStates(states);
 	const all = checked.flatMap((s) => {
 		const result = checkReadmeSafely(s);
 		return result ? [{ result, private: s.private }] : [];

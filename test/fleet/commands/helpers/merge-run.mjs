@@ -90,6 +90,7 @@ export const failing = { checkRuns: [checkRun('tests', 'failure')] };
  *   merge?: MergeScenario,
  *   env?: Record<string, string>,
  *   throwStringOnSplit?: string,
+ *   npm?: Scenario['npm'],
  * }) => ChildResult}
  */
 export function runScript(
@@ -102,6 +103,7 @@ export function runScript(
 		merge = {},
 		env = {},
 		throwStringOnSplit,
+		npm,
 	},
 ) {
 	const eventPath = path.join(tempDir(t, 'fleet-merge-event'), 'event.json');
@@ -112,6 +114,7 @@ export function runScript(
 		commands,
 		merge,
 		...throwStringOnSplit ? { throwStringOnSplit } : {},
+		...npm ? { npm } : {},
 	};
 	return runChild([script], {
 		scenario,
