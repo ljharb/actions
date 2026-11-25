@@ -23,8 +23,8 @@ import {
  */
 
 /**
- * A local "server" with one bare repository per key of `repos`, each cloned as `${serverURL}/${repository}.git`, whose `main` has those files.
- * @type {(t: Test, repos: Record<string, Record<string, string>>) => Remotes}
+ * A local "server" with one bare repository per key of `repos`, each cloned as `${serverURL}/${repository}.git`, whose `main` has those files (a `README.md` naming the repository, unless they have one, or it's `null`).
+ * @type {(t: Test, repos: Record<string, Record<string, string | null>>) => Remotes}
  */
 export function makeRemotes(t, repos) {
 	const root = tempDir(t, 'fleet-commands-server');

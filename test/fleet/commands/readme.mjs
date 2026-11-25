@@ -123,7 +123,7 @@ function packageJson(name, extra = {}) {
 }
 
 /**
- * The repository's state, as GitHub's GraphQL API gives it: a package (by default, named as the repository is) with `readme` as its `README.md`, a regular file (or, with `readmeMode`, another kind of entry; `null`, none at all).
+ * The repository's state, as GitHub's GraphQL API gives it: a package (by default, named as the repository is) with `readme` as its `README.md` (or, with `readmeName`, as that, which is read as a file of its own), a regular file (or, with `readmeMode`, another kind of entry; `null`, none at all), and `others` at its root too.
  * @type {(options: {
  *   readme: string,
  *   pkg: string,
@@ -131,6 +131,8 @@ function packageJson(name, extra = {}) {
  *   isPrivate?: boolean,
  *   archived?: boolean,
  *   readmeMode?: number | null,
+ *   readmeName?: string,
+ *   others?: Record<string, string>,
  * }) => RepoSpec}
  */
 function repo({
@@ -140,6 +142,8 @@ function repo({
 	isPrivate = false,
 	archived = false,
 	readmeMode = 0o100644,
+	readmeName = 'README.md',
+	others = {},
 }) {
 	const data = {
 		isArchived: archived,
@@ -151,18 +155,23 @@ function repo({
 			entries: [
 				{ name: '.github', mode: 0o40000 },
 				{ name: 'package.json', mode: 0o100644 },
-				...readmeMode === null ? [] : [{ name: 'README.md', mode: readmeMode }],
+				...readmeMode === null ? [] : [{ name: readmeName, mode: readmeMode }],
+				...Object.keys(others).map((name) => ({ name, mode: 0o100644 })),
 			],
 		},
 		workflows: { entries: standardWorkflows().map(({ name, text }) => ({ name, type: 'blob', object: { text } })) },
 	};
+	const file = readmeMode === null ? null : { text: readme, isTruncated: false };
 	// as the query reads it, which the helper's `RepositoryData` doesn't list, since only these tests need it
-	return { data: Object.assign(data, { readme: readmeMode === null ? null : { text: readme, isTruncated: false } }) };
+	return {
+		data: Object.assign(data, { readme: readmeName === 'README.md' ? file : null }),
+		files: { [readmeName]: file },
+	};
 }
 
 /**
- * Each repository in these tests, by name (in `ljharb`), as its `README.md`, `package.json`, and config are, and whether it's private.
- * @typedef {{ readme: string, pkg: string, config?: string, isPrivate?: boolean, archived?: boolean, readmeMode?: number | null }} Spec
+ * Each repository in these tests, by name (in `ljharb`), as its `README.md` (or `readmeName`), `package.json`, config, and other files are, and whether it's private.
+ * @typedef {{ readme: string, pkg: string, config?: string, isPrivate?: boolean, archived?: boolean, readmeMode?: number | null, readmeName?: string, others?: Record<string, string> }} Spec
  */
 
 /** @type {(names: string[], kind: keyof typeof drifted | 'clean', extra?: Partial<Spec>) => Record<string, Spec>} */
@@ -189,7 +198,7 @@ function githubFor(all) {
 }
 
 /**
- * A git server with each repository whose `main` has its `README.md` (unless it has none) and `package.json`, as the API says it does.
+ * A git server with each repository whose `main` has its `README.md` (or `readmeName`, and then no `README.md`; unless it has none), `package.json`, and other files, as the API says it does.
  * @type {(t: Test, all: Record<string, Spec>) => Remotes}
  */
 function remotesFor(t, all) {
@@ -198,12 +207,16 @@ function remotesFor(t, all) {
 		pkg,
 		config,
 		readmeMode,
+		readmeName = 'README.md',
+		others = {},
 	}]) => [
 		`ljharb/${n}`,
 		{
-			...readmeMode === null ? {} : { 'README.md': readme },
+			...readmeName === 'README.md' ? {} : { 'README.md': null },
+			...readmeMode === null ? {} : { [readmeName]: readme },
 			'package.json': pkg,
 			...typeof config === 'string' ? { '.github/ljharb-actions.json': config } : {},
+			...others,
 		},
 	])));
 }
@@ -962,6 +975,170 @@ test('fleet/commands: on the README drift report, `/fix` never writes through a 
 	t.ok(replies(requests)[0].includes('| `ljharb/heading` | failed: `` `README.md` is a symbolic link, so nothing is written through it `` |'), 'saying why it failed');
 	t.deepEqual(changes(requests), [], 'opening no PR');
 	t.equal(remotes.tip('ljharb/heading', `refs/heads/${readmeBranch}`), '', 'and pushing nothing');
+
+	t.end();
+});
+
+/** @type {(remotes: Remotes, repository: string, args: string[]) => string[]} */
+function remoteGit(remotes, repository, args) {
+	return git(path.join(remotes.serverURL, `${repository}.git`), args).split('\n').filter(Boolean);
+}
+
+/** @type {(name: string) => string} */
+function renameTitle(name) {
+	return `[readme] rename \`${name}\` to \`README.md\``;
+}
+
+test('fleet/commands: on the README drift report, `/fix` renames a README npm reads under another name to `README.md`, in a commit of its own that git always takes for a rename', (t) => {
+	const all = {
+		...specs(['markdown'], 'heading', { readmeName: 'README.markdown' }),
+		...specs(['lower'], 'clean', { readmeName: 'readme.md' }),
+		...specs(['several'], 'clean', { readmeName: 'readme.md', others: { 'README.markdown': 'another\n' } }),
+	};
+
+	const dry = command(t, '/dry-run fix ljharb', { github: githubFor(all) });
+	t.equal(dry.status, 0, 'a dry run exits successfully');
+	t.deepEqual(
+		replies(dry.requests),
+		[expectedReply('/dry-run fix ljharb', [
+			'| `ljharb/lower` | would create a PR: renaming `readme.md` to `README.md` |',
+			'| `ljharb/markdown` | would create a PR: renaming `README.markdown` to `README.md`, the heading |',
+			'| `ljharb/several` | nothing to fix<br>left as it is: several files npm could take as its README: `README.markdown`, `readme.md` |',
+		], { dryRun: true })],
+		'saying it would rename each, and fix the rest, but leave one with several files npm could take as its README as it is',
+	);
+
+	const remotes = remotesFor(t, all);
+	const line = '/fix ljharb';
+	const {
+		status,
+		stdout,
+		requests,
+	} = command(t, line, { github: githubFor(all), remotes });
+	t.equal(status, 0, 'exits successfully');
+	t.notOk((/^::(?:warning|error)::/m).test(stdout), 'without warning');
+	const { serverURL } = remotes;
+	t.deepEqual(
+		replies(requests),
+		[expectedReply(line, [
+			`| \`ljharb/lower\` | created ${serverURL}/ljharb/lower/pull/1 |`,
+			`| \`ljharb/markdown\` | created ${serverURL}/ljharb/markdown/pull/1 |`,
+			'| `ljharb/several` | nothing to fix<br>left as it is: several files npm could take as its README: `README.markdown`, `readme.md` |',
+		], { serverURL })],
+		'a row for each',
+	);
+	t.deepEqual(changes(requests), ['POST /repos/ljharb/lower/pulls', 'POST /repos/ljharb/markdown/pulls'], 'opening a PR in each it renames');
+	t.equal(remotes.tip('ljharb/several', `refs/heads/${readmeBranch}`), '', 'and pushing nothing where it’s ambiguous');
+
+	const markdown = 'ljharb/markdown';
+	t.deepEqual(
+		remotes.log(markdown, `main..${readmeBranch}`),
+		[title, renameTitle('README.markdown')].map((subject) => `${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${subject}`),
+		'renaming and fixing: two commits, by the bot, on `main`: the rename first',
+	);
+	t.deepEqual(remoteGit(remotes, markdown, ['diff', '-M', '--name-status', `main..${readmeBranch}~1`]), ['R100\tREADME.markdown\tREADME.md'], 'which is only the rename, so git always takes it for one');
+	t.deepEqual(changedFiles(remotes, markdown, `${readmeBranch}~1..${readmeBranch}`), ['README.md'], 'then the fix, of only `README.md`');
+	t.deepEqual(remoteGit(remotes, markdown, ['log', '--follow', '--format=%s', readmeBranch, '--', 'README.md']), [title, renameTitle('README.markdown'), 'initial'], 'so `git log --follow` follows it to where it was `README.markdown`');
+	t.equal(remotes.show(markdown, readmeBranch, 'README.md'), onNpmjsCom(canonical('markdown', markdown)), 'to match the fleet’s');
+	t.equal(remotes.show(markdown, readmeBranch, 'README.markdown'), null, 'with no `README.markdown` left');
+	const [created] = matching(requests, 'POST', /^\/repos\/ljharb\/markdown\/pulls$/);
+	t.equal(created.body.title, `${renameTitle('README.markdown')}, and update the heading and badges to match the fleet’s`, 'titled for both');
+	t.equal(
+		created.body.body,
+		[
+			`This renames \`README.markdown\`, which npm takes as the package’s README, to \`README.md\`, in a commit of its own, so that git always follows the rename, then makes its heading, the badges under it, and the link definitions they use match the fleet’s (see [\`ljharb/actions\`’s README drift report](${serverURL}/ljharb/actions/tree/HEAD/fleet/readme)), as asked in [this comment](${commentURL}):`,
+			'',
+			'- renaming `README.markdown` to `README.md`',
+			'- the heading',
+		].join('\n'),
+		'with a body saying it renames it, and what else it fixes',
+	);
+
+	const lower = 'ljharb/lower';
+	t.deepEqual(
+		remotes.log(lower, `main..${readmeBranch}`),
+		[title, renameTitle('readme.md')].map((subject) => `${bot.name} <${bot.email}>|${bot.name} <${bot.email}>|${subject}`),
+		'only renaming, with its `[package-url]` on `npmjs.org`: the rename, then a commit of its own for that',
+	);
+	t.deepEqual(remoteGit(remotes, lower, ['diff', '-M', '--name-status', `main..${readmeBranch}~1`]), ['R100\treadme.md\tREADME.md'], 'which renames it, even when only its case changes');
+	t.deepEqual(remoteGit(remotes, lower, ['diff', '--unified=0', `${readmeBranch}~1..${readmeBranch}`]).filter((l) => (/^[-+][^-+]/).test(l)), ['-[package-url]: https://npmjs.org/package/lower', '+[package-url]: https://npmjs.com/package/lower'], 'then writes only its `[package-url]` on `npmjs.com`');
+	t.equal(remotes.show(lower, readmeBranch, 'README.md'), onNpmjsCom(canonical('lower', lower)), 'leaving the rest of its text as it was');
+	const [renamed] = matching(requests, 'POST', /^\/repos\/ljharb\/lower\/pulls$/);
+	t.equal(renamed.body.title, renameTitle('readme.md'), 'titled as its rename');
+	t.equal(
+		renamed.body.body,
+		[
+			`This renames \`readme.md\`, which npm takes as the package’s README, to \`README.md\`, in a commit of its own, so that git always follows the rename, then writes its \`[package-url]\` definition on \`npmjs.com\`, as the fleet’s is (see [\`ljharb/actions\`’s README drift report](${serverURL}/ljharb/actions/tree/HEAD/fleet/readme)), as asked in [this comment](${commentURL}):`,
+			'',
+			'- renaming `readme.md` to `README.md`',
+		].join('\n'),
+		'with a body saying that it renames it, and writes that',
+	);
+
+	const head = remotes.tip(markdown, `refs/heads/${readmeBranch}`);
+	const again = command(t, `/fix ${markdown}`, {
+		github: githubFor(all),
+		commands: {
+			pulls: {
+				[markdown]: [{
+					number: 1,
+					state: 'open',
+					merged_at: null, // eslint-disable-line camelcase
+					head: { sha: head },
+				}],
+			},
+		},
+		remotes,
+	});
+	t.equal(again.status, 0, 'again: exits successfully');
+	t.deepEqual(outcomeRows(again.requests), [`| \`${markdown}\` | already up to date: ${serverURL}/ljharb/markdown/pull/1 |`], 'again: its PR, already those two commits, is up to date');
+	t.equal(remotes.tip(markdown, `refs/heads/${readmeBranch}`), head, 'again: so nothing is pushed');
+
+	t.end();
+});
+
+test('fleet/commands: on the README drift report, `/fix` that only renames a README changes nothing else in it but an `npmjs.org` `[package-url]`', (t) => {
+	/** @type {(text: string) => string} */
+	const mixed = (text) => text.replace('A package.\n', 'A package.\r\n').replace('Some prose.\n', 'Some prose.\r\n');
+	const all = {
+		...specs(['dotcom'], 'clean', { readmeName: 'readme.markdown', readme: onNpmjsCom(canonical('dotcom', 'ljharb/dotcom')) }),
+		...specs(['mixed'], 'clean', { readmeName: 'readme.markdown', readme: mixed(canonical('mixed', 'ljharb/mixed')) }),
+	};
+	const remotes = remotesFor(t, all);
+	const { status, requests } = command(t, '/fix ljharb', { github: githubFor(all), remotes });
+	t.equal(status, 0, 'exits successfully');
+	t.deepEqual(changes(requests), ['POST /repos/ljharb/dotcom/pulls', 'POST /repos/ljharb/mixed/pulls'], 'opening a PR in each');
+
+	t.deepEqual(remotes.log('ljharb/dotcom', `main..${readmeBranch}`).map((l) => l.split('|')[2]), [renameTitle('readme.markdown')], 'with its `[package-url]` already on `npmjs.com`: one commit, which only renames it');
+	t.equal(remotes.show('ljharb/dotcom', readmeBranch, 'README.md'), onNpmjsCom(canonical('dotcom', 'ljharb/dotcom')), 'leaving its text as it was');
+
+	t.deepEqual(remotes.log('ljharb/mixed', `main..${readmeBranch}`).map((l) => l.split('|')[2]), [title, renameTitle('readme.markdown')], 'with it on `npmjs.org`: the rename, then that');
+	t.equal(remotes.show('ljharb/mixed', readmeBranch, 'README.md'), onNpmjsCom(mixed(canonical('mixed', 'ljharb/mixed'))), 'changing only that line, so its mixed line endings are kept as they were');
+	t.end();
+});
+
+test('fleet/commands: on the README drift report, `/fix` renames a README only when `filename` isn’t filtered out, and otherwise fixes it where it is', (t) => {
+	const all = specs(['markdown'], 'heading', { readmeName: 'README.markdown' });
+	const repository = 'ljharb/markdown';
+
+	const inPlace = remotesFor(t, all);
+	const heading = command(t, `/fix ${repository} heading`, { github: githubFor(all), remotes: inPlace });
+	t.equal(heading.status, 0, '`heading`: exits successfully');
+	t.deepEqual(inPlace.log(repository, `main..${readmeBranch}`).map((l) => l.split('|')[2]), [title], '`heading`: one commit, which doesn’t rename it');
+	t.deepEqual(changedFiles(inPlace, repository, `main..${readmeBranch}`), ['README.markdown'], '`heading`: changing only `README.markdown`');
+	t.equal(inPlace.show(repository, readmeBranch, 'README.markdown'), onNpmjsCom(canonical('markdown', repository)), '`heading`: fixed where it is');
+	const [fixed] = matching(heading.requests, 'POST', /^\/repos\/ljharb\/markdown\/pulls$/);
+	t.equal(fixed.body.title, title, '`heading`: titled as a fix');
+	t.ok(fixed.body.body.startsWith('This makes `README.markdown`’s heading, the badges under it, and the link definitions they use match the fleet’s'), '`heading`: saying which file it fixes');
+
+	const renamed = remotesFor(t, all);
+	const filename = command(t, `/fix ${repository} filename`, { github: githubFor(all), remotes: renamed });
+	t.equal(filename.status, 0, '`filename`: exits successfully');
+	t.deepEqual(renamed.log(repository, `main..${readmeBranch}`).map((l) => l.split('|')[2]), [title, renameTitle('README.markdown')], '`filename`: the rename, then only its `[package-url]` written on `npmjs.com`, since it’s fixed');
+	t.equal(renamed.show(repository, readmeBranch, 'README.md'), onNpmjsCom(drifted.heading('markdown', repository)), '`filename`: leaving its heading as it was');
+
+	const dry = command(t, `/dry-run fix ${repository} heading`, { github: githubFor(all) });
+	t.deepEqual(outcomeRows(dry.requests), [`| \`${repository}\` | would create a PR: the heading |`], 'a dry run says the same');
 
 	t.end();
 });

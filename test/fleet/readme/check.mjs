@@ -198,6 +198,74 @@ test('checkReadme: a drifted README', (t) => {
 	t.end();
 });
 
+test('unreadable: a README under another name', (t) => {
+	t.equal(unreadable(state({ readmeName: 'README.markdown' })), null, 'a regular one that was read in full is readable');
+	t.equal(unreadable(state({ readmeName: 'readme.md', readme: null })), '`readme.md` could not be read in full', 'one too big to read in full is named');
+	t.equal(unreadable(state({ readmeName: 'README.markdown', readmeRegular: false })), '`README.markdown` is not a regular file', 'as is one that isn’t a regular file');
+	t.equal(unreadable(state({ readmeName: null, readme: null, readmeRegular: false })), 'there is no `README.md`', 'with none npm takes, there’s no `README.md`');
+	t.equal(
+		unreadable(state({
+			readmeName: null,
+			readmeAmbiguous: ['README.markdown', 'readme.md'],
+			readme: null,
+			readmeRegular: false,
+		})),
+		'several files npm could take as its README: `README.markdown`, `readme.md`',
+		'several npm could take, which it can’t tell apart, are named',
+	);
+
+	t.end();
+});
+
+test('checkReadme: a README under another name', (t) => {
+	const renamed = present(checkReadme(state({ readmeName: 'README.markdown' })));
+	t.deepEqual(renamed, {
+		repository: 'ljharb/repo',
+		readme: 'README.markdown',
+		drifted: ['filename'],
+		diff: '',
+		error: null,
+	}, 'a canonical one is only filename drift, named, with no diff, since its text is as it should be');
+
+	const both = present(checkReadme(state({ readmeName: 'readme.md', readme: canonical.replace('# pkg <sup>', '# old-name <sup>') })));
+	t.deepEqual(both.drifted, ['filename', 'heading'], 'its other discrepancies are found too, after its file name');
+	t.equal(both.readme, 'readme.md', 'named');
+	t.match(both.diff, /^--- readme\.md \(actual\)$/m, 'with a diff from the actual README, as it’s named');
+	t.match(both.diff, /^\+\+\+ README\.md \(expected\)$/m, 'to the expected `README.md`');
+	t.match(both.diff, /^\+# pkg <sup>/m, 'fixing its heading');
+
+	const several = {
+		readmeName: null,
+		readmeAmbiguous: ['README.markdown', 'readme.md'],
+		readme: null,
+		readmeRegular: false,
+	};
+	t.deepEqual(checkReadme(state(several)), {
+		repository: 'ljharb/repo',
+		drifted: [],
+		diff: '',
+		error: 'several files npm could take as its README: `README.markdown`, `readme.md`',
+	}, 'several npm could take are an error, not drift');
+
+	t.end();
+});
+
+test('checkReadme: a README whose only discrepancy is its file name is diffed against only what `/fix` would change in it', (t) => {
+	const mixed = canonical.replace('Some prose about the package.\n', 'Some prose about the package.\r\n');
+	t.equal(present(checkReadme(state({ readmeName: 'readme.md', readme: mixed }))).diff, '', 'nothing, even with mixed line endings, which fixing anything else would make all `\\n`s');
+
+	const org = mixed.replace('[package-url]: https://npmjs.com/package/pkg', '[package-url]: https://npmjs.org/package/pkg');
+	const relinked = present(checkReadme(state({ readmeName: 'readme.md', readme: org })));
+	t.deepEqual(relinked.drifted, ['filename'], 'with its `[package-url]` on `npmjs.org`, still only its file name drifted');
+	t.deepEqual(
+		relinked.diff.split('\n').filter((line) => (/^[-+][^-+]/).test(line)),
+		['-[package-url]: https://npmjs.org/package/pkg', '+[package-url]: https://npmjs.com/package/pkg'],
+		'but its diff is that definition, written on `npmjs.com`, as `/fix` writes it when it renames it, and nothing else',
+	);
+
+	t.end();
+});
+
 test('checkReadme: how the title is found', (t) => {
 	t.equal(checkReadme(state({ readme: `\uFEFF${canonical}` })), null, 'a canonical README after a byte order mark has no discrepancies');
 	const bomDrifted = present(checkReadme(state({ readme: `\uFEFF${canonical.replace('# pkg <sup>', '# old-name <sup>')}` })));

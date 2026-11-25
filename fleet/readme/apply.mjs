@@ -27,7 +27,8 @@ import { marker as saidMarker } from '../lib/said.mjs';
 import { identityOf, unreadable } from './check.mjs';
 import {
 	drift,
-	fixReadme,
+	fixedReadme,
+	npmReadme,
 	readmePath,
 } from './readme.mjs';
 
@@ -36,6 +37,10 @@ import {
 /** @import { Category, Skip } from './readme.mjs' */
 /** @typedef {{ state: RepoState, categories: Set<Category> | undefined }} Candidate */
 /**
+ * What `/fix` changes in a README, which is the file `name`: with `rename`, it's renamed to `readmePath`, in a commit of its own; with `text`, that's what it's made, after any rename.
+ * @typedef {{ name: string, rename: boolean, text: string | null }} Change
+ */
+/**
  * @typedef {{
  *   auth: ReturnType<typeof appAuth>,
  *   identities: Map<number, Promise<Identity>>,
@@ -43,7 +48,7 @@ import {
  *   link: string,
  * }} Context
  */
-/** @typedef {{ context: Context, state: RepoState, base: string, categories: Set<Category> | undefined, fixing: Category[] }} Job */
+/** @typedef {{ context: Context, state: RepoState, base: string, categories: Set<Category> | undefined, fixing: Category[], name: string }} Job */
 
 export const branch = readmeBranch;
 const title = '[readme] update the heading and badges to match the fleet’s';
@@ -54,21 +59,31 @@ const {
 	GITHUB_REPOSITORY = '',
 } = process.env;
 
-/** @type {Record<Category, string>} */
+/** @type {(name: string) => string} */
+function renameTitle(name) {
+	return `[readme] rename ${code(name)} to ${code(readmePath)}`;
+}
+
+/** @type {Record<Exclude<Category, 'filename'>, string>} */
 const changes = {
 	heading: 'the heading',
 	badges: 'the badges under it',
 	links: 'the link definitions they use',
 };
 
-/** @type {(categories: Category[]) => string} */
-function described(categories) {
-	return categories.map((c) => changes[c]).join(', ');
+/** @type {(category: Category, name: string) => string} */
+function change(category, name) {
+	return category === 'filename' ? `renaming ${code(name)} to ${code(readmePath)}` : changes[category];
 }
 
-/** @type {(base: string) => string} */
-function matched(base) {
-	return `${code(base)}’s ${code(readmePath)} already matches`;
+/** @type {(categories: Category[], name: string) => string} */
+function described(categories, name) {
+	return categories.map((c) => change(c, name)).join(', ');
+}
+
+/** @type {(base: string, name: string) => string} */
+function matched(base, name) {
+	return `${code(base)}’s ${code(name)} already matches`;
 }
 
 /** @type {(state: RepoState, number: number) => string} */
@@ -92,60 +107,94 @@ function identityFor({ auth, identities }, installation) {
 	return identity;
 }
 
-/** @type {(fixing: Category[], skipped: Skip[], link: string) => string} */
-function prBody(fixing, skipped, link) {
-	return [
-		`This makes ${code(readmePath)}’s heading, the badges under it, and the link definitions they use match the fleet’s (see [\`${GITHUB_REPOSITORY}\`’s README drift report](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/HEAD/fleet/readme)), as asked in [this comment](${link}):`,
-		'',
-		...fixing.map((c) => `- ${changes[c]}`),
-		...skipped.length > 0 ? [
-			'',
-			'These are left as they are:',
-			'',
-			...skipped.map((s) => `- ${s.why}`),
-		] : [],
-	].join('\n');
+/**
+ * The PR's title: its rename's, when that's all it does; with a rename, that and its fix's.
+ * @type {(fixing: Category[], name: string) => string}
+ */
+function prTitle(fixing, name) {
+	if (!fixing.includes('filename')) {
+		return title;
+	}
+	return fixing.length === 1 ? renameTitle(name) : `${renameTitle(name)}, and ${title.slice('[readme] '.length)}`;
 }
 
 /**
- * What `/fix` would change in `state`'s README, limited to `categories` (unspecified: all of them), as it is in `state`: the kinds of discrepancy it fixes, its new text (with the default branch it's for), and what it can't fix. A README that can't be fixed at all (see `identityOf` and `unreadable`) is left as it is, saying why, as the drift report already does: like a workflow file `/fix` can't plan, it's nothing to fix, not a failure.
- * @type {(state: RepoState, categories: Set<Category> | undefined) => { fixing: Category[], text: null, skipped: Skip[] } | { fixing: Category[], text: string, skipped: Skip[], base: string }}
+ * What a PR that renames the README does after the rename, in its second commit, if it has one (`count` is how many it has): fixes what else drifted, or, with nothing else, writes its `[package-url]` on `npmjs.com` (see `fixedReadme`).
+ * @type {(fixes: boolean, count: number) => string}
+ */
+function afterRename(fixes, count) {
+	if (fixes) {
+		return ', then makes its heading, the badges under it, and the link definitions they use match the fleet’s';
+	}
+	return count > 1 ? ', then writes its `[package-url]` definition on `npmjs.com`, as the fleet’s is' : '';
+}
+
+/** @type {(described: { fixing: Category[], skipped: Skip[], link: string, name: string, count: number }) => string} */
+function prBody({
+	fixing,
+	skipped,
+	link,
+	name,
+	count,
+}) {
+	const report = `see [\`${GITHUB_REPOSITORY}\`’s README drift report](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/HEAD/fleet/readme)`;
+	const intro = fixing.includes('filename')
+		? `This renames ${code(name)}, which npm takes as the package’s README, to ${code(readmePath)}, in a commit of its own, so that git always follows the rename${afterRename(fixing.some((c) => c !== 'filename'), count)} (${report}), as asked in [this comment](${link}):`
+		: `This makes ${code(name)}’s heading, the badges under it, and the link definitions they use match the fleet’s (${report}), as asked in [this comment](${link}):`;
+	return [intro, ''].concat(
+		fixing.map((c) => `- ${change(c, name)}`),
+		skipped.length > 0 ? [
+			'',
+			'These are left as they are:',
+			'',
+		].concat(skipped.map((s) => `- ${s.why}`)) : [],
+	).join('\n');
+}
+
+/**
+ * What `/fix` would change in `state`'s README, limited to `categories` (unspecified: all of them), as it is in `state`: the kinds of discrepancy it fixes, the change (see `Change`; with the default branch it's for), and what it can't fix. A README that can't be fixed at all (see `identityOf` and `unreadable`) is left as it is, saying why, as the drift report already does: like a workflow file `/fix` can't plan, it's nothing to fix, not a failure.
+ * @type {(state: RepoState, categories: Set<Category> | undefined) => { fixing: Category[], change: null, skipped: Skip[] } | { fixing: Category[], change: Change, skipped: Skip[], base: string }}
  */
 export function planReadme(state, categories) {
 	const known = identityOf(state);
 	if ('error' in known) {
 		return {
 			fixing: [],
-			text: null,
+			change: null,
 			skipped: [{ why: known.error }],
 		};
 	}
 	const why = unreadable(state);
-	if (why !== null || state.readme === null) {
+	if (why !== null || state.readme === null || state.readmeName === null) {
 		// `unreadable` always says why when there's no README
 		return {
 			fixing: [],
-			text: null,
+			change: null,
 			skipped: [why].filter((w) => w !== null).map((w) => ({ why: w })),
 		};
 	}
-	const found = drift(state.readme, known.identity).filter((c) => !categories || categories.size === 0 || categories.has(c));
+	const found = drift(state.readme, known.identity, state.readmeName).filter((c) => !categories || categories.size === 0 || categories.has(c));
 	if (found.length === 0) {
 		return {
-			fixing: [], text: null, skipped: [],
+			fixing: [], change: null, skipped: [],
 		};
 	}
-	const { text, skipped } = fixReadme(state.readme, known.identity, new Set(found));
-	if (text === state.readme) {
+	const rename = found.includes('filename');
+	const { text, skipped } = fixedReadme(state.readme, known.identity, found);
+	if (!rename && text === state.readme) {
 		return {
 			fixing: found,
-			text: null,
+			change: null,
 			skipped,
 		};
 	}
 	return {
 		fixing: found,
-		text,
+		change: {
+			name: state.readmeName,
+			rename,
+			text: text === state.readme ? null : text,
+		},
 		skipped,
 		base: known.identity.branch,
 	};
@@ -167,31 +216,83 @@ function cloneState(git, state) {
 		const shown = git(['show', `HEAD:${file}`], { allowFailure: true });
 		return shown.status === 0 ? shown.stdout : null;
 	};
-	const [entry = ''] = git([
+	// each entry at the root: its mode, its type, and its object, then a tab, then its name
+	const entries = git([
 		'ls-tree',
 		'-z',
 		'HEAD',
-		'--',
-		readmePath,
-	]).stdout.split('\0').filter(Boolean);
+	]).stdout.split('\0').filter(Boolean).map((line) => {
+		const [info, name] = line.split('\t');
+		const [mode, type] = info.split(' ');
+		return {
+			name,
+			mode,
+			directory: type === 'tree' || type === 'commit',
+		};
+	});
+	const { name, ambiguous } = npmReadme(entries);
 	return {
 		...state,
 		packageJson: show('package.json'),
-		readme: show(readmePath),
-		readmeRegular: entry.startsWith('100644 blob '),
+		readme: show(name ?? readmePath),
+		readmeName: name,
+		readmeAmbiguous: ambiguous,
+		readmeRegular: entries.some((e) => e.name === name && e.mode === '100644'),
 	};
 }
 
 /**
- * Where the README is in the clone: refused when it's a symbolic link, which would be written through, since `unreadable` only checked it as it was read (see `cloneState`, which checks it again).
- * @type {(dir: string) => string}
+ * Where the README, `name`, is in the clone: refused when it's a symbolic link, which would be written through (or, renamed, committed as one), since `unreadable` only checked it as it was read (see `cloneState`, which checks it again).
+ * @type {(dir: string, name: string) => string}
  */
-function readmeIn(dir) {
-	const file = path.join(dir, readmePath);
+function readmeIn(dir, name) {
+	const file = path.join(dir, name);
 	if (lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
-		throw new Error(`\`${readmePath}\` is a symbolic link, so nothing is written through it`);
+		throw new Error(`\`${name}\` is a symbolic link, so nothing is written through it`);
 	}
 	return file;
+}
+
+/**
+ * Commits `change` in the clone, on `base`'s tip: a rename first, on its own (only `git mv`, so that git always takes it for a rename, however much the text then changes), then the new text, if any, in the README wherever it then is. Returns how many commits it made.
+ * @type {(git: Git, options: { dir: string, base: string, change: Change }) => number}
+ */
+function commitChange(git, {
+	dir,
+	base,
+	change: {
+		name,
+		rename,
+		text,
+	},
+}) {
+	readmeIn(dir, name);
+	if (rename) {
+		git([
+			'mv',
+			'--',
+			name,
+			readmePath,
+		]);
+		commitChanges(git, {
+			base,
+			message: renameTitle(name),
+			paths: [readmePath],
+			allowed: (file) => file === name || file === readmePath,
+		});
+	}
+	const file = rename ? readmePath : name;
+	if (text !== null) {
+		writeFileSync(readmeIn(dir, file), text);
+	}
+	const fixed = text !== null && commitChanges(git, {
+		base,
+		message,
+		paths: [file],
+		allowed: (changed) => changed === file,
+		commits: Number(rename),
+	});
+	return Number(rename) + Number(fixed);
 }
 
 /**
@@ -206,9 +307,13 @@ async function closeMatched({
 	tip,
 	identity,
 }) {
-	const { state, base } = job;
+	const {
+		state,
+		base,
+		name,
+	} = job;
 	if (prState.mode !== 'update' || isFiltered(job)) {
-		return `nothing to fix: ${matched(base)}`;
+		return `nothing to fix: ${matched(base, name)}`;
 	}
 	if (tip) {
 		assertBotOwned(git, {
@@ -225,7 +330,7 @@ async function closeMatched({
 		number: prState.number,
 		author: identity.name,
 		marker: saidMarker('matches', prState.head),
-		body: `${matched(base)} what this PR would make it, so the App closes it.`,
+		body: `${matched(base, name)} what this PR would make it, so the App closes it.`,
 	});
 	await closePR({
 		octokit,
@@ -238,7 +343,7 @@ async function closeMatched({
 			kept: { kind: 'matches', head: prState.head },
 		},
 	});
-	return `closed ${prURL(state, prState.number)}: ${matched(base)}`;
+	return `closed ${prURL(state, prState.number)}: ${matched(base, name)}`;
 }
 
 /** @type {(job: Job) => Promise<string>} */
@@ -256,7 +361,7 @@ async function openPR(job) {
 	} = state;
 	const token = await installationToken(context.auth, installationId, {
 		repositoryNames: [name],
-		// the PR's one commit only changes the README, but pushing its branch onto the base's tip makes the base's own commits reachable from it, and GitHub refuses that from an App without Workflows (write) when any of them changes a workflow file
+		// the PR's commits only change the README, but pushing its branch onto the base's tip makes the base's own commits reachable from it, and GitHub refuses that from an App without Workflows (write) when any of them changes a workflow file
 		permissions: {
 			contents: 'write',
 			pull_requests: 'write', // eslint-disable-line camelcase
@@ -284,23 +389,22 @@ async function openPR(job) {
 			branch,
 		});
 		const tip = remoteTip(git, branch);
-		// the PR is always one commit, on the base's current tip, with the whole change, planned again from there
-		const plan = planReadme(cloneState(git, state), categories);
+		// the PR is always on the base's current tip, with the whole change, planned again from there: one commit, but for a rename, which is a commit of its own, before it
+		const cloned = cloneState(git, state);
+		const readme = cloned.readmeName ?? readmePath;
+		const plan = planReadme(cloned, categories);
 		// its README changed since it was read, so that it can't be fixed at all (eg, it's gone, or became a symbolic link): that's not its base matching, so the PR is left as it is
-		if (plan.text === null && plan.fixing.length === 0 && plan.skipped.length > 0) {
+		if (plan.change === null && plan.fixing.length === 0 && plan.skipped.length > 0) {
 			return ['nothing to fix', ...skips(plan.skipped)].join('<br>');
 		}
-		if (plan.text !== null) {
-			writeFileSync(readmeIn(clone), plan.text);
-		}
-		if (plan.text === null || !commitChanges(git, {
+		const count = plan.change === null ? 0 : commitChange(git, {
+			dir: clone,
 			base,
-			message,
-			paths: [readmePath],
-			allowed: (file) => file === readmePath,
-		})) {
+			change: plan.change,
+		});
+		if (count === 0) {
 			return await closeMatched({
-				job,
+				job: { ...job, name: readme },
 				octokit,
 				git,
 				prState,
@@ -319,9 +423,16 @@ async function openPR(job) {
 				state: prState,
 				tip,
 				identity,
-				title,
-				body: prBody(plan.fixing, plan.skipped, context.link),
+				title: prTitle(plan.fixing, readme),
+				body: prBody({
+					fixing: plan.fixing,
+					skipped: plan.skipped,
+					link: context.link,
+					name: readme,
+					count,
+				}),
 				isPrivate: state.private,
+				count,
 			}),
 			...skips(plan.skipped),
 		].join('<br>');
@@ -355,7 +466,7 @@ async function describePR(job) {
 		update: `would update ${pr}`,
 		reopen: `would reopen and update ${pr}`,
 	}[prState.mode];
-	return `${action}: ${described(fixing)}`;
+	return `${action}: ${described(fixing, job.name)}`;
 }
 
 /**
@@ -373,7 +484,7 @@ export async function fixReadmeRepo(
 		throw new Error(state.stateError);
 	}
 	const plan = planReadme(state, categories);
-	if (plan.text === null) {
+	if (plan.change === null) {
 		return ['nothing to fix', ...skips(plan.skipped)].join('<br>');
 	}
 	const { base } = plan;
@@ -383,6 +494,7 @@ export async function fixReadmeRepo(
 		base,
 		categories,
 		fixing: plan.fixing,
+		name: plan.change.name,
 	};
 	if (context.dryRun) {
 		return [await describePR(job), ...skips(plan.skipped)].join('<br>');

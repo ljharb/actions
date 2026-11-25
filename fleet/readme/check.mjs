@@ -5,23 +5,25 @@ import path from 'path';
 import { exec } from '../lib/exec.mjs';
 import {
 	drift,
-	fixReadme,
+	fixedReadme,
 	readmePath,
 } from './readme.mjs';
 
 /** @import { RepoState } from '../lib/app.mjs' */
 /** @import { Category, Identity } from './readme.mjs' */
-/** @typedef {{ repository: string, drifted: Category[], diff: string, error: string | null }} Result */
+// `readme` is the README's file name, when it isn't `README.md` (see `npmReadme`)
+/** @typedef {{ repository: string, readme?: string, drifted: Category[], diff: string, error: string | null }} Result */
 
-/** @type {(actual: string, expected: string) => string} */
-function unifiedDiff(actual, expected) {
+// the actual side is labelled with the file it's in, which may not be `README.md` (see `npmReadme`)
+/** @type {(name: string, actual: string, expected: string) => string} */
+function unifiedDiff(name, actual, expected) {
 	const dir = mkdtempSync(path.join(process.env.RUNNER_TEMP || tmpdir(), 'readme-drift-'));
 	const a = path.join(dir, 'actual');
 	const b = path.join(dir, 'expected');
 	writeFileSync(a, actual);
 	writeFileSync(b, expected);
 	return exec('diff', [
-		'-u', '--label', `${readmePath} (actual)`, '--label', `${readmePath} (expected)`, a, b,
+		'-u', '--label', `${name} (actual)`, '--label', `${readmePath} (expected)`, a, b,
 	], { allowFailure: true }).stdout;
 }
 
@@ -88,12 +90,21 @@ export function identityOf(state) {
  * Why `state`'s README can't be checked (or fixed) at all, if it can't.
  * @type {(state: RepoState) => string | null}
  */
-export function unreadable({ readme, readmeRegular }) {
+export function unreadable({
+	readme,
+	readmeName,
+	readmeAmbiguous,
+	readmeRegular,
+}) {
+	if (readmeAmbiguous.length > 0) {
+		return `several files npm could take as its README: ${readmeAmbiguous.map((name) => `\`${name}\``).join(', ')}`;
+	}
+	const name = readmeName ?? readmePath;
 	if (readme === null) {
-		return readmeRegular ? `\`${readmePath}\` could not be read in full` : `there is no \`${readmePath}\``;
+		return readmeRegular ? `\`${name}\` could not be read in full` : `there is no \`${name}\``;
 	}
 	// a symbolic link's text is its target, and an executable file would stop being one
-	return readmeRegular ? null : `\`${readmePath}\` is not a regular file`;
+	return readmeRegular ? null : `\`${name}\` is not a regular file`;
 }
 
 /**
@@ -117,18 +128,20 @@ export function checkReadme(state) {
 		return { ...empty, error: [state.configError, known.error].filter(Boolean).join('; ') };
 	}
 	const why = unreadable(state);
-	if (why !== null || state.readme === null) {
+	if (why !== null || state.readme === null || state.readmeName === null) {
 		return { ...empty, error: [state.configError, why].filter(Boolean).join('; ') };
 	}
-	const drifted = drift(state.readme, known.identity);
+	const drifted = drift(state.readme, known.identity, state.readmeName);
 	const error = state.configError;
 	if (drifted.length === 0) {
 		return error ? { ...empty, error } : null;
 	}
 	return {
 		repository: state.repository,
+		...state.readmeName === readmePath ? {} : { readme: state.readmeName },
 		drifted,
-		diff: unifiedDiff(state.readme, fixReadme(state.readme, known.identity).text),
+		// against what an unfiltered `/fix` writes, which fixes exactly what drifted
+		diff: unifiedDiff(state.readmeName, state.readme, fixedReadme(state.readme, known.identity, drifted).text),
 		error,
 	};
 }

@@ -5,10 +5,12 @@ import {
 	definitions,
 	drift,
 	fixReadme,
+	fixedReadme,
 	headingFor,
 	isCategory,
 	kindOf,
 	npmBadge,
+	npmReadme,
 	readmePath,
 	standardBadges,
 } from '../../../fleet/readme/readme.mjs';
@@ -82,8 +84,8 @@ function fixture(name, text, id = identity) {
 	return text;
 }
 
-test('readme: categories are heading, badges, and links, and only those are categories', (t) => {
-	t.deepEqual(categories, ['heading', 'badges', 'links'], 'the categories, in order');
+test('readme: categories are filename, heading, badges, and links, and only those are categories', (t) => {
+	t.deepEqual(categories, ['filename', 'heading', 'badges', 'links'], 'the categories, in order');
 	t.ok(Object.isFrozen(categories), 'the categories are frozen');
 	categories.forEach((c) => {
 		t.equal(isCategory(c), true, `\`${c}\` is a category`);
@@ -92,6 +94,36 @@ test('readme: categories are heading, badges, and links, and only those are cate
 		t.equal(isCategory(word), false, `\`${word}\` is not a category`);
 	});
 	t.equal(readmePath, 'README.md', 'the README is README.md');
+	t.end();
+});
+
+test('readme: npmReadme is the file npm takes as the README, or `README.md`, exactly, when there’s one', (t) => {
+	/** @type {(...names: string[]) => { name: string, directory: boolean }[]} */
+	const files = (...names) => names.map((name) => ({ name, directory: false }));
+	const none = { name: null, ambiguous: [] };
+	t.deepEqual(npmReadme([]), none, 'nothing at the root: none');
+	t.deepEqual(npmReadme(files('README.md', 'readme.markdown', 'README')), { name: 'README.md', ambiguous: [] }, '`README.md`, exactly, whatever else there is');
+	['README.markdown', 'readme.md', 'Readme.MD', 'README.mkd', 'README.mdown', 'README.mark', 'README.', 'readme.foo.md'].forEach((name) => {
+		t.deepEqual(npmReadme(files('package.json', name, 'README')), { name, ambiguous: [] }, `\`${name}\`, with a markdown extension (or a bare trailing dot), in any case, over a plain \`README\``);
+	});
+	t.deepEqual(npmReadme(files('package.json', 'README')), { name: 'README', ambiguous: [] }, 'a plain `README`, without one');
+	t.deepEqual(npmReadme(files('README.README')), { name: 'README.README', ambiguous: [] }, 'or any other whose name ends with `README`');
+	['readme', 'Readme', 'README.txt', 'README.rst', 'readme.txt', 'READMEmd', 'README-md', 'xREADME.md', 'docs/README.md'].forEach((name) => {
+		t.deepEqual(npmReadme(files(name)), none, `\`${name}\` isn’t one, as npm has it`);
+	});
+	t.deepEqual(npmReadme([{ name: 'README.md', directory: true }, { name: 'readme.markdown', directory: true }]), none, 'nor is a directory (or a submodule)');
+	t.deepEqual(npmReadme([{ name: 'README.md', directory: true }, ...files('readme.md')]), { name: 'readme.md', ambiguous: [] }, 'so a directory named `README.md` leaves the file npm takes');
+	t.deepEqual(npmReadme(files('readme.md', 'README.markdown', 'README')), { name: null, ambiguous: ['README.markdown', 'readme.md'] }, 'several with a markdown extension are ambiguous, since npm takes whichever its glob lists first');
+	t.deepEqual(npmReadme(files('README', 'readme.README')), { name: null, ambiguous: ['README', 'readme.README'] }, 'as are several ending with `README`');
+	t.end();
+});
+
+test('readme: a README under another name than `README.md` is filename drift, first', (t) => {
+	const text = canonical();
+	t.deepEqual(drift(text, identity, readmePath), [], 'as `README.md`, a canonical README has no drift');
+	t.deepEqual(drift(text, identity, 'readme.md'), ['filename'], 'under any other name, even in another case, it’s filename drift');
+	t.deepEqual(drift(text.replace(headingFor('foo'), '# foo'), identity, 'README.markdown'), ['filename', 'heading'], 'before any other');
+	t.equal(fixReadme(text, identity, only('filename')).text, text, 'fixing only the file name leaves the text as it is');
 	t.end();
 });
 
@@ -1089,6 +1121,21 @@ test('readme: any other npm link is drift, and fixing it writes npmjs.com', (t) 
 	const missing = fixture('npm link missing', canonical({ defs: definitionLines().slice(1) }));
 	t.deepEqual(drift(missing, identity), ['links'], 'a missing one is link drift');
 	t.equal(fixReadme(missing, identity).text, canonical({ defs: definitionLines().slice(1).concat(comLine) }), 'and fixing it adds it on npmjs.com');
+	t.end();
+});
+
+test('readme: fixing only a README’s file name writes an npm link on npmjs.org on npmjs.com, and changes nothing else', (t) => {
+	const com = canonical();
+	t.deepEqual(fixedReadme(com, identity, ['filename']), { text: com, skipped: [] }, 'one on npmjs.com is left as it is');
+
+	const org = `\uFEFF${canonical().replace(comLine, `${orgLine}  `).replace('A description of foo.\n', 'A description of foo.\r\n')}`;
+	t.deepEqual(fixedReadme(org, identity, ['filename']), { text: org.replace(orgLine, comLine), skipped: [] }, 'one on npmjs.org is written on npmjs.com, keeping its trailing whitespace, the byte order mark, and mixed line endings');
+
+	const first = `${orgLine}\r\n${canonical()}`.replace(`\n${comLine}\n`, '\n');
+	t.equal(fixedReadme(first, identity, ['filename']).text, first.replace(orgLine, comLine), 'as is one on the first line');
+
+	const heading = org.replace(headingFor('foo'), '# foo');
+	t.deepEqual(fixedReadme(heading, identity, ['filename', 'heading']), fixReadme(heading, identity, only('heading')), 'with anything else, it’s fixed as `fixReadme` fixes the rest');
 	t.end();
 });
 

@@ -3,14 +3,16 @@ import { GitHub, defaults } from '@actions/github/lib/utils';
 import { createAppAuth } from '@octokit/auth-app';
 import { retry as retryPlugin } from '@octokit/plugin-retry';
 
+import { npmReadme, readmePath } from '../readme/readme.mjs';
 import { mergeConfig, parseConfig } from './config.mjs';
 import { isIgnored } from './ignored.mjs';
 import { accountLogin, awaitingApproval } from './installations.mjs';
 
 /** @typedef {ReturnType<typeof getOctokit>} Octokit */
 /** @import { Config } from './config.mjs' */
+/** @import { RootEntry } from '../readme/readme.mjs' */
 /** @typedef {{ name: string, text: string | null }} WorkflowFile */
-// an `external` state is a fork's source the App isn't installed on: its `installationId` is borrowed from the fork, for reading only
+// an `external` state is a fork's source the App isn't installed on: its `installationId` is borrowed from the fork, for reading only; `readme` is the text of the file npm takes as its README, `readmeName` (see `npmReadme`), or, when there's none, of `README.md`, if that can be read; `readmeAmbiguous` are the files npm could take as it, when it can't be told which
 /**
  * @typedef {{
  *   owner: string,
@@ -28,6 +30,8 @@ import { accountLogin, awaitingApproval } from './installations.mjs';
  *   packageJsonRegular: boolean,
  *   workflows: WorkflowFile[] | null,
  *   readme: string | null,
+ *   readmeName: string | null,
+ *   readmeAmbiguous: string[],
  *   readmeRegular: boolean,
  *   fork: boolean,
  *   source: { repository: string, archived: boolean, private: boolean } | null,
@@ -209,6 +213,17 @@ function isRegularFile(entries, name) {
 	return !!entries?.some((e) => e.name === name && e.mode === regularMode);
 }
 
+// a directory's mode, and a submodule's, neither of which npm takes as a README
+const treeMode = 0o40000;
+const submoduleMode = 0o160000;
+
+/** @type {(repo: Record<string, any> | null | undefined) => RootEntry[]} */
+function rootEntries(repo) {
+	/** @type {{ name: string, mode: number }[]} */
+	const entries = repo?.root?.entries ?? [];
+	return entries.map(({ name, mode }) => ({ name, directory: mode === treeMode || mode === submoduleMode }));
+}
+
 /** @type {(entries: { name: string }[] | undefined) => boolean} */
 function isBare(entries) {
 	return !!entries && !entries.some((e) => e.name === '.github' || e.name === 'package.json');
@@ -238,6 +253,7 @@ function toState(
 	repo,
 ) {
 	const own = parseConfig(repo?.config?.text, '`.github/ljharb-actions.json`');
+	const readme = npmReadme(rootEntries(repo));
 	const isPrivate = Boolean(r.private || repo?.isPrivate);
 	// a private `.github` repository's defaults (and their errors) apply only to private repositories: any effect on a public one's public report, or fixing, would show what's in a private file
 	const inherited = account.private && !isPrivate ? parseConfig(null, '') : account;
@@ -267,7 +283,9 @@ function toState(
 		workflows: workflowFiles(repo?.workflows?.entries),
 		// a README too big for GitHub to give all of isn't read at all, so that it's never checked by only its start
 		readme: repo?.readme?.isTruncated ? null : repo?.readme?.text ?? null,
-		readmeRegular: isRegularFile(repo?.root?.entries, 'README.md'),
+		readmeName: readme.name,
+		readmeAmbiguous: readme.ambiguous,
+		readmeRegular: readme.name !== null && isRegularFile(repo?.root?.entries, readme.name),
 		fork: Boolean(r.fork || repo?.isFork),
 		source: forkSource(repo),
 		external,
@@ -286,26 +304,66 @@ function partialData(error) {
 	throw error;
 }
 
-/** @type {(octokit: Octokit, batch: InstalledRepo[]) => Promise<Record<string, any>>} */
-async function query(octokit, batch) {
-	const variables = Object.fromEntries(batch.flatMap((r, j) => [[`o${j}`, r.owner.login], [`n${j}`, r.name]]));
-	const text = `query(${batch.map((_, j) => `$o${j}: String!, $n${j}: String!`).join(', ')}) {
-		${batch.map((_, j) => `r${j}: repository(owner: $o${j}, name: $n${j}) { ...state }`).join('\n')}
+/**
+ * Reads each of `repos` with one GraphQL query, as `select` has it (given each one's index, `j`, whose owner and name are the variables `$o<j>` and `$n<j>`, and, when it has an `expression`, that is `$e<j>`), as `r<j>`, with `fragments`.
+ * @type {(octokit: Octokit, repos: { repo: InstalledRepo, expression?: string }[], selection: { select: (j: number) => string, fragments?: string }) => Promise<Record<string, any>>}
+ */
+async function query(octokit, repos, { select, fragments = '' }) {
+	const variables = Object.fromEntries(repos.flatMap(({ repo: r, expression }, j) => [[`o${j}`, r.owner.login], [`n${j}`, r.name]].concat(expression === undefined ? [] : [[`e${j}`, expression]])));
+	const text = `query(${repos.map(({ expression }, j) => `$o${j}: String!, $n${j}: String!${expression === undefined ? '' : `, $e${j}: String!`}`).join(', ')}) {
+		${repos.map((_, j) => `r${j}: repository(owner: $o${j}, name: $n${j}) { ${select(j)} }`).join('\n')}
 	}
-	${fragment}`;
+	${fragments}`;
 	// one inaccessible repo fails the whole query, but the rest of the batch is still in the partial data
 	return octokit.graphql(text, variables).catch(partialData);
 }
 
-// a failed batch (a 502, a timeout) is retried one repo at a time, so only a repo that itself fails is lost
+/**
+ * Each of `batch`'s parts of what `read` reads of it, all at once; or, when that fails (a 502, a timeout), one at a time, so only one that itself fails is lost (`null`).
+ * @type {<T>(batch: T[], read: (items: T[]) => Promise<Record<string, any>>) => Promise<(Record<string, any> | null | undefined)[]>}
+ */
+async function readEach(batch, read) {
+	try {
+		const data = await read(batch);
+		return batch.map((_, j) => data[`r${j}`]);
+	} catch {
+		return Promise.all(batch.map((item) => read([item]).then((data) => data.r0, () => null)));
+	}
+}
+
+/**
+ * `repos`, as `batch`'s state was read, with the README npm takes (see `npmReadme`), for each one where that isn't `README.md` (which the state already has), read in its place: since the state's query can only read a file it names, that's another query, of only those, which can fail as the state's can, losing the repository's state, rather than reading it without its README.
+ * @type {(octokit: Octokit, batch: InstalledRepo[], repos: (Record<string, any> | null | undefined)[]) => Promise<(Record<string, any> | null | undefined)[]>}
+ */
+async function withReadmes(octokit, batch, repos) {
+	const others = batch.flatMap((repo, j) => {
+		const { name } = npmReadme(rootEntries(repos[j]));
+		const other = {
+			repo,
+			expression: `HEAD:${name}`,
+			j,
+		};
+		return name === null || name === readmePath ? [] : [other];
+	});
+	if (others.length === 0) {
+		return repos;
+	}
+	const read = await readEach(others, (items) => query(octokit, items, { select: (j) => `readme: object(expression: $e${j}) { ... on Blob { text isTruncated } }` }));
+	const readmes = new Map(others.map(({ j }, k) => [j, read[k]]));
+	return repos.map((repo, j) => {
+		const found = readmes.get(j);
+		if (!readmes.has(j)) {
+			return repo;
+		}
+		return found ? { ...repo, readme: found.readme } : null;
+	});
+}
+
 /** @type {(octokit: Octokit, context: Context, batch: InstalledRepo[]) => Promise<RepoState[]>} */
 async function batchStates(octokit, context, batch) {
-	try {
-		const data = await query(octokit, batch);
-		return batch.map((r, j) => toState(context, r, data[`r${j}`]));
-	} catch {
-		return Promise.all(batch.map(async (r) => toState(context, r, await query(octokit, [r]).then((data) => data.r0, () => null))));
-	}
+	const repos = await readEach(batch, (items) => query(octokit, items.map((repo) => ({ repo })), { select: () => '...state', fragments: fragment }));
+	const read = await withReadmes(octokit, batch, repos);
+	return batch.map((r, j) => toState(context, r, read[j]));
 }
 
 /** @type {(error: unknown) => boolean} */

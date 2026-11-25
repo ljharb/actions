@@ -1,6 +1,6 @@
-// what a package's README should start with, and how a README differs from that: its heading, the badges under it, and the link reference definitions those use. Pure, so that checking a README and fixing it (in a clone) agree exactly.
+// what a package's README should be named, and start with, and how a README differs from that: its file name, its heading, the badges under it, and the link reference definitions those use. Pure, so that checking a README and fixing it (in a clone) agree exactly.
 
-/** @typedef {'heading' | 'badges' | 'links'} Category */
+/** @typedef {'filename' | 'heading' | 'badges' | 'links'} Category */
 /** @typedef {{ name: string, repository: string, branch: string }} Identity */
 /** @typedef {{ why: string }} Skip */
 /** @typedef {{ text: string, skipped: Skip[] }} Fixed */
@@ -14,7 +14,7 @@
 
 /** @type {readonly Category[]} */
 export const categories = Object.freeze([
-	'heading', 'badges', 'links',
+	'filename', 'heading', 'badges', 'links',
 ]);
 
 /** @type {(word: string) => word is Category} */
@@ -23,6 +23,28 @@ export function isCategory(word) {
 }
 
 export const readmePath = 'README.md';
+
+/** @typedef {{ name: string, directory: boolean }} RootEntry */
+
+// npm's README is one of the root's files named `README`, or `README.` and anything, case-insensitively (its glob, `{README,README.*}`, with `nocase`)
+const readmeCandidate = /^README(?:\..*)?$/i;
+// a markdown extension (eg, `.md`, `.markdown`, `.mkd`, `.mdown`), or a bare trailing dot
+const markdownExtension = /\.m?a?r?k?d?o?w?n?$/i;
+
+/**
+ * Which of the files at a package's root (`entries`, where a directory, or a submodule, is never one) is its README: `README.md`, exactly, when there's one; otherwise, the one npm takes, as `@npmcli/package-json` does in `lib/normalize.js`'s `readme` step (which can't be used itself, since it globs a directory on disk): among the files named `README`, or `README.` and anything, case-insensitively, the one with a markdown extension, or else one whose name ends with `README`, case-sensitively (eg, `README`, but not `readme`). npm takes the first of several of those in the order its glob lists them, which nothing here can tell, so several are `ambiguous`, and none is the README.
+ * @type {(entries: RootEntry[]) => { name: string | null, ambiguous: string[] }}
+ */
+export function npmReadme(entries) {
+	const files = entries.filter((e) => !e.directory).map((e) => e.name);
+	if (files.includes(readmePath)) {
+		return { name: readmePath, ambiguous: [] };
+	}
+	const candidates = files.filter((name) => readmeCandidate.test(name));
+	const markdown = candidates.filter((name) => markdownExtension.test(name));
+	const found = markdown.length > 0 ? markdown : candidates.filter((name) => name.endsWith('README'));
+	return found.length > 1 ? { name: null, ambiguous: found.sort() } : { name: found[0] ?? null, ambiguous: [] };
+}
 
 /** @type {(name: string) => string} */
 function packageURL(name) {
@@ -562,18 +584,20 @@ function withLinks(parsed, identity, used) {
 }
 
 /**
- * `text`, with its `[package-url]` definition, when it's on `npmjs.org` (see `orgPackageLine`), written as `definitions` has it.
+ * `text`, with its `[package-url]` definition, when it's on `npmjs.org` (see `orgPackageLine`), written as `definitions` has it: only that line, where it is, so that nothing else (eg, mixed line endings, which `serialize` would make all `\n`s) changes.
  * @type {(text: string, identity: Identity) => string}
  */
 function withPackageURL(text, identity) {
 	const parsed = parse(text);
 	const found = parsed.definitions.get('package-url');
-	if (!found || parsed.lines[found.index].trimEnd() !== orgPackageLine(identity.name)) {
+	const org = orgPackageLine(identity.name);
+	if (!found || parsed.lines[found.index].trimEnd() !== org) {
 		return text;
 	}
-	const lines = parsed.lines.slice();
-	lines[found.index] = `[package-url]: ${packageURL(identity.name)}`;
-	return serialize({ ...parsed, lines });
+	// each line with its own ending, as `parse` splits them
+	const lines = text.split(/(?<=\n)/);
+	lines[found.index] = lines[found.index].replace(org, () => `[package-url]: ${packageURL(identity.name)}`);
+	return lines.join('');
 }
 
 /**
@@ -603,13 +627,25 @@ export function fixReadme(text, identity, only) {
 }
 
 /**
- * Which of a README's heading, badges, and links differ from `identity`'s (see `fixReadme`), in `categories`' order.
- * @type {(text: string, identity: Identity) => Category[]}
+ * What `/fix` makes a README's text when it fixes `fixing` (see `drift`): with those of them that are in its text fixed (see `fixReadme`); or, when that's only its file name, only with a `[package-url]` definition on `npmjs.org` written on `npmjs.com` (see `withPackageURL`), since renaming it is fixing it.
+ * @type {(text: string, identity: Identity, fixing: Category[]) => Fixed}
  */
-export function drift(text, identity) {
+export function fixedReadme(text, identity, fixing) {
+	const content = fixing.filter((c) => c !== 'filename');
+	return content.length > 0 ? fixReadme(text, identity, new Set(content)) : { text: withPackageURL(text, identity), skipped: [] };
+}
+
+/**
+ * Which of a README's file name, heading, badges, and links differ from `identity`'s (see `fixReadme`), in `categories`' order: its file name does when it's `name`, rather than `readmePath`.
+ * @type {(text: string, identity: Identity, name?: string) => Category[]}
+ */
+export function drift(text, identity, name = readmePath) {
 	const parsed = parse(text);
 	/** @type {Category[]} */
 	const found = [];
+	if (name !== readmePath) {
+		found.push('filename');
+	}
 	if (parsed.heading < 0 || parsed.headingEnd !== parsed.heading || parsed.lines[parsed.heading].trimEnd() !== headingFor(identity.name)) {
 		found.push('heading');
 	}

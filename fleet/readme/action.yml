@@ -1,5 +1,5 @@
 name: 'fleet: README drift report'
-description: 'Compare the README heading, badges, and their link definitions of every repository a GitHub App is installed on that publishes a package against the fleet’s, keep the full report in a secret gist, and keep a single issue up to date with a summary of the discrepancies'
+description: 'Compare the README file name, heading, badges, and their link definitions of every repository a GitHub App is installed on that publishes a package against the fleet’s, keep the full report in a secret gist, and keep a single issue up to date with a summary of the discrepancies'
 author: ljharb
 inputs:
   app-id:

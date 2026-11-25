@@ -23,21 +23,22 @@ import { readmePath } from './readme.mjs';
 /** @import { Report } from '../lib/report.mjs' */
 /** @typedef {{ installed: number, external: number }} Checked */
 
-/** @type {(repository: string) => string} */
-function readmeLink(repository) {
-	return fileLink(`${serverURL}/${repository}/blob/HEAD/${readmePath}`, repository);
+/** @type {(repository: string, name: string) => string} */
+function readmeLink(repository, name) {
+	return fileLink(`${serverURL}/${repository}/blob/HEAD/${encodeURIComponent(name)}`, repository);
 }
 
 // GitHub renders a fenced block inside HTML only with blank lines around it
 /** @type {(result: Result) => string} */
 function row({
 	repository,
+	readme = readmePath,
 	drifted,
 	diff,
 	error,
 }) {
 	return [
-		`<tr><td>${readmeLink(repository)}</td>`,
+		`<tr><td>${readmeLink(repository, readme)}</td>`,
 		`<td>\n${list(drifted.map((c) => `<code>${c}</code>`))}\n</td>`,
 		`<td>\n${diff ? [
 			'<details><summary>diff</summary>', '', fence(diff, 'diff'), '', '</details>',
@@ -89,10 +90,9 @@ function count(results, category) {
 /** @type {(accounts: Account[]) => string[]} */
 function accountCounts(accounts) {
 	return [
-		'| Account | Repositories with discrepancies | Heading | Badges | Links | Repositories with other problems |',
-		'| --- | --: | --: | --: | --: | --: |',
-		...accounts.map(({ owner, results }) => `| ${code(owner.replace(/\s*[\r\n]+\s*/g, ' '))} | ${results.length} | ${count(results, 'heading')} | ${count(results, 'badges')} | ${count(results, 'links')} | ${results.filter((r) => r.error).length} |`),
-	];
+		'| Account | Repositories with discrepancies | File name | Heading | Badges | Links | Repositories with other problems |',
+		'| --- | --: | --: | --: | --: | --: | --: |',
+	].concat(accounts.map(({ owner, results }) => `| ${code(owner.replace(/\s*[\r\n]+\s*/g, ' '))} | ${results.length} | ${count(results, 'filename')} | ${count(results, 'heading')} | ${count(results, 'badges')} | ${count(results, 'links')} | ${results.filter((r) => r.error).length} |`));
 }
 
 /**
@@ -106,7 +106,7 @@ export function report(results, privateCount, failures, checked, waiting = []) {
 	const sources = checked.external > 0 ? `, and ${checked.external} sources of forks it’s installed on` : '';
 	/** @type {(updated: string) => string} */
 	const intro = (updated) => [
-		`[This run](${runURL}) checked the \`${readmePath}\` heading, badges, and their link definitions of ${checked.installed} repositories that publish a package, that the fleet App is installed on${sources}.`,
+		`[This run](${runURL}) checked the README file name, heading, badges, and their link definitions of ${checked.installed} repositories that publish a package, that the fleet App is installed on${sources}.`,
 		`${total} have discrepancies${privateCount > 0 ? ` (${privateCount} of them private, so not listed)` : ''}.`,
 		...updated ? [updated] : [],
 	].join(' ');

@@ -1383,6 +1383,123 @@ test('discover: a README is read only when GitHub gives all of it', async (t) =>
 	t.equal(find(states, 'ljharb/none').readme, null, 'and no README has none');
 });
 
+// queries for a file of each repository, by name, as opposed to their states
+/** @type {(requests: Recorded[]) => Record<string, string>[]} */
+function fileQueries(requests) {
+	return repoQueries(requests).filter((r) => 'e0' in r.body.variables).map((r) => r.body.variables);
+}
+
+/** @type {(name: string, mode?: number) => { name: string, mode: number }} */
+function entry(name, mode = 0o100644) {
+	return { name, mode };
+}
+
+test('discover: a README npm reads under another name is read in its place, with a query of only those', async (t) => {
+	const requests = setup(t, {
+		installations: [{ id: 21, account: { login: 'ljharb' } }],
+		installationRepos: {
+			21: [
+				'exact',
+				'markdown',
+				'lower',
+				'link',
+				'several',
+				'plain',
+				'big',
+				'none',
+			].map((name) => installedRepo('ljharb', name)),
+		},
+		repos: {
+			'ljharb/exact': { data: { readme: { text: '# exact\n', isTruncated: false }, root: { entries: [entry('README.md'), entry('readme.markdown')] } } },
+			'ljharb/markdown': { data: { readme: null, root: { entries: [entry('package.json'), entry('README.markdown')] } }, files: { 'README.markdown': { text: '# markdown\n', isTruncated: false } } },
+			'ljharb/lower': { data: { readme: null, root: { entries: [entry('readme.md')] } }, files: { 'readme.md': { text: '# lower\n', isTruncated: false } } },
+			'ljharb/link': { data: { readme: null, root: { entries: [entry('README.markdown', 0o120000)] } }, files: { 'README.markdown': { text: 'other.md', isTruncated: false } } },
+			'ljharb/several': { data: { readme: null, root: { entries: [entry('readme.md'), entry('README.markdown')] } } },
+			'ljharb/plain': { data: { readme: null, root: { entries: [entry('README.md', 0o40000), entry('README')] } }, files: { README: { text: 'plain\n', isTruncated: false } } },
+			'ljharb/big': { data: { readme: null, root: { entries: [entry('README.mdown')] } }, files: { 'README.mdown': { text: '# the start', isTruncated: true } } },
+			'ljharb/none': { data: { readme: null, root: { entries: [entry('README.txt'), entry('readme', 0o40000), entry('README.markdown', 0o160000)] } } },
+		},
+	});
+
+	const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb']));
+	t.deepEqual(failures, [], 'no failures');
+	/** @type {(repository: string) => Pick<RepoState, 'readme' | 'readmeName' | 'readmeAmbiguous' | 'readmeRegular' | 'stateError'>} */
+	const readme = (repository) => {
+		const state = find(states, repository);
+		return {
+			readme: state.readme,
+			readmeName: state.readmeName,
+			readmeAmbiguous: state.readmeAmbiguous,
+			readmeRegular: state.readmeRegular,
+			stateError: state.stateError,
+		};
+	};
+	/** @type {(text: string | null, name: string | null, regular?: boolean) => ReturnType<typeof readme>} */
+	const read = (text, name, regular = true) => ({
+		readme: text,
+		readmeName: name,
+		readmeAmbiguous: [],
+		readmeRegular: regular,
+		stateError: null,
+	});
+	t.deepEqual(readme('ljharb/exact'), read('# exact\n', 'README.md'), '`README.md`, exactly, is the README, whatever else there is');
+	t.deepEqual(readme('ljharb/markdown'), read('# markdown\n', 'README.markdown'), 'without one, the one npm takes is, read in its place');
+	t.deepEqual(readme('ljharb/lower'), read('# lower\n', 'readme.md'), 'in any case');
+	t.deepEqual(readme('ljharb/link'), read('other.md', 'README.markdown', false), 'one that isn’t a regular file isn’t');
+	t.deepEqual(readme('ljharb/several'), { ...read(null, null, false), readmeAmbiguous: ['README.markdown', 'readme.md'] }, 'several npm could take are ambiguous, so none is read');
+	t.deepEqual(readme('ljharb/plain'), read('plain\n', 'README'), 'without one with a markdown extension, a plain `README` is (a directory is never one)');
+	t.deepEqual(readme('ljharb/big'), read(null, 'README.mdown'), 'one GitHub truncated isn’t read at all');
+	t.deepEqual(readme('ljharb/none'), read(null, null, false), 'and with none npm takes (another extension, a directory, or a submodule), there’s none');
+	t.deepEqual(
+		fileQueries(requests),
+		[
+			{
+				o0: 'ljharb',
+				n0: 'markdown',
+				e0: 'HEAD:README.markdown',
+				o1: 'ljharb',
+				n1: 'lower',
+				e1: 'HEAD:readme.md',
+				o2: 'ljharb',
+				n2: 'link',
+				e2: 'HEAD:README.markdown',
+				o3: 'ljharb',
+				n3: 'plain',
+				e3: 'HEAD:README',
+				o4: 'ljharb',
+				n4: 'big',
+				e4: 'HEAD:README.mdown',
+			},
+		],
+		'each read with one more query, of only those whose README is another file',
+	);
+});
+
+test('discover: a README under another name that can’t be read loses only that repository’s state', async (t) => {
+	const requests = setup(t, {
+		installations: [{ id: 22, account: { login: 'ljharb' } }],
+		installationRepos: { 22: ['flaky', 'lost', 'fine'].map((name) => installedRepo('ljharb', name)) },
+		repos: {
+			'ljharb/flaky': { data: { root: { entries: [entry('README.markdown')] } }, files: { 'README.markdown': { text: '# flaky\n' } }, filesFail: 'batch' },
+			'ljharb/lost': { data: { root: { entries: [entry('README.markdown')] } }, filesFail: 'always' },
+			'ljharb/fine': { data: { root: { entries: [entry('readme.md')] } }, files: { 'readme.md': { text: '# fine\n' } } },
+		},
+	});
+
+	const { states, failures } = await discover(appAuth('1', privateKey()), new Set(['ljharb']));
+	t.deepEqual(failures, [], 'no failures');
+	t.equal(find(states, 'ljharb/flaky').readme, '# flaky\n', 'one that only fails in a batch is read on its own');
+	t.equal(find(states, 'ljharb/fine').readme, '# fine\n', 'as is the rest of the batch');
+	t.equal(find(states, 'ljharb/lost').stateError, 'could not read the repository’s state', 'one that always fails loses its state, as it would if its state couldn’t be read');
+	t.equal(find(states, 'ljharb/lost').readme, null, 'so it has no README');
+	t.deepEqual(fileQueries(requests).map((variables) => Object.keys(variables).filter((k) => k.startsWith('n')).map((k) => variables[k])), [
+		['flaky', 'lost', 'fine'],
+		['flaky'],
+		['lost'],
+		['fine'],
+	], 'all at once, then, once that fails, one at a time');
+});
+
 test('discover: a repository with neither a `.github` nor a `package.json` is skipped', async (t) => {
 	setup(t, {
 		installations: [{ id: 350, account: { login: 'nvm-sh' } }],

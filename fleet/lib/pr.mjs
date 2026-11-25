@@ -247,10 +247,10 @@ function ownTrees(git, { base, tip }) {
 }
 
 /**
- * Stages everything under `paths`, and commits it on top of `base`'s tip, where the clone is: unless it has nothing to commit, or what it has isn't `worth` a commit (unspecified: anything is), or (refused) anything that isn't `allowed`.
- * `worth` is given every staged file's path.
+ * Stages everything under `paths`, and commits it on top of `base`'s tip, where the clone is (or, with `commits`, right after that many commits it has on it): unless it has nothing to commit, or what it has isn't `worth` a commit (unspecified: anything is), or (refused) anything that isn't `allowed`.
+ * `worth` is given every staged file's path (both of a rename's, since a path it renames from is changed too).
  * Returns whether it committed.
- * @type {(git: Git, options: { base: string, message: string, paths: string[], allowed: PathFilter, worth?: (files: string[]) => boolean }) => boolean}
+ * @type {(git: Git, options: { base: string, message: string, paths: string[], allowed: PathFilter, worth?: (files: string[]) => boolean, commits?: number }) => boolean}
  */
 export function commitChanges(
 	git,
@@ -260,9 +260,10 @@ export function commitChanges(
 		paths: staged,
 		allowed,
 		worth = () => true,
+		commits = 0,
 	},
 ) {
-	if (revParse(git, 'HEAD') !== revParse(git, `origin/${base}`)) {
+	if (revParse(git, `HEAD~${commits}`) !== revParse(git, `origin/${base}`)) {
 		throw new Error(`the clone is not at \`${base}\`’s tip, so nothing is committed`);
 	}
 	git([
@@ -275,6 +276,7 @@ export function commitChanges(
 		'diff',
 		'--cached',
 		'--name-only',
+		'--no-renames',
 		'-z',
 	]).stdout);
 	const outside = files.filter((file) => !allowed(file));
@@ -373,9 +375,9 @@ export function pushBranch(
 }
 
 /**
- * Makes `branch` HEAD (one commit on `base`'s tip; see `pushBranch`), and opens, reopens, or updates its PR; returns what it did.
+ * Makes `branch` HEAD (one commit on `base`'s tip, or, with `count`, that many; see `pushBranch`), and opens, reopens, or updates its PR; returns what it did.
  * `tip` is where the branch was observed on the remote (`null`: it wasn't there). A closed PR whose branch is gone has the branch restored at the PR's head (a plain push) before it's reopened, since GitHub only reopens a PR whose branch is at its head; only then is the branch overwritten.
- * Before anything is pushed or any PR touched, it refuses (via `assertBotOwned`) a branch with anyone else's commits on it; and before a closed PR is reopened, anything else that would refuse its update: HEAD that isn't one commit on `base`'s tip, or a branch that's no longer where it was observed (which would fail the update's lease), so that it's never reopened only to be left as it was.
+ * Before anything is pushed or any PR touched, it refuses (via `assertBotOwned`) a branch with anyone else's commits on it; and before a closed PR is reopened, anything else that would refuse its update: HEAD that isn't `count` commits on `base`'s tip, or a branch that's no longer where it was observed (which would fail the update's lease), so that it's never reopened only to be left as it was.
  * Once an existing PR is updated, what the App said on it that no longer applies is hidden (see `hideStale`), which, for a private repository (`isPrivate`), never warns.
  * @type {(options: {
  *   octokit: Octokit,
@@ -390,6 +392,7 @@ export function pushBranch(
  *   title: string,
  *   body: string,
  *   isPrivate: boolean,
+ *   count?: number,
  * }) => Promise<string>}
  */
 export async function publish({
@@ -405,6 +408,7 @@ export async function publish({
 	title,
 	body,
 	isPrivate,
+	count = 1,
 }) {
 	assertBotBranch(branch);
 	let observed = tip;
@@ -431,7 +435,7 @@ export async function publish({
 			base,
 			branch,
 			commit: 'HEAD',
-			count: 1,
+			count,
 		});
 		if (lsRemote(git, branch) !== tip) {
 			throw leaseError(branch);
@@ -456,6 +460,7 @@ export async function publish({
 		branch,
 		tip: observed,
 		identity,
+		count,
 	});
 
 	const { data: pr } = state.mode === 'create'
@@ -480,7 +485,7 @@ export async function publish({
 		update: pushed === 'pushed' ? 'updated' : 'already up to date:',
 		reopen: 'reopened and updated',
 	}[state.mode];
-	// it's now one commit, of only the App's, that changes something on its base's tip (more than the App's bookkeeping): so the head it replaced no longer conflicts, isn't empty or only bookkeeping, and has nobody else's commits
+	// it's now one commit (or, with `count`, that many), of only the App's, that changes something on its base's tip (more than the App's bookkeeping): so the head it replaced no longer conflicts, isn't empty or only bookkeeping, and has nobody else's commits
 	const hidden = state.mode === 'create' ? 0 : await hideStale({
 		octokit,
 		owner,

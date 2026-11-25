@@ -122,9 +122,27 @@ test('report: third-party text is inert', (t) => {
 
 	const issue = summary(gist, true);
 	t.notOk(outsideCode(issue).includes('<img src=x>'), 'an account name isn’t HTML in the issue');
-	t.ok(issue.includes('| `<img src=x>` | 1 | 0 | 1 | 0 | 1 |'), 'it’s code in the accounts table');
+	t.ok(issue.includes('| `<img src=x>` | 1 | 0 | 0 | 1 | 0 | 1 |'), 'it’s code in the accounts table');
 	t.notOk(outsideCode(issue).includes('<b>owner</b>'), 'nor is a waiting account');
 	t.ok(issue.includes('`<b>owner</b>`'), 'which is code too');
+
+	t.end();
+});
+
+test('report: a README under another name is linked as it’s named, and counted as filename drift', (t) => {
+	const found = report([
+		{
+			repository: 'ljharb/a', readme: 'README.markdown', drifted: ['filename', 'heading'], diff: '--- README.markdown (actual)\n+++ README.md (expected)\n-# x\n+# a', error: null,
+		},
+		{
+			repository: 'ljharb/b', readme: 'read me#.md', drifted: ['filename'], diff: '', error: null,
+		},
+	], 0, [], { installed: 2, external: 0 });
+	const full = found.parts.join('\n');
+	t.match(full, /<a href="[^"]*\/ljharb\/a\/blob\/HEAD\/README\.markdown"><code>ljharb\/a<\/code><\/a>/, 'linking the README as it’s named');
+	t.match(full, /<a href="[^"]*\/ljharb\/b\/blob\/HEAD\/read%20me%23\.md"><code>ljharb\/b<\/code><\/a>/, 'encoded for a URL');
+	t.ok(full.includes('<ul>\n<li><code>filename</code></li>\n<li><code>heading</code></li>\n</ul>'), 'listing its file name as drifted');
+	t.ok(found.summary(gist, true).includes('| `ljharb` | 2 | 2 | 1 | 0 | 0 | 0 |'), 'counted in the accounts table');
 
 	t.end();
 });
@@ -145,10 +163,10 @@ test('report: the accounts table counts each kind of discrepancy per account', (
 		},
 	], 0, [], { installed: 10, external: 0 }).summary(gist, true);
 	t.ok(summary.includes([
-		'| Account | Repositories with discrepancies | Heading | Badges | Links | Repositories with other problems |',
-		'| --- | --: | --: | --: | --: | --: |',
-		'| `ljharb` | 3 | 1 | 2 | 1 | 2 |',
-		'| `es-shims` | 1 | 0 | 0 | 1 | 0 |',
+		'| Account | Repositories with discrepancies | File name | Heading | Badges | Links | Repositories with other problems |',
+		'| --- | --: | --: | --: | --: | --: | --: |',
+		'| `ljharb` | 3 | 0 | 1 | 2 | 1 | 2 |',
+		'| `es-shims` | 1 | 0 | 0 | 0 | 1 | 0 |',
 	].join('\n')), 'a row per account, case-insensitively, in order');
 
 	t.end();

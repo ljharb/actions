@@ -818,6 +818,83 @@ test('pushBranch', (t) => {
 	t.end();
 });
 
+test('commitChanges: after the commits the clone already has', (t) => {
+	t.test('right after them', (st) => {
+		const server = setup(st);
+		const { git, dir } = clone(st, server);
+		botCommit(dir, 'first', { [lockfile]: 'x\n' });
+		writeFiles(dir, { [lockfile]: 'y\n' });
+		st.equal(
+			commitChanges(git, {
+				base,
+				message: 'second',
+				paths: ['.github/workflows'],
+				allowed: isWorkflow,
+				commits: 1,
+			}),
+			true,
+			'commits',
+		);
+		st.equal(git(['rev-parse', 'HEAD~2']).stdout.trim(), server.tip('main'), 'after the first, on the base’s tip');
+		st.end();
+	});
+
+	t.test('anywhere else: refused', (st) => {
+		const server = setup(st);
+		server.commit('main', { 'README.md': 'moved\n' });
+		const { git, dir } = clone(st, server);
+		writeFiles(dir, { [lockfile]: 'y\n' });
+		st.throws(
+			() => commitChanges(git, {
+				base,
+				message: 'm',
+				paths: ['.github/workflows'],
+				allowed: isWorkflow,
+				commits: 1,
+			}),
+			new Error('the clone is not at `main`’s tip, so nothing is committed'),
+			'without the commit it’s said to have',
+		);
+		st.end();
+	});
+
+	t.end();
+});
+
+test('commitChanges: a rename changes both of its paths', (t) => {
+	const server = setup(t);
+	const { git } = clone(t, server);
+	git(['mv', '--', 'README.md', 'readme.markdown']);
+	/** @type {string[][]} */
+	const seen = [];
+	t.throws(
+		() => commitChanges(git, {
+			base,
+			message: 'm',
+			paths: ['readme.markdown'],
+			allowed: (file) => file === 'readme.markdown',
+		}),
+		new Error('refusing to commit changes to files this job doesn’t write: `README.md`'),
+		'so the path it renames from must be allowed too',
+	);
+	t.equal(
+		commitChanges(git, {
+			base,
+			message: 'm',
+			paths: ['readme.markdown'],
+			allowed: () => true,
+			worth(changed) {
+				seen.push(changed);
+				return true;
+			},
+		}),
+		true,
+		'which it then commits',
+	);
+	t.deepEqual(seen, [['README.md', 'readme.markdown']], 'given both');
+	t.end();
+});
+
 test('isOnBase: several commits', (t) => {
 	const server = setup(t);
 	const one = server.commit(branch, { [lockfile]: 'one\n' }, { who: bot, from: 'main' });

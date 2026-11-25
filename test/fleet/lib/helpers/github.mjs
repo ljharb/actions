@@ -36,8 +36,11 @@ Object.assign(requestDefaults, { retries: 0 });
  * }} RepositoryData
  */
 /**
+ * A repository: `files` are what a query for a file of its, by name (as `HEAD:<name>`, eg, a README that isn't `README.md`), reads, which `filesFail` fails (with a 502), whenever that's in a `batch` of several, or `always`.
  * @typedef {{
  *   data?: RepositoryData,
+ *   files?: Record<string, { text?: string, isTruncated?: boolean } | null>,
+ *   filesFail?: 'batch' | 'always',
  *   missing?: boolean,
  *   failInBatch?: boolean,
  *   failAlways?: boolean,
@@ -155,6 +158,14 @@ function accountReply(scenario, owner) {
 	return [200, { data: { repository: { isPrivate: Boolean(spec.private), defaults: spec.noFile ? null : { text: spec.text } } } }];
 }
 
+/** @type {(specs: RepoSpec[], variables: Record<string, string>) => [number, unknown]} */
+function filesReply(specs, variables) {
+	if (specs.some((s) => s.filesFail === 'always' || (s.filesFail === 'batch' && specs.length > 1))) {
+		return [502, { message: 'Bad Gateway' }];
+	}
+	return [200, { data: Object.fromEntries(specs.map((s, j) => [`r${j}`, { readme: s.files?.[variables[`e${j}`].replace(/^HEAD:/, '')] ?? null }])) }];
+}
+
 /** @type {(scenario: Scenario, variables: Record<string, string>) => [number, unknown]} */
 function graphqlReply(scenario, variables) {
 	if ('owner' in variables) {
@@ -179,6 +190,9 @@ function graphqlReply(scenario, variables) {
 		names.push(`${variables[`o${j}`]}/${variables[`n${j}`]}`);
 	}
 	const specs = names.map((n) => repos[n] ?? { missing: true });
+	if ('e0' in variables) {
+		return filesReply(specs, variables);
+	}
 	if (specs.some((s) => s.failAlways || (s.failInBatch && names.length > 1))) {
 		return [502, { message: 'Bad Gateway' }];
 	}

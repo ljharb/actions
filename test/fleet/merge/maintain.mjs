@@ -12,7 +12,16 @@ import test from 'tape';
 import { appAuth } from '../../../fleet/lib/app.mjs';
 import { fixBranch, readmeBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
 import { maintain, marker, permissions } from '../../../fleet/merge/maintain.mjs';
-import { pr } from '../commands/helpers/merge-run.mjs';
+import { marker as readmeMarker } from '../../../fleet/readme/marker.mjs';
+import {
+	comment,
+	matching,
+	passing as passingCI,
+	pr,
+	replies,
+	repo,
+	runScript,
+} from '../commands/helpers/merge-run.mjs';
 import { mockMerge, prCommit } from '../commands/helpers/merge.mjs';
 import { template } from '../drift/helpers/states.mjs';
 import {
@@ -679,6 +688,47 @@ test('maintain: replays a PR with several of the bot’s commits onto its base�
 	t.equal(server.show(first, pretest), tapePretest.trim(), 'and only that');
 	t.equal(server.show(tip, pretest), template('node-pretest.yml').trim(), 'and the second with its own');
 	t.equal(server.show(tip, 'README.md'), 'moved', 'on the base’s');
+	t.end();
+});
+
+test('maintain: a `fleet/readme` PR that renames its README is rebased as its two commits, keeping the rename one git always takes for a rename, and `/merge` merges it', async (t) => {
+	const before = 'readme\n\nsome prose\n';
+	const server = setup(t, { [pretest]: tapePretest, 'README.markdown': before });
+	const rename = '[readme] rename `README.markdown` to `README.md`';
+	const update = '[readme] update the heading and badges to match the fleet’s';
+	// as `/fix` makes it: `git mv`, alone, then the rest of the fix
+	server.commit(readmeBranch, { 'README.markdown': null, 'README.md': before }, { who: bot, from: 'main', message: rename });
+	const head = server.commit(readmeBranch, { 'README.md': '# r\n\nsome prose\n' }, { who: bot, message: update });
+	const mainTip = server.commit('main', { 'other.md': 'moved\n' });
+
+	const rebased = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, readmeBranch, head]]),
+	});
+	t.equal(rebased.errors, 0, 'nothing failed');
+	t.ok(logged(rebased.stdout).includes(`${prURL(server)}: rebased onto \`main\`’s tip`), 'rebases it');
+	const tip = server.tip(`refs/heads/${readmeBranch}`);
+	const first = fixtureGit(server.remote, ['rev-parse', `${tip}^`]);
+	t.deepEqual(server.log(`main..${tip}`), [`${botLine}|${botLine}|${update}|${first}`, `${botLine}|${botLine}|${rename}|${mainTip}`], 'as its two commits, by the bot, one after another on the base’s tip, each with its message');
+	t.equal(fixtureGit(server.remote, ['diff', '-M', '--name-status', `main..${first}`]), 'R100\tREADME.markdown\tREADME.md', 'the first still only the rename, which git always takes for one');
+	t.equal(fixtureGit(server.remote, ['diff', '--name-status', `${first}..${tip}`]), 'M\tREADME.md', 'then the fix');
+
+	const line = `/merge ${repository}`;
+	const merged = runScript(t, path.join('fleet', 'commands', 'index.mjs'), {
+		event: { issue: { number: 9, body: `${readmeMarker}\nthe report`, user: { login: 'github-actions[bot]' } }, comment: comment(line) },
+		github: {
+			installations: [{ id: 1, account: { login: 'ljharb' } }],
+			installationRepos: { 1: [installedRepo('ljharb', 'r')] },
+			repos: { [repository]: repo() },
+		},
+		merge: shown(server, [[1, readmeBranch, tip]], { ci: { [tip]: passingCI } }),
+	});
+	t.equal(merged.status, 0, '`/merge`: exits successfully');
+	t.deepEqual(matching(merged.requests, 'PATCH', /\/git\/refs\//).map((r) => [r.path, r.body.sha]), [['/repos/ljharb/r/git/refs/heads%2Fmain', tip]], '`/merge`: fast-forwards `main` to it, as it is, two commits and all');
+	t.ok(replies(merged.requests)[0].includes(`| \`${repository}\` | merged https://github.com/${repository}/pull/1 |`), '`/merge`: saying so');
+	server.setRef('refs/heads/main', tip);
+	t.equal(fixtureGit(server.remote, ['log', '--follow', '--format=%s', 'main', '--', 'README.md']), [update, rename, 'initial'].join('\n'), 'so `git log --follow` follows `README.md`, on `main`, to where it was `README.markdown`');
 	t.end();
 });
 
