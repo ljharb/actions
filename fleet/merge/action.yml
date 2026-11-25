@@ -1,5 +1,5 @@
 name: 'fleet: merge queue'
-description: 'Merge the PRs `/merge` queued while their checks were running, once the checks pass, dropping the ones that failed, changed, or were closed; and keep every open PR of the App’s one commit on its base’s tip, restoring the inputs a failing `fleet/workflows` PR removed'
+description: 'Merge the PRs `/merge` queued while their checks were running, once the checks pass, dropping the ones that failed, changed, or were closed; and keep every open PR of the App’s on its base’s tip, as its own commits, one after another, restoring the inputs a failing `fleet/workflows` PR removed'
 author: ljharb
 inputs:
   app-id:

@@ -10,7 +10,7 @@ import nock from 'nock';
 import test from 'tape';
 
 import { appAuth } from '../../../fleet/lib/app.mjs';
-import { fixBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
+import { fixBranch, readmeBranch, relockBranch } from '../../../fleet/lib/branches.mjs';
 import { maintain, marker, permissions } from '../../../fleet/merge/maintain.mjs';
 import { pr } from '../commands/helpers/merge-run.mjs';
 import { mockMerge, prCommit } from '../commands/helpers/merge.mjs';
@@ -206,14 +206,14 @@ function commitsOf(server, head) {
 }
 
 /**
- * What the API shows of `server` now: its open PRs (each `[number, branch, head]`), with their commits and the files their head commit changes (from its parent, as GitHub lists them), and `main`'s tip; and `extra`.
+ * What the API shows of `server` now: its open PRs (each `[number, branch, head]`), with their commits and the files they change (from where their branch left `main`, as GitHub compares them), and `main`'s tip; and `extra`.
  * @type {(server: Server, pulls: [number, string, string][], extra?: MergeScenario) => MergeScenario}
  */
 function shown(server, pulls, extra = {}) {
 	return {
 		openPulls: { [repository]: pulls.map(([number, branch, sha]) => pr(repository, number, branch, { sha })) },
 		commits: Object.fromEntries(pulls.map(([number, , sha]) => [`${repository}#${number}`, commitsOf(server, sha)])),
-		files: Object.fromEntries(pulls.map(([, , sha]) => [`${repository}@${sha}`, fixtureGit(server.remote, ['diff', '--name-only', `${sha}^`, sha]).split('\n').filter(Boolean)])),
+		files: Object.fromEntries(pulls.map(([, , sha]) => [`${repository}@${sha}`, fixtureGit(server.remote, ['diff', '--name-only', `main...${sha}`]).split('\n').filter(Boolean)])),
 		refs: { [repository]: server.tip('main') },
 		...extra,
 	};
@@ -658,7 +658,7 @@ test('maintain: rebasing and restoring work in a shallow clone without file cont
 	t.end();
 });
 
-test('maintain: squashes a PR with several of the bot’s commits into one', async (t) => {
+test('maintain: replays a PR with several of the bot’s commits onto its base’s tip, each as a commit of its own, but for a merge commit', async (t) => {
 	const server = setup(t);
 	server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
 	server.commit('main', { 'README.md': 'moved\n' });
@@ -673,9 +673,75 @@ test('maintain: squashes a PR with several of the bot’s commits into one', asy
 	t.ok(head, 'fixture: the bot merged the base in');
 	t.ok(logged(stdout).includes(`${prURL(server)}: rebased onto \`main\`’s tip`), 'rebases it');
 	const tip = server.tip(`refs/heads/${fixBranch}`);
-	t.deepEqual(server.log(`main..${tip}`).map((line) => line.split('|')[2]), [message], 'into one commit, with its first commit’s message');
-	t.equal(server.show(tip, pretest), template('node-pretest.yml').trim(), 'with every change');
-	t.equal(server.show(tip, aught), fixedAught.trim(), 'from every commit');
+	const first = fixtureGit(server.remote, ['rev-parse', `${tip}^`]);
+	t.deepEqual(server.log(`main..${tip}`), [`${botLine}|${botLine}|more|${first}`, `${botLine}|${botLine}|${message}|${server.tip('main')}`], 'as its two commits but the merge, in order, one after another on the base’s tip, each by the bot, with its own message');
+	t.equal(server.show(first, aught), fixedAught.trim(), 'the first with its change');
+	t.equal(server.show(first, pretest), tapePretest.trim(), 'and only that');
+	t.equal(server.show(tip, pretest), template('node-pretest.yml').trim(), 'and the second with its own');
+	t.equal(server.show(tip, 'README.md'), 'moved', 'on the base’s');
+	t.end();
+});
+
+test('maintain: a PR of several commits on its base’s tip is up to date, as one commit is', async (t) => {
+	const server = setup(t);
+	server.commit(readmeBranch, { 'README.md': 'first\n' }, { who: bot, from: 'main', message: 'first' });
+	const readme = server.commit(readmeBranch, { 'README.md': 'second\n' }, { who: bot, message: 'second' });
+	server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
+	const fix = server.commit(fixBranch, { 'README.md': 'more\n' }, { who: bot, message: 'more' });
+	const openPulls = { [repository]: [pr(repository, 1, fixBranch, { sha: fix }), pr(repository, 2, readmeBranch, { sha: readme })] };
+
+	const { errors, stdout, requests } = await run(t, {
+		server,
+		github: installed([{ name: 'r', open: [1, 1] }]),
+		merge: { ...shown(server, [[1, fixBranch, fix], [2, readmeBranch, readme]]), openPulls, ci: { [fix]: { checkRuns: [{ id: 1, name: 'tests', status: 'completed', conclusion: 'success' }] } } },
+		offline: true,
+	});
+	t.equal(errors, 0, 'nothing failed, with nothing cloned');
+	t.deepEqual(
+		logged(stdout).filter((line) => line.startsWith(server.serverURL)),
+		[
+			`${prURL(server)}: up to date; its CI passed`,
+			`${prURL(server, 2)}: up to date`,
+		],
+		'each is left as it is',
+	);
+	t.ok(requests.some((r) => r.path === `/repos/ljharb/r/compare/${server.tip('main')}...${fix}`), 'what a `fleet/workflows` PR changes is read from what all of its commits change, from its base’s tip to its head');
+	t.equal(server.tip(`refs/heads/${readmeBranch}`), readme, 'pushing nothing');
+	t.end();
+});
+
+test('maintain: a PR of several commits that conflicts with its base in any of them is left as it is, and says so', async (t) => {
+	const server = setup(t);
+	server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, from: 'main', message });
+	const head = server.commit(fixBranch, { 'README.md': 'ours\n' }, { who: bot, message: 'more' });
+	const mainTip = server.commit('main', { 'README.md': 'theirs\n' });
+	const { errors, stdout, requests } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+	});
+	t.equal(errors, 0, 'not a failure');
+	t.ok(logged(stdout).includes(`${prURL(server)}: it conflicts with \`main\`, so it can’t be rebased; said so on it`), 'the second conflicting, it can’t be rebased');
+	t.deepEqual(comments(requests), [`${marker('conflict', head, mainTip)}\nThis PR conflicts with \`main\`, so the App can’t rebase it onto \`main\`’s tip, which it must be on to be merged: it needs updating (eg, with \`/fix\`), or closing.`], 'saying so, as for one commit');
+	t.equal(server.tip(`refs/heads/${fixBranch}`), head, 'leaving it as it is');
+	t.end();
+});
+
+test('maintain: replaying drops a commit whose change its base’s tip already has, as `git rebase` does', async (t) => {
+	const server = setup(t);
+	server.commit(fixBranch, { 'README.md': 'moved\n' }, { who: bot, from: 'main', message: 'already there' });
+	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, message });
+	const mainTip = server.commit('main', { 'README.md': 'moved\n' });
+	const { errors, stdout } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]]),
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.ok(logged(stdout).includes(`${prURL(server)}: rebased onto \`main\`’s tip`), 'rebases it');
+	const tip = server.tip(`refs/heads/${fixBranch}`);
+	t.deepEqual(server.log(`main..${tip}`), [`${botLine}|${botLine}|${message}|${mainTip}`], 'as only the commit that still changes something');
+	t.equal(server.show(tip, aught), fixedAught.trim(), 'with its change');
 	t.end();
 });
 
@@ -1054,6 +1120,35 @@ test('maintain: a `fleet/workflows` PR whose CI failed gets back the inputs it r
 	t.end();
 });
 
+test('maintain: restoring what a PR of several commits removed changes only its last commit, in a clone of only those', async (t) => {
+	const server = setup(t, {
+		[pretest]: tapePretest,
+		[aught]: tapeAught,
+		'README.md': 'readme\n',
+		'big.txt': 'not needed\n',
+	});
+	fixtureGit(server.remote, ['config', 'uploadpack.allowFilter', 'true']);
+	server.commit('main', { 'old.txt': 'history\n' });
+	const mainTip = server.tip('main');
+	const first = server.commit(fixBranch, { [pretest]: template('node-pretest.yml') }, { who: bot, from: 'main', message });
+	const head = server.commit(fixBranch, { [aught]: fixedAught }, { who: bot, message: 'more' });
+	const { errors, stdout } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [pretest]) }),
+		partial: true,
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.ok(logged(stdout).some((line) => line.endsWith('/ljharb/r/pull/1: its CI failed, so restored `skip-engines` in `node-pretest.yml`, and kept them in `.github/ljharb-actions.json`')), 'says what it restored');
+	const restored = server.tip(`refs/heads/${fixBranch}`);
+	t.deepEqual(server.log(`main..${restored}`), [`${botLine}|${botLine}|more|${first}`, `${botLine}|${botLine}|${message}|${mainTip}`], 'still two commits by the bot, on the base’s tip, the first as it was');
+	t.equal(`${server.show(restored, pretest)}\n`, tapePretest, 'the input is back, in the last');
+	t.equal(`${server.show(restored, aught)}\n`, fixedAught, 'which still has its own change');
+	t.equal(`${server.show(restored, config)}\n`, '{\n  "keep": {\n    "node-pretest.yml": [\n      "skip-engines"\n    ]\n  }\n}\n', 'and keeps the input');
+	t.equal(fixtureGit(server.remote, ['fsck', '--connectivity-only', '--no-dangling', '--no-progress']), '', 'and the server’s repository is whole');
+	t.end();
+});
+
 test('maintain: a `fleet/workflows` PR whose CI fails only as its base’s tip’s does is never blamed for it', async (t) => {
 	/** @type {Record<string, JobOutcome>} */
 	const nonLatest = { 'tests / non-latest - 8.x': 'failed', 'tests / non-latest - 0.9': 'failed', 'tests / latest': 'passed' };
@@ -1161,13 +1256,13 @@ test('maintain: a `fleet/workflows` PR whose CI fails only as its base’s tip�
 
 	const passed = await scenario(actionsRun(200, aught, nonLatest), actionsRun(100, aught, { 'tests / latest': 'passed' }));
 	t.ok(logged(passed.result.stdout).includes(`${prURL(passed.server)}: up to date; its CI passed`), 'a PR whose CI passed is left alone');
-	t.notOk(passed.result.requests.some((r) => r.path.includes(passed.mainTip)), 'without reading the base’s tip’s CI');
+	t.notOk(passed.result.requests.some((r) => r.path.includes(passed.mainTip) && !r.path.includes('/compare/')), 'without reading the base’s tip’s CI');
 
 	const onlyOptional = await scenario(actionsRun(200, aught, nonLatest), actionsRun(100, aught, { 'tests / non-latest - 8.x': 'hidden', 'tests / non-latest - 0.9': 'optional', 'tests / latest': 'passed' }));
 	t.ok(logged(onlyOptional.result.stdout).includes(`${prURL(onlyOptional.server)}: up to date; its CI passed`), 'a PR whose only failures `continue-on-error` hides passed, so it’s left alone');
 	t.equal(onlyOptional.server.tip(`refs/heads/${fixBranch}`), onlyOptional.head, 'restoring nothing');
 	t.deepEqual(comments(onlyOptional.result.requests), [], 'and saying nothing');
-	t.notOk(onlyOptional.result.requests.some((r) => r.path.includes(onlyOptional.mainTip)), 'without reading the base’s tip’s CI');
+	t.notOk(onlyOptional.result.requests.some((r) => r.path.includes(onlyOptional.mainTip) && !r.path.includes('/compare/')), 'without reading the base’s tip’s CI');
 	t.end();
 });
 

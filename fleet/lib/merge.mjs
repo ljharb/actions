@@ -9,7 +9,7 @@ import {
 } from './app.mjs';
 import { botBranches } from './branches.mjs';
 import { ciStatus } from './ci.mjs';
-import { commitsRefusal, isSingleOnBase } from './merge-guards.mjs';
+import { commitsRefusal, isBaseTip } from './merge-guards.mjs';
 import { code, fence, html } from './markdown.mjs';
 import { isObject } from './kept.mjs';
 import { hideSaid } from './said.mjs';
@@ -161,7 +161,7 @@ export async function candidatePRs(
 }
 
 /**
- * Whether a PR can be merged now: `refused` when it has commits that aren't the App's bot's own (which only a person can review), `behind` when it isn't one commit on its base's current tip (which the App fixes by rebasing it, not by waiting), else how its CI went (see `ciStatus`), with what failed that `continue-on-error` hides, if anything did.
+ * Whether a PR can be merged now: `refused` when it has commits that aren't the App's bot's own (which only a person can review), `behind` when its commits aren't one after another on its base's current tip (see `commitsRefusal`; which the App fixes by rebasing it, not by waiting), else how its CI went (see `ciStatus`), with what failed that `continue-on-error` hides, if anything did.
  * @type {(octokit: Octokit, target: Target, bot: string) => Promise<Assessment>}
  */
 export async function assess(octokit, target, bot) {
@@ -169,7 +169,7 @@ export async function assess(octokit, target, bot) {
 	if ('reason' in commits) {
 		return { kind: 'refused', reason: commits.reason };
 	}
-	if (!await isSingleOnBase(octokit, target, commits)) {
+	if (commits.onto === null || !await isBaseTip(octokit, target, commits.onto)) {
 		return { kind: 'behind' };
 	}
 	const ci = await ciStatus(octokit, target);

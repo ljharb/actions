@@ -758,7 +758,12 @@ test('assess', async (t) => {
 		['one commit, on the base’s tip', [prCommit('h1', { parents: ['tip'] })], { kind: 'ready' }],
 		['one commit, on an older base commit', [prCommit('h1', { parents: ['old'] })], { kind: 'behind' }],
 		['one merge commit', [prCommit('h1', { parents: ['tip', 'other'] })], { kind: 'behind' }],
-		['two commits, the first on the base’s tip', [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] })], { kind: 'behind' }],
+		['two commits, one after another, the first on the base’s tip', [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] })], { kind: 'ready' }],
+		['three commits, one after another, the first on the base’s tip', [prCommit('g0', { parents: ['tip'] }), prCommit('h0', { parents: ['g0'] }), prCommit('h1', { parents: ['h0'] })], { kind: 'ready' }],
+		['two commits, one after another, the first on an older base commit', [prCommit('h0', { parents: ['old'] }), prCommit('h1', { parents: ['h0'] })], { kind: 'behind' }],
+		['two commits, each on the base’s tip', [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['tip'] })], { kind: 'behind' }],
+		['two commits, the second a merge of the first and the base’s tip', [prCommit('h0', { parents: ['old'] }), prCommit('h1', { parents: ['h0', 'tip'] })], { kind: 'behind' }],
+		['two commits, the first a merge', [prCommit('h0', { parents: ['tip', 'other'] }), prCommit('h1', { parents: ['h0'] })], { kind: 'behind' }],
 	];
 	await cases.reduce(
 		async (previous, [label, commits, expected]) => {
@@ -775,9 +780,13 @@ test('assess', async (t) => {
 		},
 		Promise.resolve(),
 	);
-	const several = setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] })] } });
+	const several = setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['tip'] })] } });
 	await assess(octokit, target, botUser);
-	t.notOk(several.some((r) => r.path.includes('/git/ref/')), 'with more than one commit, the base’s tip isn’t even read');
+	t.notOk(several.some((r) => r.path.includes('/git/ref/')), 'with commits that aren’t one after another, the base’s tip isn’t even read');
+	setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] }), prCommit('h1', { parents: ['h0'] })] } });
+	t.deepEqual(await assess(octokit, target, botUser), { kind: 'behind' }, 'nor is one listing a commit twice');
+	setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h0', { parents: ['g0'] }), prCommit('g0', { parents: ['tip'] }), prCommit('h1', { parents: ['h0'] })] }, ci: passed });
+	t.deepEqual(await assess(octokit, target, botUser), { kind: 'ready' }, 'without relying on the order the ones before the head are listed in');
 	const tipRead = setup(t, { refs: { 'o/r': 'tip' }, commits: { 'o/r#1': [prCommit('h1', { parents: ['tip'] })] }, ci: passed });
 	await assess(octokit, target, botUser);
 	t.ok(tipRead.some((r) => r.path === '/repos/o/r/git/ref/heads%2Fmain'), 'reads the base branch’s current tip');
@@ -797,7 +806,7 @@ test('assess', async (t) => {
 	t.equal(optionalNote({ optional: [f('a', 'failure'), f('b', 'boom')] }), '; optional jobs failed, which doesn’t block merging (see below)', 'which a reply notes, listing them below its table');
 	t.equal(optionalNote({}), '', 'saying nothing when there’s nothing to note');
 	t.equal(optionalNote({ optional: [] }), '', 'even when it’s empty');
-	t.equal(behindReason('main'), 'it needs updating: the App’s PRs must be one commit, on `main`’s tip, and the App rebases them onto it every 10 minutes, so run `/merge` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so `/merge` would never take it)', 'a PR that needs updating must be updated by the App, since `/merge` takes only its commits');
+	t.equal(behindReason('main'), 'it needs updating: the App’s PRs must be its own commits, one after another, on `main`’s tip, and the App rebases them onto it every 10 minutes, so run `/merge` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so `/merge` would never take it)', 'a PR that needs updating must be updated by the App, since `/merge` takes only its commits');
 });
 
 test('failureDetails', (t) => {

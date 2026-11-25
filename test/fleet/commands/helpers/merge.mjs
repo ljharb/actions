@@ -18,7 +18,7 @@ import nock from 'nock';
  * - `refs`, keyed by `owner/name`: the tip of every branch (unspecified, `base0`), or an error reading it
  * - `ci`, keyed by commit: its CI (unspecified, nothing at all)
  * - `commits`, keyed by `owner/name#number`: the PR's commits, of which GitHub lists only the first 250 (unspecified, one: the head of the PR in `prs` or `openPulls`, by the App's bot; none, without such a PR)
- * - `files`, keyed by `owner/name@commit`: the paths of the files that commit changes from its parent (unspecified, one workflow file)
+ * - `files`, keyed by `owner/name@commit`: the paths of the files a comparison of any commit to that one lists (unspecified, one workflow file)
  * - `refUpdates`, keyed by `owner/name`: an error that updating a ref replies with (unspecified, it's updated)
  * - `queue`: the merge queue variable's value (unspecified, there's no such variable); `queueError`, an error reading it replies with, and `queueWriteError`, one writing it does
  * - `eyes`, keyed by comment id: the 👀 reactions on it; `eyesError`, an error listing them replies with
@@ -153,9 +153,9 @@ export function mockMerge(scenario, record) {
 			}),
 		],
 		[
-			scope.get(/^\/repos\/[^/]+\/[^/]+\/commits\/[^/?]+$/),
+			scope.get(/^\/repos\/[^/]+\/[^/]+\/compare\/[^/?]+$/),
 			handle(({ path }) => {
-				const files = scenario.files?.[`${repoOf(path)}@${decodeURIComponent(path.split('/')[5])}`] ?? ['.github/workflows/node-pretest.yml'];
+				const files = scenario.files?.[`${repoOf(path)}@${decodeURIComponent(path.split('/')[5]).split('...')[1]}`] ?? ['.github/workflows/node-pretest.yml'];
 				return [200, { files: files.map((filename) => ({ filename, status: 'modified' })) }];
 			}),
 		],

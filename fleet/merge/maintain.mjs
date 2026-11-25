@@ -20,7 +20,7 @@ import { blame, ciFailures } from '../lib/ci.mjs';
 import { configFile, keptConfig } from '../lib/kept.mjs';
 import { code } from '../lib/markdown.mjs';
 import { candidatePRs, messageOf } from '../lib/merge.mjs';
-import { changedReason, commitsRefusal, isSingleOnBase } from '../lib/merge-guards.mjs';
+import { changedReason, commitsRefusal, isBaseTip } from '../lib/merge-guards.mjs';
 import {
 	hasConfig,
 	onlyBookkeeping,
@@ -39,6 +39,7 @@ import {
 	remoteTip,
 } from '../lib/pr.mjs';
 import { hideSaid as hideMarked, hideStale, marker } from '../lib/said.mjs';
+import { replay, rewrite } from './rebuild.mjs';
 import { reposWithAppPRs } from './repos.mjs';
 
 /** @import { Octokit, appAuth } from '../lib/app.mjs' */
@@ -53,10 +54,10 @@ import { reposWithAppPRs } from './repos.mjs';
  * What keeping one PR up to date came to:
  * - `changed`: its branch moved while it was being looked at, so it's left for the next run
  * - `foreign`: it has commits by someone else (or too many to tell), so it's never touched (and says so, once per head)
- * - `rebased`: it was rebuilt as one commit on its base's tip
+ * - `rebased`: its commits were replayed onto its base's tip, one by one
  * - `conflict`: it can't be, since it conflicts with its base (which it says, once per head and base tip)
  * - `empty`: it can't be, since its base already has everything it changes (which it says, once per head and base tip)
- * - `pending`, `passed`: it's one commit on its base's tip, and its CI is still running (or has failed only as its base's tip's has, so far), or passed (or, for a relock PR, isn't looked at); CI that failed only in ways `continue-on-error` hides passed (see `optionalFailures`); once it's passed, that it was said to be `stuck`, for that head, no longer applies, so that's hidden (see `hideStuck`)
+ * - `pending`, `passed`: its commits are on its base's tip, one after another, and its CI is still running (or has failed only as its base's tip's has, so far), or passed (or, for a relock PR, isn't looked at); CI that failed only in ways `continue-on-error` hides passed (see `optionalFailures`); once it's passed, that it was said to be `stuck`, for that head, no longer applies, so that's hidden (see `hideStuck`)
  * - `restored`: its CI failed, and inputs it removed from a workflow file that failed in a way its base's tip doesn't were put back, and kept
  * - `stuck`: its CI failed, and there's nothing left to put back (or where to put it back is ambiguous, or every workflow file that failed only failed as on its base's tip), so it needs a person (which it says, once per head)
  * - `matches`: a `fleet/workflows` PR that would change nothing on its base's tip but the App's bookkeeping (see `onlyBookkeeping`), as it is, or once rebased, or once what it removed is put back: so it was closed (saying why, once per head), since its base's workflow files already match
@@ -82,38 +83,6 @@ export { marker };
 function show(git, rev) {
 	const shown = git(['show', rev], { allowFailure: true });
 	return shown.status === 0 ? shown.stdout : null;
-}
-
-/**
- * One commit on `base`'s tip with `tree`, with the message of `from` (the PR's oldest commit, which is the App's, whose message says what it's for).
- * @type {(git: Git, commit: { base: string, tree: string, from: string }) => string}
- */
-function commitOnBase(
-	git,
-	{
-		base,
-		tree,
-		from,
-	},
-) {
-	return git(
-		[
-			'commit-tree',
-			tree,
-			'-p',
-			`origin/${base}`,
-			'-F',
-			'-',
-		],
-		{
-			input: git([
-				'log',
-				'-1',
-				'--format=%B',
-				from,
-			]).stdout,
-		},
-	).stdout.trim();
 }
 
 /** @typedef {{ context: Context, repo: Repo, pr: PR, octokit: Octokit, token: string }} Target */
@@ -212,45 +181,32 @@ function say(
 }
 
 /**
- * One commit on `base`'s tip whose tree is `tree`'s, with `writes`, and the message of `from`.
- * @type {(git: Git, commit: { base: string, tree: string, from: string }, writes: Map<string, string>) => string}
+ * Pushes `commit`, which the App rebuilt the PR's branch as, on its base's tip (see `pushBranch`), as however many commits it is there.
+ * @type {(job: Job, commit: string) => void}
  */
-function rewrite(
-	git,
+function pushRebuilt(
 	{
-		base,
-		tree,
-		from,
+		git,
+		pr,
+		tip,
+		identity,
 	},
-	writes,
+	commit,
 ) {
-	git(['read-tree', tree]);
-	writes.forEach((content, file) => {
-		const blob = git(
-			[
-				'hash-object',
-				'-w',
-				'--stdin',
-			],
-			{ input: content },
-		).stdout.trim();
-		git([
-			'update-index',
-			'--add',
-			'--cacheinfo',
-			`100644,${blob},${file}`,
-		]);
-	});
-	return commitOnBase(git, {
+	const base = pr.base.ref;
+	pushBranch(git, {
 		base,
-		tree: git(['write-tree']).stdout.trim(),
-		from,
+		branch: pr.head.ref,
+		tip,
+		identity,
+		commit,
+		count: ownCommits(git, { base, tip: commit }).length,
 	});
 }
 
 /**
- * Rebuilds the PR as one commit on its base's tip: the change all its commits make, applied there as `git rebase` would (a single commit is replayed onto the base's tip; several, squashed first). On a conflict, it's left as it is, and says so, about that tip.
- * When its change touches `package.json` or the config file, `package.json`'s entry for the config file is synced again with whether the result has it (see `syncConfigIgnore`), since what the base changed meanwhile (eg, adding or deleting the config file) can leave the entry the PR added or removed wrong.
+ * Rebuilds the PR on its base's tip: its commits replayed there, one by one, as `git rebase` would (see `replay`), so that each is still a commit of its own, by the App's bot, with its message. On a conflict in any of them, it's left as it is, and says so, about that tip.
+ * When its change touches `package.json` or the config file, `package.json`'s entry for the config file is synced again with whether the result has it (see `syncConfigIgnore`), in its last commit, since what the base changed meanwhile (eg, adding or deleting the config file) can leave the entry the PR added or removed wrong.
  * @type {(job: Job) => Promise<Outcome>}
  */
 async function rebase(job) {
@@ -258,31 +214,15 @@ async function rebase(job) {
 		git,
 		pr,
 		tip,
-		identity,
 	} = job;
 	const base = pr.base.ref;
-	const commits = ownCommits(git, { base, tip });
-	const from = commits.length === 1 ? `${tip}^` : git([
-		'merge-base',
-		`origin/${base}`,
-		tip,
-	]).stdout.trim();
-	const merged = git(
-		[
-			'merge-tree',
-			'--write-tree',
-			`--merge-base=${from}`,
-			`origin/${base}`,
-			tip,
-		],
-		{ allowFailure: true },
-	);
+	const replayed = replay(git, { base, tip });
 	const onto = git(['rev-parse', `origin/${base}`]).stdout.trim();
-	if (merged.status !== 0) {
+	if (replayed === null) {
 		await say(job, { kind: 'conflict', base: onto }, `This PR conflicts with ${code(base)}, so the App can’t rebase it onto ${code(base)}’s tip, which it must be on to be merged: it needs updating (eg, with \`/fix\`), or closing.`);
 		return { kind: 'conflict', text: `it conflicts with ${code(base)}, so it can’t be rebased; said so on it` };
 	}
-	const tree = merged.stdout.split('\n')[0];
+	const tree = git(['rev-parse', `${replayed}^{tree}`]).stdout.trim();
 	if (tree === git(['rev-parse', `origin/${base}^{tree}`]).stdout.trim()) {
 		await say(job, { kind: 'empty', base: onto }, `${code(base)} already has everything this PR changes, so the App leaves it as it is: it can be closed.`);
 		return { kind: 'empty', text: `${code(base)} already has everything it changes, so it’s left as it is; said so on it` };
@@ -293,35 +233,33 @@ async function rebase(job) {
 	const touched = git([
 		'diff',
 		'--name-only',
-		from,
+		git([
+			'merge-base',
+			`origin/${base}`,
+			tip,
+		]).stdout.trim(),
 		tip,
 		'--',
 		packageJson,
 		configFile,
 	]).stdout.trim() !== '';
 	const synced = touched ? await syncConfigIgnore(packageJsonAt(git, tree), hasConfig(git, tree)) : null;
-	const commit = rewrite(
+	const commit = synced === null ? replayed : rewrite(
 		git,
 		{
-			base,
-			tree,
-			from: String(commits.at(-1)),
+			parent: `${replayed}^`,
+			tree: replayed,
+			from: replayed,
 		},
-		new Map(synced === null ? [] : [[packageJson, synced.content]]),
+		new Map([[packageJson, synced.content]]),
 	);
-	pushBranch(git, {
-		base,
-		branch: pr.head.ref,
-		tip,
-		identity,
-		commit,
-	});
+	pushRebuilt(job, commit);
 	/** @type {Record<'ignored' | 'unignored', string>} */
 	const resynced = {
 		ignored: `, and added ${code(configFile)}, which it now has, to ${code(packageJson)}’s \`publishConfig.ignore\``,
 		unignored: `, and removed ${code(configFile)}, which it no longer has, from ${code(packageJson)}’s \`publishConfig.ignore\``,
 	};
-	// it's now one commit, of only the App's, that changes something on its base's tip: so the head it replaced no longer conflicts, isn't empty, and has nobody else's commits
+	// it's now only the App's commits, one after another on its base's tip, that change something there: so the head it replaced no longer conflicts, isn't empty, and has nobody else's commits
 	const hid = await hideSaid(job, {
 		previous: tip,
 		head: commit,
@@ -444,10 +382,11 @@ async function restore(job, failed) {
 	if (ignored !== null) {
 		writes.set(packageJson, ignored.content);
 	}
+	// in its last commit, so that each of its commits is still its own
 	const commit = rewrite(
 		git,
 		{
-			base,
+			parent: `${tip}^`,
 			tree: tip,
 			from: tip,
 		},
@@ -457,13 +396,7 @@ async function restore(job, failed) {
 	if (onlyBookkeeping(changedFiles(git, `origin/${base}`, commit))) {
 		return closeMatching(job, 'its CI failed, and with what it removed restored, it');
 	}
-	pushBranch(git, {
-		base,
-		branch: pr.head.ref,
-		tip,
-		identity: job.identity,
-		commit,
-	});
+	pushRebuilt(job, commit);
 	// as for a rebase; it was never said to be stuck about the head it replaced, since it would then not have been restored
 	const hid = await hideSaid(job, {
 		previous: tip,
@@ -521,8 +454,8 @@ const branchChanged = { kind: 'changed', text: 'its branch changed while it was 
 
 /**
  * Clones the PR's repository, as little of it as `act` needs, and has `act` change its branch: unless what the clone has isn't what the API showed.
- * With `onBase`, `act` only needs the PR's head and its base's tip, which must be its parent (so the clone has only those, and their trees); otherwise, it needs their history too (but still only their trees, with each file's contents fetched when it's read).
- * @type {(target: Target, onBase: boolean, act: (job: Job) => Promise<Outcome>) => Promise<Outcome>}
+ * With `onBase`, how many commits the PR is on its base's tip, `act` only needs those and that tip, which must be what the oldest of them is on (so the clone has only those, and their trees); otherwise (`0`), it needs their history too (but still only their trees, with each file's contents fetched when it's read).
+ * @type {(target: Target, onBase: number, act: (job: Job) => Promise<Outcome>) => Promise<Outcome>}
  */
 async function withClone(target, onBase, act) {
 	const {
@@ -544,9 +477,9 @@ async function withClone(target, onBase, act) {
 			dir: path.join(dir, 'repo'),
 			partial: onBase ? { depth: 1 } : {},
 		});
-		// with `onBase`, the head and its parent, which should be the base's tip
-		const tip = remoteTip(git, pr.head.ref, onBase ? { depth: 2 } : {});
-		if (tip !== pr.head.sha || (onBase && git(['rev-parse', `${tip}^`]).stdout.trim() !== git(['rev-parse', `origin/${base}`]).stdout.trim())) {
+		// with `onBase`, the PR's commits and what the oldest is on, which should be the base's tip
+		const tip = remoteTip(git, pr.head.ref, onBase ? { depth: onBase + 1 } : {});
+		if (tip !== pr.head.sha || (onBase && git(['rev-parse', `${tip}~${onBase}`]).stdout.trim() !== git(['rev-parse', `origin/${base}`]).stdout.trim())) {
 			return branchChanged;
 		}
 		return await act({
@@ -562,9 +495,10 @@ async function withClone(target, onBase, act) {
 
 /**
  * For a PR whose CI failed, restores what it removed from the workflow files whose failures it could have caused (see `restore`), but never for a failure its base branch's tip has too, nor one that `continue-on-error` hides (see `blame`): when that's every one, the PR needs a person, which it says, once for each head commit. While that can't be told yet, nothing's done.
- * @type {(target: Target, ci: { failures: CIFailure[], running: boolean }, baseTip: Commit) => Promise<Outcome>}
+ * `count` is how many commits the PR is, on its base's tip, `baseTip`.
+ * @type {(target: Target, ci: { failures: CIFailure[], running: boolean }, onBase: { baseTip: Commit, count: number }) => Promise<Outcome>}
  */
-async function remediate(target, ci, baseTip) {
+async function remediate(target, ci, { baseTip, count }) {
 	const blamed = await blame(target.octokit, ci, baseTip);
 	const base = target.pr.base.ref;
 	if (blamed.kind === 'running') {
@@ -574,7 +508,7 @@ async function remediate(target, ci, baseTip) {
 		await say(target, { kind: 'stuck' }, `Every workflow file that failed on this PR’s head commit (${blamed.files.map(code).join(', ')}) fails the same way on ${code(base)}’s head commit (${code(baseTip.head)}), so the App has nothing to restore: it needs a person to look at it.`);
 		return { kind: 'stuck', text: `its CI failed only as ${code(base)}’s does; said so on it` };
 	}
-	return withClone(target, true, (job) => restore(job, blamed.files));
+	return withClone(target, count, (job) => restore(job, blamed.files));
 }
 
 /**
@@ -602,8 +536,8 @@ async function hideStuck({
 }
 
 /**
- * Keeps one of the App's open PRs the one commit on its base's tip that it must be (see `rebase`), and, for a `fleet/workflows` PR whose CI failed, puts back what it removed (see `restore`); a `fleet/workflows` PR that would change nothing on its base's tip but the App's bookkeeping, as it is, or once rebased or restored, is closed instead (see `closeMatching`).
- * Everything is decided from the API, exactly as `/merge` decides it (see `commitsRefusal`, `isSingleOnBase`, and `ciStatus`; and, for a PR whose CI failed, its base's tip's CI, see `remediate`): the repository is only cloned for a PR that has to be rebased or restored, and not even then once it's said, for its head commit (and, for a rebase, its base's tip), that it can't be (see `alreadySaid`).
+ * Keeps one of the App's open PRs on its base's tip, as its commits, one after another, as it must be (see `rebase`), and, for a `fleet/workflows` PR whose CI failed, puts back what it removed (see `restore`); a `fleet/workflows` PR that would change nothing on its base's tip but the App's bookkeeping, as it is, or once rebased or restored, is closed instead (see `closeMatching`).
+ * Everything is decided from the API, exactly as `/merge` decides it (see `commitsRefusal`, `isBaseTip`, and `ciStatus`; and, for a PR whose CI failed, its base's tip's CI, see `remediate`): the repository is only cloned for a PR that has to be rebased or restored, and not even then once it's said, for its head commit (and, for a rebase, its base's tip), that it can't be (see `alreadySaid`).
  * Never touches a PR with anyone else's commits on it.
  * @type {(context: Context, target: { repo: Repo, pr: PR, octokit: Octokit, token: string }) => Promise<Outcome>}
  */
@@ -640,25 +574,26 @@ export async function maintainPR(
 		await say(target, { kind: 'foreign' }, `The App never updates this PR (nor merges it): ${commits.reason}.`);
 		return { kind: 'foreign', text: `it’s left alone (${commits.reason}); said so on it` };
 	}
-	if (!await isSingleOnBase(octokit, at, commits)) {
+	const { onto } = commits;
+	if (onto === null || !await isBaseTip(octokit, at, onto)) {
 		const { data: ref } = await octokit.rest.git.getRef({
 			owner: repo.owner,
 			repo: repo.name,
 			ref: `heads/${pr.base.ref}`,
 		});
-		return await alreadySaid(target, ['conflict', 'empty'], ref.object.sha) ?? withClone(target, false, rebase);
+		return await alreadySaid(target, ['conflict', 'empty'], ref.object.sha) ?? withClone(target, 0, rebase);
 	}
 	if (pr.head.ref !== fixBranch) {
 		return { kind: 'passed', text: 'up to date' };
 	}
 	/*
-	 * its one commit's parent is its base's tip, so what that commit changes is what it changes there: read for exactly the head commit checked above, so that a push since (eg, of anyone else's commits) is never what decides it; one that changes nothing at all is left as it is
-	 * GitHub lists at most 300 of a commit's files at once, so a longer list is cut short, but never to only the App's bookkeeping, which is at most two
+	 * its commits are on its base's tip, so what they change, from there to its head, is what it changes there: read for exactly the head commit checked above, so that a push since (eg, of anyone else's commits) is never what decides it; one that changes nothing at all is left as it is
+	 * GitHub lists at most 300 of a comparison's files at once, so a longer list is cut short, but never to only the App's bookkeeping, which is at most two
 	 */
-	const { data: { files: diff = [] } } = await octokit.rest.repos.getCommit({
+	const { data: { files: diff = [] } } = await octokit.rest.repos.compareCommitsWithBasehead({
 		owner: repo.owner,
 		repo: repo.name,
-		ref: pr.head.sha,
+		basehead: `${onto}...${pr.head.sha}`,
 	});
 	const changed = diff.flatMap((f) => [f.filename].concat(f.previous_filename ?? []));
 	if (changed.length > 0 && onlyBookkeeping(changed)) {
@@ -672,8 +607,8 @@ export async function maintainPR(
 	};
 	const ci = await ciFailures(octokit, headCommit);
 	if (ci.kind === 'failed') {
-		// its one commit's parent is its base's tip
-		return await alreadySaid(target, ['stuck']) ?? remediate(target, ci, { ...headCommit, head: commits.parents[0] });
+		// what its commits are on is its base's tip
+		return await alreadySaid(target, ['stuck']) ?? remediate(target, ci, { baseTip: { ...headCommit, head: onto }, count: commits.count });
 	}
 	if (ci.kind === 'pending') {
 		return { kind: 'pending', text: 'up to date; its CI is still running' };

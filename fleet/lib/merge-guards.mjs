@@ -15,12 +15,28 @@ export const maxPRCommits = 250;
 /** @typedef {{ email?: string | null } | null | undefined} GitUser */
 
 /**
+ * The commit a PR's commits (`parentsOf`, each one's parents, by its SHA) are on, when they're a linear chain, one after another, ending at the one whose parents are `parents` (with `count` of them left from there): the only parent of the oldest, so that fast-forwarding to its head merges exactly those commits; else (a merge commit, or a commit that isn't on that chain) `null`.
+ * GitHub lists a PR's commits oldest first, but this never relies on their order.
+ * @type {(parentsOf: Map<string, string[]>, parents: string[], count: number) => string | null}
+ */
+function chainOnto(parentsOf, parents, count) {
+	if (parents.length !== 1) {
+		return null;
+	}
+	const next = parentsOf.get(parents[0]);
+	if (next) {
+		return chainOnto(parentsOf, next, count - 1);
+	}
+	return count === 1 ? parents[0] : null;
+}
+
+/**
  * Why `/merge` must never merge the PR, for the commits it has, if it must not: unless every one of them was authored and committed by the App's bot, someone else could have put anything in it.
  * Each author and committer is matched by the GitHub user GitHub links it to when there is one, else by the bot's noreply email (which is what the App commits with).
  * GitHub lists at most `maxPRCommits` of a PR's commits, so a PR with that many can't be shown to have no others.
  * The last commit listed must be `head`, the commit that's merged, so that the commits checked are the ones merged.
- * Else, how many commits it has, and the parents of its first, for `assess` to check that it's the one commit on its base's tip that every PR of the App's is.
- * @type {(octokit: Octokit, target: Target, bot: string) => Promise<{ reason: string } | { count: number, parents: string[] }>}
+ * Else, how many commits it has, and the commit they're on (see `chainOnto`; `null` when they aren't one after another), for `assess` to check that that's its base's tip (see `isBaseTip`), as every PR of the App's must be on.
+ * @type {(octokit: Octokit, target: Target, bot: string) => Promise<{ reason: string } | { count: number, onto: string | null }>}
  */
 export async function commitsRefusal(
 	octokit,
@@ -71,7 +87,8 @@ export async function commitsRefusal(
 	if (byOthers) {
 		return { reason: 'it has commits by someone else; review and merge it yourself' };
 	}
-	return { count: commits.length, parents: commits[0].parents.map((p) => p.sha) };
+	const parentsOf = new Map(commits.map(({ sha, parents }) => [sha, parents.map((p) => p.sha)]));
+	return { count: commits.length, onto: chainOnto(parentsOf, commits[commits.length - 1].parents.map((p) => p.sha), commits.length) };
 }
 
 /**
@@ -137,35 +154,32 @@ export function unreportedPending(unreported, others, now = Date.now()) {
 }
 
 /**
- * Whether a PR whose commits `commitsRefusal` checked is the App's: exactly one commit, whose only parent is `base`'s current tip, so that fast-forwarding `base` to it merges exactly that commit.
- * @type {(octokit: Octokit, target: Target, commits: { count: number, parents: string[] }) => Promise<boolean>}
+ * Whether `sha`, what a PR's commits are on (see `commitsRefusal`), is `base`'s current tip, as every PR of the App's must be on, so that fast-forwarding `base` to the PR's head merges exactly its commits.
+ * @type {(octokit: Octokit, target: Target, sha: string) => Promise<boolean>}
  */
-export async function isSingleOnBase(
+export async function isBaseTip(
 	octokit,
 	{
 		owner,
 		name,
 		base,
 	},
-	{ count, parents },
+	sha,
 ) {
-	if (count !== 1 || parents.length !== 1) {
-		return false;
-	}
 	const { data: ref } = await octokit.rest.git.getRef({
 		owner,
 		repo: name,
 		ref: `heads/${base}`,
 	});
-	return parents[0] === ref.object.sha;
+	return sha === ref.object.sha;
 }
 
 /**
- * Why a PR that isn't one commit on its base branch's tip isn't merged: the App keeps its PRs that way, rebasing them every 10 minutes, so it soon will be. GitHub's “Update branch” would add a commit that isn't the App's, which `/merge` then never takes.
+ * Why a PR whose commits aren't on its base branch's tip, one after another, isn't merged: the App keeps its PRs that way, rebasing them every 10 minutes, so it soon will be. GitHub's “Update branch” would add a commit that isn't the App's, which `/merge` then never takes.
  * @type {(base: string) => string}
  */
 export function behindReason(base) {
-	return `it needs updating: the App’s PRs must be one commit, on ${code(base)}’s tip, and the App rebases them onto it every 10 minutes, so run \`/merge\` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so \`/merge\` would never take it)`;
+	return `it needs updating: the App’s PRs must be its own commits, one after another, on ${code(base)}’s tip, and the App rebases them onto it every 10 minutes, so run \`/merge\` again after that (not GitHub’s “Update branch”, whose commit isn’t the App’s, so \`/merge\` would never take it)`;
 }
 
 /**

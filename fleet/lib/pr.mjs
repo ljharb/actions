@@ -220,12 +220,30 @@ export function assertBotOwned(
 }
 
 /**
- * Whether `tip` is exactly one commit whose only parent is `base`'s current tip: what every PR of the App's is.
- * @type {(git: Git, options: { base: string, tip: string }) => boolean}
+ * Whether `tip` is exactly `count` commits (unspecified: one), the first of which has `base`'s current tip as its only parent: what every PR of the App's is.
+ * @type {(git: Git, options: { base: string, tip: string, count?: number }) => boolean}
  */
-export function isSingleOnBase(git, { base, tip }) {
-	return ownCommits(git, { base, tip }).length === 1
-		&& git(['rev-parse', `${tip}^@`]).stdout.trim() === revParse(git, `origin/${base}`);
+export function isOnBase(git, {
+	base,
+	tip,
+	count = 1,
+}) {
+	return ownCommits(git, { base, tip }).length === count
+		&& git(['rev-parse', `${tip}~${count - 1}^@`]).stdout.trim() === revParse(git, `origin/${base}`);
+}
+
+/**
+ * The trees of the commits on `tip` that aren't on `base` (newest first): what each of them makes the repository.
+ * @type {(git: Git, options: { base: string, tip: string }) => string[]}
+ */
+function ownTrees(git, { base, tip }) {
+	return git([
+		'log',
+		'--format=%T',
+		tip,
+		'--not',
+		`origin/${base}`,
+	]).stdout.split('\n').filter(Boolean);
 }
 
 /**
@@ -275,17 +293,22 @@ export function commitChanges(
 	return true;
 }
 
-/** @type {(git: Git, options: { base: string, branch: string, commit: string }) => void} */
+/** @type {(git: Git, options: { base: string, branch: string, commit: string, count: number }) => void} */
 function assertOnBase(
 	git,
 	{
 		base,
 		branch,
 		commit,
+		count,
 	},
 ) {
-	if (git(['rev-parse', `${commit}^@`]).stdout.trim() !== revParse(git, `origin/${base}`)) {
-		throw new Error(`refusing to push \`${branch}\`: it must be one commit on top of \`${base}\`’s tip`);
+	if (!isOnBase(git, {
+		base,
+		tip: commit,
+		count,
+	})) {
+		throw new Error(`refusing to push \`${branch}\`: it must be ${count === 1 ? 'one commit' : `${count} commits`} on top of \`${base}\`’s tip`);
 	}
 }
 
@@ -295,10 +318,10 @@ function leaseError(branch) {
 }
 
 /**
- * Makes the App's own `branch` exactly `commit`: one commit, whose only parent is `base`'s tip.
- * A branch that already has that tree on that parent is left alone. Otherwise, with no branch, it's a plain push; with one, observed at `tip`, it's only overwritten when every commit it adds is the bot's own, and only with a lease on `tip`, so anything pushed since makes the push fail instead of being lost.
+ * Makes the App's own `branch` exactly `commit`: one commit (or, with `count`, that many), whose first's only parent is `base`'s tip (see `isOnBase`).
+ * A branch that already has that many commits on that parent, each with the same tree as its counterpart, is left alone. Otherwise, with no branch, it's a plain push; with one, observed at `tip`, it's only overwritten when every commit it adds is the bot's own, and only with a lease on `tip`, so anything pushed since makes the push fail instead of being lost.
  * Returns whether it pushed.
- * @type {(git: Git, options: { base: string, branch: string, tip: string | null, identity: Identity, commit?: string }) => 'pushed' | 'unchanged'}
+ * @type {(git: Git, options: { base: string, branch: string, tip: string | null, identity: Identity, commit?: string, count?: number }) => 'pushed' | 'unchanged'}
  */
 export function pushBranch(
 	git,
@@ -308,6 +331,7 @@ export function pushBranch(
 		tip,
 		identity,
 		commit = 'HEAD',
+		count = 1,
 	},
 ) {
 	assertBotBranch(branch);
@@ -315,6 +339,7 @@ export function pushBranch(
 		base,
 		branch,
 		commit,
+		count,
 	});
 	if (tip) {
 		assertBotOwned(git, {
@@ -323,7 +348,11 @@ export function pushBranch(
 			tip,
 			identity,
 		});
-		if (isSingleOnBase(git, { base, tip }) && revParse(git, `${tip}^{tree}`) === revParse(git, `${commit}^{tree}`)) {
+		if (isOnBase(git, {
+			base,
+			tip,
+			count,
+		}) && ownTrees(git, { base, tip }).join('\n') === ownTrees(git, { base, tip: commit }).join('\n')) {
 			return 'unchanged';
 		}
 	}
@@ -402,6 +431,7 @@ export async function publish({
 			base,
 			branch,
 			commit: 'HEAD',
+			count: 1,
 		});
 		if (lsRemote(git, branch) !== tip) {
 			throw leaseError(branch);

@@ -20,7 +20,7 @@ import {
 	findMarked,
 	findPR,
 	foreignCommits,
-	isSingleOnBase,
+	isOnBase,
 	ownCommits,
 	publish,
 	pushBranch,
@@ -470,7 +470,7 @@ function commitAs(dir, message, contents, committer) {
 	fixtureGit(dir, ['commit', '--quiet', '--author', `${bot.name} <${bot.email}>`, '--message', message], committer);
 }
 
-test('ownCommits, foreignCommits, and isSingleOnBase', (t) => {
+test('ownCommits, foreignCommits, and isOnBase', (t) => {
 	const server = setup(t);
 	const one = server.commit(branch, { [lockfile]: 'bot lock\n' }, { who: bot, from: 'main' });
 	const { git } = clone(t, server);
@@ -482,14 +482,14 @@ test('ownCommits, foreignCommits, and isSingleOnBase', (t) => {
 
 	t.deepEqual(ownCommits(git, at(one)), [one], 'one commit of its own');
 	t.equal(foreignCommits(git, at(one)), 0, 'the bot’s');
-	t.ok(isSingleOnBase(git, at(one)), 'one commit, on the base’s tip');
+	t.ok(isOnBase(git, at(one)), 'one commit, on the base’s tip');
 	t.deepEqual(ownCommits(git, at(server.tip('main'))), [], 'the base has none');
-	t.notOk(isSingleOnBase(git, at(server.tip('main'))), 'so isn’t one commit on it');
+	t.notOk(isOnBase(git, at(server.tip('main'))), 'so isn’t one commit on it');
 
 	const two = server.commit(branch, { [lockfile]: 'newer lock\n' }, { who: bot });
 	remoteTip(git, branch);
 	t.deepEqual(ownCommits(git, at(two)), [two, one], 'two commits, newest first');
-	t.notOk(isSingleOnBase(git, at(two)), 'isn’t one commit');
+	t.notOk(isOnBase(git, at(two)), 'isn’t one commit');
 
 	const theirs = server.commit(branch, { 'README.md': 'theirs\n' }, { who: mallory });
 	remoteTip(git, branch);
@@ -500,7 +500,7 @@ test('ownCommits, foreignCommits, and isSingleOnBase', (t) => {
 
 	server.commit('main', { 'README.md': 'moved\n' });
 	git(['fetch', '--quiet', 'origin']);
-	t.notOk(isSingleOnBase(git, at(one)), 'one commit, on an older base commit, isn’t');
+	t.notOk(isOnBase(git, at(one)), 'one commit, on an older base commit, isn’t');
 
 	const { git: other, dir } = clone(t, server);
 	commitAs(dir, 'committed by someone else', { [lockfile]: 'x\n' }, mallory);
@@ -812,6 +812,110 @@ test('pushBranch', (t) => {
 			'refuses, without retrying',
 		);
 		st.equal(server.tip(`refs/heads/${branch}`), moved, 'the other push survives');
+		st.end();
+	});
+
+	t.end();
+});
+
+test('isOnBase: several commits', (t) => {
+	const server = setup(t);
+	const one = server.commit(branch, { [lockfile]: 'one\n' }, { who: bot, from: 'main' });
+	const two = server.commit(branch, { [lockfile]: 'two\n' }, { who: bot });
+	const { git } = clone(t, server);
+	remoteTip(git, branch);
+	t.ok(isOnBase(git, {
+		base,
+		tip: two,
+		count: 2,
+	}), 'two commits, the first on the base’s tip');
+	t.notOk(isOnBase(git, {
+		base,
+		tip: one,
+		count: 2,
+	}), 'one isn’t two');
+	t.notOk(isOnBase(git, {
+		base,
+		tip: two,
+		count: 3,
+	}), 'nor is two three');
+	t.end();
+});
+
+test('pushBranch: several commits, with `count`', (t) => {
+	t.test('only that many, on the base’s tip', (st) => {
+		const server = setup(st);
+		const { git, dir } = clone(st, server);
+		botCommit(dir, 'one', { [lockfile]: 'x\n' });
+		st.throws(
+			() => pushBranch(git, {
+				base,
+				branch,
+				tip: null,
+				identity: bot,
+				count: 2,
+			}),
+			new Error('refusing to push `fleet/workflows`: it must be 2 commits on top of `main`’s tip'),
+			'refuses one',
+		);
+		botCommit(dir, 'two', { [lockfile]: 'y\n' });
+		st.equal(
+			pushBranch(git, {
+				base,
+				branch,
+				tip: null,
+				identity: bot,
+				count: 2,
+			}),
+			'pushed',
+			'pushes two',
+		);
+		st.deepEqual(server.log(`main..${branch}`).map((line) => line.split('|')[2]), ['two', 'one'], 'both of them');
+		st.end();
+	});
+
+	t.test('already those trees, on the base’s tip: left alone', (st) => {
+		const server = setup(st);
+		server.commit(branch, { [lockfile]: 'x\n' }, { who: bot, from: 'main' });
+		const head = server.commit(branch, { [lockfile]: 'y\n' }, { who: bot });
+		const { git, dir } = clone(st, server);
+		const tip = remoteTip(git, branch);
+		botCommit(dir, 'one again', { [lockfile]: 'x\n' });
+		botCommit(dir, 'two again', { [lockfile]: 'y\n' });
+		st.equal(
+			pushBranch(git, {
+				base,
+				branch,
+				tip,
+				identity: bot,
+				count: 2,
+			}),
+			'unchanged',
+			'pushes nothing',
+		);
+		st.equal(server.tip(`refs/heads/${branch}`), head, 'the branch is as it was');
+		st.end();
+	});
+
+	t.test('the same last tree, in another number of commits: replaced', (st) => {
+		const server = setup(st);
+		server.commit(branch, { [lockfile]: 'y\n' }, { who: bot, from: 'main' });
+		const { git, dir } = clone(st, server);
+		const tip = remoteTip(git, branch);
+		botCommit(dir, 'one', { [lockfile]: 'x\n' });
+		botCommit(dir, 'two', { [lockfile]: 'y\n' });
+		st.equal(
+			pushBranch(git, {
+				base,
+				branch,
+				tip,
+				identity: bot,
+				count: 2,
+			}),
+			'pushed',
+			'pushes',
+		);
+		st.deepEqual(server.log(`main..${branch}`).map((line) => line.split('|')[2]), ['two', 'one'], 'both commits');
 		st.end();
 	});
 
