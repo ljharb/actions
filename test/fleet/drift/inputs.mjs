@@ -9,9 +9,10 @@ import {
 	notPassed,
 	removedInputs,
 	stripKnownInputs,
+	uncapped,
 	unwritten,
 } from '../../../fleet/drift/inputs.mjs';
-import { template } from './helpers/states.mjs';
+import { nodeWorkflow, template } from './helpers/states.mjs';
 
 /** @import { Inputs } from '../../../fleet/drift/inputs.mjs' */
 
@@ -21,6 +22,8 @@ on: [pull_request, push]
 
 permissions:
   contents: read
+
+cache-mode: none
 
 jobs:
   tests:
@@ -308,6 +311,31 @@ test('keepInputs', (t) => {
 		text: unreadable,
 		why: 'the kept inputs can’t all be kept: job “tests” should pass skip-engines to pretest.yml, but they can’t be added to it: it doesn’t call it, or its “with:”, or the file, isn’t YAML the App understands',
 	}, 'or they can’t be added to what’s rendered');
+	t.end();
+});
+
+test('uncapped', (t) => {
+	const capped = nodeWorkflow();
+	const free = capped.replace('    cache-mode: read\n', '');
+	const building = free.replace('      command: npm run tests-only\n', '      command: npm run tests-only\n      build-output-dir: dist # saved by the build job\n');
+	t.equal(uncapped(capped, building), free, 'a call whose counterpart passes `build-output-dir` isn’t capped at `read`');
+	t.match(uncapped(capped, building), /^ {4}cache-mode: none$/m, 'but a job that calls none of this repo’s reusable workflows keeps its own');
+	t.equal(uncapped(template('node.yml'), building), template('node.yml').replace('    cache-mode: read\n', ''), 'nor is the template’s, with its placeholders');
+	t.equal(uncapped(capped, building.replace('  tests:', '  test:')), free, 'nor is one whose counterpart is a job with another id, when each file calls that workflow once');
+	t.equal(uncapped(capped, capped), capped, 'one whose counterpart doesn’t pass it is');
+	t.equal(uncapped(capped, building.replace(/node\.yml@main/, 'pretest.yml@main')), capped, 'as is one whose counterpart calls another workflow, for which it doesn’t need to write the cache');
+	t.equal(uncapped(capped, 'jobs: ['), capped, 'or when what the counterpart passes isn’t known');
+	const none = capped.replace('cache-mode: read', 'cache-mode: none');
+	t.equal(uncapped(none, building), none, 'a call capped otherwise is left as it is');
+	const listed = capped.replace('cache-mode: read', 'cache-mode: [read]');
+	t.equal(uncapped(listed, building), listed, 'as is one whose `cache-mode` isn’t a string');
+	t.equal(uncapped('jobs: [', building), 'jobs: [', 'and a file that isn’t YAML it understands');
+	/** @type {(text: string) => string} */
+	const crlf = (text) => text.replace(/\n/g, '\r\n');
+	t.equal(uncapped(crlf(capped), building), crlf(free), 'with its line endings');
+
+	t.deepEqual(keepInputs(capped, building, ['build-output-dir']), { text: building, why: null }, 'keeping `build-output-dir` lifts the cap of the call it’s kept in');
+	t.deepEqual(keepInputs(capped, building, ['skip-ls-check']), { text: capped, why: null }, 'but not keeping it doesn’t');
 	t.end();
 });
 

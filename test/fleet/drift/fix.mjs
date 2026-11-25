@@ -472,6 +472,16 @@ test('planFixes: a rewritten file keeps the inputs the repository keeps', async 
 		deletes: [],
 		skipped: [{ path: at('node-pretest.yml'), why: 'the kept inputs can’t all be kept: job “a” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous; job “b” passes skip-engines to pretest.yml, but no job with that id calls it now, and which other call of it should get them is ambiguous' }],
 	}, 'but when which call it’s kept from is ambiguous, the file is skipped, rather than dropping it');
+
+	const building = nodeWorkflow()
+		.replace('    cache-mode: read\n', '')
+		.replace('      command: npm run tests-only\n', '      command: npm run tests-only\n      build-output-dir: dist # saved by the build job\n');
+	// drifted for another reason: an input `node.yml` doesn't declare
+	const node = withWorkflows([{ name: 'node.yml', text: building.replace('# saved by the build job\n', '# saved by the build job\n      bogus: 1\n') }]);
+	const keptBuild = await plan(repoState({ workflows: node, config: { workflows: {}, readme: true, keep: { 'node.yml': ['build-output-dir'] } } }));
+	t.deepEqual(keptBuild.writes.map((w) => [w.path, w.content]), [[at('node.yml'), building]], 'a kept `build-output-dir` is kept with no `cache-mode: read` on its call, which couldn’t save it');
+	const droppedBuild = await plan(repoState({ workflows: node }));
+	t.deepEqual(droppedBuild.writes.map((w) => [w.path, w.content]), [[at('node.yml'), nodeWorkflow()]], 'one that isn’t kept is dropped, so the call is capped at `read`');
 	t.end();
 });
 

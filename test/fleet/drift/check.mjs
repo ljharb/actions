@@ -537,6 +537,30 @@ test('checkRepo: inputs a reusable workflow declares are a repository’s own, n
 	t.end();
 });
 
+test('checkRepo: a node test file that passes `build-output-dir` isn’t capped at `read`', async (t) => {
+	const capped = nodeWorkflow();
+	const free = capped.replace('    cache-mode: read\n', '');
+	const building = free.replace('      command: npm run tests-only\n', '      command: npm run tests-only\n      build-output-dir: dist\n');
+	t.equal(await checkRepo(repoState({ workflows: withWorkflows([{ name: 'node.yml', text: building }]) })), null, 'one that passes it, without a `cache-mode` on that job, isn’t drift');
+	t.deepEqual(summarize(await checkRepo(repoState({ workflows: withWorkflows([{ name: 'node.yml', text: free }]) }))).drifted, ['node.yml'], 'one that doesn’t, without one, is');
+
+	const cappedBuilding = capped.replace('      command: npm run tests-only\n', '      command: npm run tests-only\n      build-output-dir: dist\n');
+	const drifted = await checkRepo(repoState({ workflows: withWorkflows([{ name: 'node.yml', text: cappedBuilding }]) }));
+	t.deepEqual(summarize(drifted).drifted, ['node.yml'], 'as is one that passes it, capped at `read`, which can’t save it');
+	const [{ diff }] = present(drifted).drifted;
+	t.match(diff, /^- {6}build-output-dir: dist$/m, 'whose diff shows that fixing it would drop it, unless it’s kept');
+	t.doesNotMatch(diff, /^[-+] {4}cache-mode/m, 'and keep the cap');
+
+	const kept = await checkRepo(repoState({
+		workflows: withWorkflows([{ name: 'node.yml', text: cappedBuilding }]),
+		config: { workflows: {}, readme: true, keep: { 'node.yml': ['build-output-dir'] } },
+	}));
+	const [{ diff: keptDiff }] = present(kept).drifted;
+	t.match(keptDiff, /^- {4}cache-mode: read$/m, 'when it’s kept, fixing it lifts the cap instead');
+	t.doesNotMatch(keptDiff, /build-output-dir/, 'and keeps it');
+	t.end();
+});
+
 // `allVersions` is cached for the life of a process, so the version index is mocked in a child process of its own
 test('checkRepo: a drifted file’s diff fills what it can’t recover as fixing it would', (t) => {
 	// nvm-sh/nvmrc's, which has no aggregating job, and so no `{{label}}` to recover

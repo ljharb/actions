@@ -9,6 +9,7 @@ import {
 	ambiguity,
 	declaredInputs,
 	removedInputs,
+	uncapped,
 } from '../drift/inputs.mjs';
 import {
 	installationToken,
@@ -329,7 +330,8 @@ function restorations(git, { base, tip }, failed) {
 			if (why) {
 				unwritable.set(file, why);
 			} else {
-				writes.set(file, written);
+				// a call that's given back an input that writes the cache can't be capped at `read`
+				writes.set(file, uncapped(written, written));
 				kept.set(path.posix.basename(file), Array.from(new Set(Array.from(removed.values()).flatMap(({ inputs }) => Array.from(inputs.keys())))));
 			}
 		}

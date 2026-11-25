@@ -8,6 +8,7 @@ permissions:
 jobs:
   tests:
     uses: ljharb/actions/.github/workflows/node.yml@main
+    cache-mode: read
     with:
       range: '{{range}}'
       type: {{type}}
@@ -17,5 +18,6 @@ jobs:
     name: 'node {{label}}'
     needs: [tests]
     runs-on: ubuntu-latest
+    cache-mode: none
     steps:
       - run: true

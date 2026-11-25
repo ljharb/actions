@@ -5,6 +5,8 @@ on: [pull_request, push]
 permissions:
   contents: read
 
+cache-mode: none
+
 jobs:
   tests:
     uses: ljharb/actions/.github/workflows/pretest.yml@main

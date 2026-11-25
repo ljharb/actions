@@ -1170,6 +1170,33 @@ test('maintain: a `fleet/workflows` PR whose CI failed gets back the inputs it r
 	t.end();
 });
 
+test('maintain: restoring a `build-output-dir` that a PR removed lifts the `read` cap the PR put on its call', async (t) => {
+	const building = tapeAught.replace('      skip-ls-check: true\n', '      build-output-dir: dist\n');
+	const capped = fixedAught
+		.replace('    uses: ljharb/actions/.github/workflows/node.yml@main\n', '    uses: ljharb/actions/.github/workflows/node.yml@main\n    cache-mode: read\n')
+		.replace('    runs-on: ubuntu-latest\n', '    runs-on: ubuntu-latest\n    cache-mode: none\n');
+	const server = setup(t, {
+		[pretest]: tapePretest,
+		[aught]: building,
+		[config]: '{\n\t"relock": false\n}\n',
+	});
+	const head = server.commit(fixBranch, { [aught]: capped }, { who: bot, from: 'main', message });
+	const { errors, stdout } = await run(t, {
+		server,
+		github: installed([{ name: 'r' }]),
+		merge: shown(server, [[1, fixBranch, head]], { ci: failedIn(head, [aught]) }),
+	});
+	t.equal(errors, 0, 'nothing failed');
+	t.ok(logged(stdout).includes(`${prURL(server)}: its CI failed, so restored \`build-output-dir\` in \`node-aught.yml\`, and kept them in \`.github/ljharb-actions.json\``), 'says what it restored');
+	const restored = server.tip(`refs/heads/${fixBranch}`);
+	t.equal(
+		`${server.show(restored, aught)}\n`,
+		building.replace('    runs-on: ubuntu-latest\n', '    runs-on: ubuntu-latest\n    cache-mode: none\n'),
+		'the input is back, and its call isn’t capped at `read`, while the gate job keeps its cap',
+	);
+	t.end();
+});
+
 test('maintain: restoring what a PR of several commits removed changes only its last commit, in a clone of only those', async (t) => {
 	const server = setup(t, {
 		[pretest]: tapePretest,

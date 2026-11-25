@@ -317,7 +317,40 @@ export function addInputs(text, inputs) {
 }
 
 /**
- * `rendered`, keeping the inputs named in `keep` that `current` passes, in each call's counterpart (see above): so that rewriting a file from its template keeps a repository's own values for them (and their comments).
+ * The inputs of this repo's reusable workflows (by file name) that a call can only pass when the jobs it runs can write the cache: the `build` job saves `build-output-dir` to it, with the trigger's default `cache-mode` (`write`), so a call that passes it can't be capped at `read`.
+ * @type {Map<string, Set<string>>}
+ */
+const writesCache = new Map([
+	['bun.yml', new Set(['build-output-dir'])],
+	['node.yml', new Set(['build-output-dir'])],
+]);
+
+/**
+ * `text`, without the `cache-mode: read` of each call (see `./calls.mjs`) whose counterpart (see above) in `passing` passes an input that needs to write the cache (see `writesCache`): so a template's cap is lifted for a repository whose call can't be capped.
+ * @type {(text: string, passing: string) => string}
+ */
+export function uncapped(text, passing) {
+	const parsed = read(text);
+	if (!parsed) {
+		return text;
+	}
+	const writing = new Set(Array.from(counterparts(inputsOf(passing), inputsOf(text)).values())
+		.filter(({ call: { file, inputs } }) => Array.from(inputs.keys()).some((key) => writesCache.get(file)?.has(key)))
+		.map(({ counterpart: { job } }) => job));
+	/** @type {Set<number>} */
+	const dropped = new Set();
+	parsed.calls.forEach(({ job, capped }) => {
+		if (capped && writing.has(job)) {
+			for (let i = capped.start; i < capped.end; i += 1) {
+				dropped.add(i);
+			}
+		}
+	});
+	return dropped.size === 0 ? text : endingsOf(parsed.lines.filter((_, i) => !dropped.has(i)).join('\n'), text);
+}
+
+/**
+ * `rendered`, keeping the inputs named in `keep` that `current` passes, in each call's counterpart (see above): so that rewriting a file from its template keeps a repository's own values for them (and their comments); a call that then passes one that needs to write the cache isn't capped at `read` (see `uncapped`).
  * When they can't all be kept (a call that passes one has no single counterpart; `current`, or a call's `with:` in it, isn't understood, so what it passes isn't known; or they can't be added to `rendered`), `why` says so, and `text` is just `rendered`.
  * @type {(rendered: string, current: string | null | undefined, keep: string[] | undefined) => { text: string, why: string | null }}
  */
@@ -340,7 +373,7 @@ export function keepInputs(rendered, current, keep) {
 		return refuse(ambiguity(ambiguous));
 	}
 	const { text, why } = addInputs(rendered, moved);
-	return why ? refuse(why) : { text, why: null };
+	return why ? refuse(why) : { text: uncapped(text, text), why: null };
 }
 
 /**

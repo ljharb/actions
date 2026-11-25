@@ -4,7 +4,11 @@ import path from 'path';
 
 import { exec } from '../lib/exec.mjs';
 import { planFixes, workflowPath } from './fix.mjs';
-import { keepInputs, stripKnownInputs } from './inputs.mjs';
+import {
+	keepInputs,
+	stripKnownInputs,
+	uncapped,
+} from './inputs.mjs';
 import {
 	expectedShards,
 	isShard,
@@ -91,9 +95,11 @@ export async function checkRepo(state) {
 			if (typeof text === 'string') {
 				const actual = normalize(text);
 				const template = loadTemplate(entry.template);
+				// a call that passes an input that needs to write the cache can't be capped at `read`, as the template caps it
+				const matched = uncapped(template, actual);
 				// the inputs a repository passes that the reusable workflow declares, but the template doesn't pass, are its own choices
-				const comparable = stripKnownInputs(actual, template);
-				if (!compile(template).test(comparable)) {
+				const comparable = stripKnownInputs(actual, matched);
+				if (!compile(matched).test(comparable)) {
 					drifting.push({
 						name,
 						template,

@@ -14,12 +14,14 @@ import {
  * Workflow files are parsed as YAML, and what's read from them is only ever what the parser says is there: a file the parser finds any error or warning in (eg, a key passed twice, a tab in indentation, a tag it can't resolve, an alias of an anchor that isn't there), or that has a character YAML 1.1 (but not 1.2) breaks lines at, isn't understood at all, and has no calls.
  * A job's `with:` is understood when it's empty, or a block mapping (with no anchor or tag) whose every key is a string, with no anchor or tag, alone on its line before its `:` (not an explicit `? ` key): anything else (eg, a flow-style `with: { … }`, or an alias) is left as it is.
  * A comment on a line of its own in a `with:` belongs to the input after it (or, after the last one, and indented more than the `with:`, to that one): so an input's lines include the comments that explain it, wherever they are. Whatever the parser says is part of an input's value (eg, a `#` line within a block scalar, or a quoted scalar) is part of it.
+ * A call is `capped` when its job's `cache-mode` is the string `read`: that's the lines it's on, from its key's to its value's last.
  * Line endings are only ever `\n`: a `\r\n` (or a lone `\r`) is read as one, and what's written from a file keeps its line endings when every one of them was `\r\n` (and has `\n`s, otherwise).
  */
 
 /** @typedef {{ start: number, end: number, scalar: boolean }} Span */
 /** @typedef {{ line: number, understood: boolean, indent: number, end: number, inputs: Map<string, Span>, comments: number[] }} With */
-/** @typedef {{ job: string, file: string, indent: number, after: number, with: With | null }} Call */
+/** @typedef {{ start: number, end: number }} Lines */
+/** @typedef {{ job: string, file: string, indent: number, after: number, with: With | null, capped: Lines | null }} Call */
 /** @typedef {{ doc: Document.Parsed, lines: string[], calls: Call[] }} Parsed */
 
 const usesValue = /^ljharb\/actions\/\.github\/workflows\/(?<file>[\w.-]+\.ya?ml)@[^\s'"#]+$/;
@@ -183,6 +185,7 @@ export function read(original) {
 		if (isMap(job) && isScalar(key) && uses && isString(uses.value) && file) {
 			const indent = lineOf(Number(uses.key.range?.[0])).col;
 			const pair = pairOf(job, 'with');
+			const mode = pairOf(job, 'cache-mode');
 			calls.push({
 				job: String(key.value),
 				file,
@@ -191,6 +194,10 @@ export function read(original) {
 				with: pair ? withBlock(pair, lines, {
 					indent, lineOf, doc,
 				}) : null,
+				capped: mode && isString(mode.value) && mode.value.value === 'read' ? {
+					start: lineOf(Number(mode.key.range?.[0])).line,
+					end: lineOf(Number(mode.value.range?.[1]) - 1).line + 1,
+				} : null,
 			});
 		}
 	});
